@@ -104,10 +104,9 @@ beforeAll(() => {
     `const lv = await import('./server/lib/login-vault.ts');
      const oc = await import('./server/lib/owner-chrome.ts');
      const sites = await import('./server/lib/login-sites.ts');
-     const { exportSite } = await import('./server/lib/site-state.ts');
+     const { exportSite, idbNames } = await import('./server/lib/site-state.ts');
      const fs = await import('node:fs');
      const path = await import('node:path');
-     const os = await import('node:os');
      const crypto = await import('node:crypto');
      const server = Bun.serve({ port: 0, fetch(req) {
        const u = new URL(req.url);
@@ -137,11 +136,16 @@ beforeAll(() => {
      const own = oc.resolveOwnerProfile({ platform: 'linux', env: { ARIGAMI_OWNER_CHROME: OWNER } });
      const det = lv.detect('localhost', ${JSON.stringify(vault)}, own);
      const site = sites.resolve('localhost');
-     const snapsBefore = fs.readdirSync(os.tmpdir()).filter((n) => n.startsWith('arigami-owner-chrome-')).length;
-     const state = await lv.withOwnerChrome(own, det.storageOrigins, true, (cdp) => exportSite(cdp, (d) => sites.cookieBelongs(d, site), [ORIGIN], ['firebaseLocalStorageDb']));
-     const snapsAfter = fs.readdirSync(os.tmpdir()).filter((n) => n.startsWith('arigami-owner-chrome-')).length;
+     const TMP = process.env.TMPDIR || '/tmp';
+     const snapsBefore = fs.readdirSync(TMP).filter((n) => n.startsWith('arigami-owner-chrome-')).length;
+     let names = null;
+     const state = await lv.withOwnerChrome(own, det.storageOrigins, true, async (cdp) => {
+       names = await idbNames(cdp, ORIGIN); // what decide() refines an unknown site's copy with
+       return exportSite(cdp, (d) => sites.cookieBelongs(d, site), [ORIGIN], ['firebaseLocalStorageDb']);
+     });
+     const snapsAfter = fs.readdirSync(TMP).filter((n) => n.startsWith('arigami-owner-chrome-')).length;
      server.stop(true);
-     emit({ profileDir: own.profileDir, sources: det.sources, storage: det.storageOrigins.length,
+     emit({ names, profileDir: own.profileDir, sources: det.sources, storage: det.storageOrigins.length,
        cookies: state.cookies.map((c) => c.name + '=' + c.value + '@' + c.domain),
        dbs: state.origins.flatMap((o) => o.idb.map((d) => d.name)), local: state.origins.map((o) => o.local.who),
        untouched: hash(cookiesFile) === before, snapsLeft: snapsAfter - snapsBefore });`,
@@ -157,6 +161,7 @@ test.skipIf(!chrome)("a login in the owner's Chrome is detected from disk and re
   expect(e2e.storage).toBe(1);
   expect(e2e.cookies).toEqual([expect.stringMatching(/^sid=OWNER-SESSION@localhost$/)]); // decrypted by our Chrome
   expect(e2e.dbs).toEqual(['firebaseLocalStorageDb']);
+  expect(e2e.names).toEqual(['firebaseLocalStorageDb']); // read in a page of the origin (not on the browser target)
   expect(e2e.local).toEqual(['owner']);
   expect(e2e.untouched).toBe(true);
   expect(e2e.snapsLeft).toBe(0);

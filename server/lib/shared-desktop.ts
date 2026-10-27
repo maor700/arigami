@@ -59,6 +59,7 @@ export interface LeaseDeps {
   waitingOnHuman: (sessionId: string) => boolean;
   /** Something the cockpit shows changed. */
   changed?: (status: LeaseStatus) => void;
+  log?: (line: string) => void;
 }
 
 export interface LeaseStatus {
@@ -122,6 +123,7 @@ export class SharedDesktopLease {
     const next = this.queue.shift();
     if (!next) return;
     this.grant(next);
+    this.deps.log?.(`${next.sessionId} woken from the queue`);
     this.deps.notify(next.sessionId, WAKE(next.site));
   }
 
@@ -234,6 +236,7 @@ export class SharedDesktopLease {
     const h = this.holder;
     this.parked.set(sessionId, { sessionId, site: h.site, reason: h.reason, at: this.now(), why });
     this.holder = null;
+    this.deps.log?.(`${sessionId} parked (${why})`);
     this.advance();
     this.emit();
     return true;
@@ -244,6 +247,7 @@ export class SharedDesktopLease {
     const p = this.parked.get(sessionId);
     if (!p) return;
     this.parked.delete(sessionId);
+    this.deps.log?.(`${sessionId} unparked`);
     if (!this.holder && !this.queue.length && !this.humanActive()) {
       this.grant(p);
     } else {
@@ -264,7 +268,10 @@ export class SharedDesktopLease {
   noteHumanInput(): void {
     const was = this.humanActive();
     this.humanUntil = this.now() + HUMAN_QUIET_MS;
-    if (!was) this.emit();
+    if (!was) {
+      this.deps.log?.('owner input on the screen — agents paused');
+      this.emit();
+    }
   }
 
   /** Timers: idle release / park, the end of a human pause, parked holders whose human answered. */
@@ -273,6 +280,7 @@ export class SharedDesktopLease {
     let dirty = false;
     if (this.humanUntil && t >= this.humanUntil) {
       this.humanUntil = 0;
+      this.deps.log?.('owner quiet — agents resume');
       dirty = true;
       if (this.holder) this.holder.expiresAt = Math.max(this.holder.expiresAt, t + IDLE_MS);
       for (const id of this.pausedSessions)
@@ -288,6 +296,7 @@ export class SharedDesktopLease {
       else {
         this.holder = null;
         this.expired.add(id);
+        this.deps.log?.(`${id} released: idle`);
         this.advance();
       }
       dirty = true;
@@ -399,6 +408,7 @@ export function wire(d: Omit<LeaseDeps, 'now'>): SharedDesktopLease {
     now: () => Date.now(),
     notify: (id, text) => deps!.notify(id, text),
     waitingOnHuman: (id) => deps!.waitingOnHuman(id),
+    log: (line) => console.log(`[shared-desktop] ${new Date().toISOString()} ${line}`),
     changed: (st) => {
       deps!.changed?.(st);
       schedule();
@@ -453,12 +463,20 @@ export async function agentInput<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
-/** Pure: given an idle reading, was the last input someone other than an agent? */
-export function foreignInput(now: number, idleMs: number, o: { agentBusy: number; agentLastEnd: number; since: number }): boolean {
+/**
+ * Pure: given an idle reading, is there a NEW input event (later than `seen`, the last one already looked at) that
+ * was someone other than an agent? The same old event reads again on every poll until the next one — counting it
+ * each time kept the agents paused long after the owner had stopped.
+ */
+export function foreignInput(now: number, idleMs: number, o: { agentBusy: number; agentLastEnd: number; since: number; seen: number }): boolean {
   if (o.agentBusy > 0) return false;
   const lastInput = now - idleMs;
+  if (lastInput <= o.seen + JITTER_MS) return false;
   return lastInput > o.agentLastEnd + SLACK_MS && lastInput > o.since;
 }
+
+/** The idle reading's own jitter (the poll and the X server's clock disagree by a few ms). */
+const JITTER_MS = 50;
 
 let watchDisplay = '';
 export function setDisplay(display: string): void {
@@ -471,6 +489,7 @@ function startWatcher(): void {
     const p = spawn('python3', [XIDLE, '500'], { env: { ...process.env, DISPLAY: watchDisplay }, stdio: ['ignore', 'pipe', 'ignore'] });
     watcher = p;
     watcherSince = Date.now();
+    let seen = 0;
     let buf = '';
     p.stdout!.on('data', (d) => {
       buf += d;
@@ -480,7 +499,9 @@ function startWatcher(): void {
         buf = buf.slice(i + 1);
         const idle = Number(line);
         if (!Number.isFinite(idle) || !lease) continue;
-        if (foreignInput(Date.now(), idle, { agentBusy, agentLastEnd, since: watcherSince })) lease.noteHumanInput();
+        const now = Date.now();
+        if (foreignInput(now, idle, { agentBusy, agentLastEnd, since: watcherSince, seen })) lease.noteHumanInput();
+        seen = Math.max(seen, now - idle);
       }
     });
     p.on('exit', () => {

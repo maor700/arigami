@@ -28,7 +28,7 @@ import { cdpPort } from './chrome-cdp.js';
 import { pidAlive } from './platform.js';
 import { supervise, killTree } from './children.js';
 import * as sites from './login-sites.js';
-import { Cdp, exportSite, importSite, landing, type SiteState } from './site-state.js';
+import { Cdp, exportSite, idbNames, importSite, landing, type SiteState } from './site-state.js';
 import * as owner from './owner-chrome.js';
 
 export const VAULT_DIR = CHROME_BASE_DIR;
@@ -425,8 +425,7 @@ async function dbNames(cdp: Cdp, origins: string[]): Promise<string[]> {
   const out: string[] = [];
   for (const o of origins) {
     try {
-      const r = await cdp.send('IndexedDB.requestDatabaseNames', { securityOrigin: o });
-      out.push(...(r?.databaseNames || []));
+      out.push(...(await idbNames(cdp, o)));
     } catch {
       /* origin without storage */
     }

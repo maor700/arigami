@@ -812,7 +812,10 @@ async function sharedDesktopOp(res: ServerResponse, id: string, op: string, body
   if (op === 'quit') return json(res, { ok: false, error: "nothing is quit on the shared desktop — the owner's windows are theirs" }, 400);
   const L = sharedDesktop.get();
   const gate = L.check(id, op === 'screenshot' ? 'look' : 'input');
-  if (!gate.ok) return json(res, gate, 409);
+  if (!gate.ok) {
+    console.log(`[shared-desktop] ${new Date().toISOString()} ${id} ${op === 'act' ? String(body?.action) : op} refused: ${gate.error.slice(0, 60)}`);
+    return json(res, gate, 409);
+  }
   try {
     if (op === 'screenshot') {
       const r = await dc.sharedScreenshot(id);
@@ -827,7 +830,7 @@ async function sharedDesktopOp(res: ServerResponse, id: string, op: string, body
       if (refused) return json(res, { ok: false, refused: true, error: refused }, 403);
       const r = dc.sharedLaunch(command, args);
       L.touch(id);
-      console.log(`[shared-desktop] ${id} launch ${command}`);
+      console.log(`[shared-desktop] ${new Date().toISOString()} ${id} launch ${command}`);
       return json(res, { ok: true, ...r });
     }
     const action = String(body?.action || '');
@@ -838,12 +841,12 @@ async function sharedDesktopOp(res: ServerResponse, id: string, op: string, body
       refused = sharedDesktop.checkType(String(body?.text ?? ''), { site, identityEmail: email, fromHuman: body?.from_human === true });
     } else if (action === 'key') refused = sharedDesktop.checkKey(String(body?.key ?? ''));
     if (refused) {
-      console.log(`[shared-desktop] ${id} ${action} refused: ${refused.slice(0, 80)}`);
+      console.log(`[shared-desktop] ${new Date().toISOString()} ${id} ${action} refused: ${refused.slice(0, 80)}`);
       return json(res, { ok: false, refused: true, error: refused }, 403);
     }
     const r = await dc.sharedAct(body);
     L.touch(id);
-    console.log(`[shared-desktop] ${id} ${action}${action === 'type' && body?.from_human === true ? ' (from the human)' : ''} ${r.ok ? 'ok' : 'failed: ' + (r as any).error}`);
+    console.log(`[shared-desktop] ${new Date().toISOString()} ${id} ${action}${action === 'type' && body?.from_human === true ? ' (from the human)' : ''} ${r.ok ? 'ok' : 'failed: ' + (r as any).error}`);
     return json(res, r, r.ok ? 200 : 400);
   } catch (e) {
     return json(res, { ok: false, error: (e as Error).message }, 400);
@@ -4086,7 +4089,7 @@ export async function handle(
       const me = (req as any).auth as import('./auth.js').Principal | null;
       if (!auth.isAdmin(me)) return json(res, { error: 'admin only' }, 403);
       const was = sharedDesktop.get().forceRelease();
-      console.log(`[shared-desktop] owner released ${was || '(nobody held it)'}`);
+      console.log(`[shared-desktop] ${new Date().toISOString()} owner released ${was || '(nobody held it)'}`);
       return json(res, { ok: true, released: was });
     }
     // Copy/paste for the shared screen ("my browser"): the same two halves as a
@@ -7065,13 +7068,13 @@ export async function handle(
       const L = sharedDesktop.get();
       if (sub === 'shared-desktop/release') {
         const did = L.release(id);
-        console.log(`[shared-desktop] ${id} release${did ? '' : ' (held nothing)'}`);
+        console.log(`[shared-desktop] ${new Date().toISOString()} ${id} release${did ? '' : ' (held nothing)'}`);
         return json(res, { ok: true, released: did });
       }
       const site = sharedDesktop.leaseSite(body?.site);
       if (body?.site && !site) return badRequest(res, `not a site: ${body.site}`);
       const r = L.acquire(id, site, String(body?.reason || '').slice(0, 200));
-      console.log(`[shared-desktop] ${id} acquire ${site || '-'} → ${'granted' in r ? 'granted' : `queued #${r.position}`}`);
+      console.log(`[shared-desktop] ${new Date().toISOString()} ${id} acquire ${site || '-'} → ${'granted' in r ? 'granted' : `queued #${r.position}`}`);
       return json(res, { ok: true, ...r }, 'granted' in r ? 200 : 202);
     }
     if (/^desktop\/(screenshot|act|launch|quit)$/.test(sub) && m === 'POST') {

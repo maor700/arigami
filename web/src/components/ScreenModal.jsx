@@ -273,7 +273,7 @@ export default function ScreenModal({ context, onClose }) {
 
         <ScreenView priority={SCREEN_PRIORITY.modal} viewOnly={!interactive} sessionId={screenSessionId} className="min-h-0 flex-1" onStatusChange={onStatusChange} />
 
-        {screenSessionId && interactive && (
+        {context?.sessionId && interactive && !req?.shared && (
           <div className="flex items-center gap-2 border-t border-border px-4 py-2" title={t('screen.typeIntoHint')}>
             <Input
               value={typed}

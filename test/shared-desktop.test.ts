@@ -218,12 +218,20 @@ test('status is what the cockpit shows: holder, queue, parked, owner', () => {
 
 test("foreignInput: an input event after the last agent action is the owner's", () => {
   const now = 100_000;
-  const since = 0;
-  expect(foreignInput(now, 50_000, { agentBusy: 0, agentLastEnd: 49_000, since })).toBe(true); // input at 50 000, agent at 49 000
-  expect(foreignInput(now, 51_000, { agentBusy: 0, agentLastEnd: 49_000, since })).toBe(false); // input at 49 000 = the agent's
-  expect(foreignInput(now, 50_800, { agentBusy: 0, agentLastEnd: 49_000, since })).toBe(false); // within the slack
-  expect(foreignInput(now, 0, { agentBusy: 1, agentLastEnd: 0, since })).toBe(false); // an agent action is running
-  expect(foreignInput(now, 1000, { agentBusy: 0, agentLastEnd: 0, since: now })).toBe(false); // older than the watcher
+  const o = { agentBusy: 0, agentLastEnd: 49_000, since: 0, seen: 0 };
+  expect(foreignInput(now, 50_000, o)).toBe(true); // input at 50 000, agent at 49 000
+  expect(foreignInput(now, 51_000, o)).toBe(false); // input at 49 000 = the agent's
+  expect(foreignInput(now, 50_800, o)).toBe(false); // within the slack
+  expect(foreignInput(now, 0, { ...o, agentBusy: 1, agentLastEnd: 0 })).toBe(false); // an agent action is running
+  expect(foreignInput(now, 1000, { ...o, agentLastEnd: 0, since: now })).toBe(false); // older than the watcher
+});
+
+test('foreignInput: the same old event, read again on the next polls, is not new input', () => {
+  // measured live: the owner stopped at 50 000; every later poll still reads "last input at 50 000"
+  const o = { agentBusy: 0, agentLastEnd: 0, since: 0, seen: 50_000 };
+  expect(foreignInput(60_000, 10_000, o)).toBe(false);
+  expect(foreignInput(200_000, 150_003, o)).toBe(false); // a few ms of clock jitter
+  expect(foreignInput(200_000, 100_000, o)).toBe(true); // a new event at 100 000
 });
 
 // ---- input guards on the owner's screen ---------------------------------------------------------------------------
