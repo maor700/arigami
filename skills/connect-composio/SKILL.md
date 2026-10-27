@@ -48,8 +48,12 @@ Follow `skills/machine-work/SKILL.md`. Helpers: `skills/_lib/connect.sh`.
    `capture_screen({caption:"Consent flow opened for <toolkit>"})`.
 3. **Account chooser** ("Choose an account"): click the row whose email equals the
    identity email (`GET /__api/setup/capabilities` → identity detail). Never "Use
-   another account". If a password box appears instead → boundary (rule 1):
-   `capture_screen`, `request_screen({prompt:"Connecting <toolkit> via Composio — Google asks you to sign in.", reason:"login", hint:"Sign in, approve the consent screen, wait for the 'Connected' page, then click Done."})`
+   another account". If Google asks to sign in instead (this session's browser is not signed in to Google), finish
+   the consent in the owner's Chrome, where it is: `sign_in({site:"composio.dev", url:"<the page's current URL>",
+   reason})`, pick the identity email / Allow there (`desktop_screenshot` / `desktop_pointer` with shared:true; a
+   password box → `sign_in({site, fill:"password"})`), then `sign_in({site, done:true})` and re-verify from step 5.
+   If `sign_in` answers blocked (no shared desktop on this host): `capture_screen`, then
+   `request_screen({prompt:"Connecting <toolkit> via Composio — Google asks you to sign in.", reason:"login", hint:"Sign in, approve the consent screen, wait for the 'Connected' page, then click Done."})`
    and after Done re-verify from step 5.
 4. **"Google hasn't verified this app"** (common with Composio-managed auth):
    click **Advanced** (small link, bottom-left), then **Go to … (unsafe)**.

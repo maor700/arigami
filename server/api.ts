@@ -1232,6 +1232,8 @@ interface SignInJob {
   profile: import('./lib/owner-chrome.js').OwnerProfile;
   label: string;
   gcloud?: { done: Promise<{ ok: boolean }>; proc: import('node:child_process').ChildProcess };
+  /** A consent page (sign_in({url})): done = give the desktop back; the playbook checks its own result. */
+  consent?: boolean;
   doneTries: number;
   /** The site's httpOnly cookie names in the profile when sign_in opened the page (names only) — diffed at done. */
   before?: string[];
@@ -1294,7 +1296,12 @@ async function signInStart(id: string, body: any): Promise<SignInOutcome> {
   const profilesAll = oc.ownerProfiles();
   const sharedChrome = profilesAll.length > 0 && sharedChromeHere();
   const owner = ownerOfSession(id, 'identity');
-  const identityEmail = (caps.readIdentity(owner) || caps.readIdentity(caps.GLOBAL_OWNER))?.email ?? null;
+  const ident = caps.readIdentity(owner) || caps.readIdentity(caps.GLOBAL_OWNER);
+  const identityEmail = ident?.email ?? null;
+  // the identity's Chrome profile on the shared desktop ('chrome:<dir>'), when connect-identity signed Google in there
+  const identityProfile = /^chrome:/.test(ident?.chromeProfile || '') ? ident!.chromeProfile.slice('chrome:'.length) : null;
+  const consent = body?.url !== undefined ? si.consentUrl(body.url) : null;
+  if (body?.url !== undefined && !consent) return si.blocked(si.siteKey(raw), 'url must be an https page (the consent / authorize page to finish in the owner\'s Chrome)');
 
   // facts, cheapest first; each rung's check runs only when the rungs above did not apply
   let gc: Awaited<ReturnType<typeof si.gcloudStatus>> | null = null;
@@ -1314,7 +1321,7 @@ async function signInStart(id: string, body: any): Promise<SignInOutcome> {
   if (account && !scope.length) return si.blocked(site, `no Chrome profile for "${account}" — the owner's are: ${profilesAll.map(oc.profileLabel).join(', ') || 'none'}`);
   const d = cli ? null : lv.detect(raw, undefined, scope);
   const policy = d ? ls.decide(d.site, d.storageOrigins.length ? ['(unread)'] : []).policy : 'cookies';
-  const rung = si.ladder({
+  const rung = consent ? { rung: 'shared-chrome' as const } : si.ladder({
     cli,
     cliSignedIn: !!gc?.ok,
     connection: capability ? { capability, connected } : null,
@@ -1329,9 +1336,10 @@ async function signInStart(id: string, body: any): Promise<SignInOutcome> {
   if (rung.rung === 'connection')
     return { status: 'signed_in', site, via: 'connection', next: `the host is connected to ${raw} (${rung.capability}): use its tools (mcp__${rung.capability.split(':')[1] || rung.capability}__… / gh for git), no browser. Only if you need the web page itself: sign_in({site, browser:true}).` };
   if (rung.rung === 'owner-chrome-only') {
-    const prof = scope.find((p) => d?.profiles?.includes(p.profileDir));
+    const holders = scope.filter((p) => d?.profiles?.includes(p.profileDir));
+    const prof = holders.find((p) => p.profileDir === identityProfile) || holders[0];
     return {
-      status: 'signed_in', site, via: 'shared-chrome', ...(prof ? { account: oc.profileLabel(prof) } : {}),
+      status: 'signed_in', site, via: 'shared-chrome', ...(prof ? { account: oc.profileLabel(prof), profile: prof.profileDir } : {}),
       next: `${d?.site.label || site} is signed in in the owner's Chrome on the shared desktop${prof ? ` (${oc.profileLabel(prof)})` : ''}; it does not accept a copied session, so it is not in your browser. For mail / calendar / drive use the host connection (check_setup composio:gmail…); for a ${d?.site.label || site} page itself, shared_desktop_acquire({site:"${site}"}) and work there with desktop_*({shared:true}).`,
     };
   }
@@ -1344,7 +1352,7 @@ async function signInStart(id: string, body: any): Promise<SignInOutcome> {
     fresh = true;
   }
   // ---- a NEW sign-in in the owner's Chrome on the shared desktop -------------------------------------------------
-  const pick = si.chooseProfile(scope.length ? scope : profilesAll, { account: null, signedInIn: d?.profiles || [], identityEmail, match: oc.matchProfile, label: oc.profileLabel });
+  const pick = si.chooseProfile(scope.length ? scope : profilesAll, { account: null, signedInIn: consent ? [] : d?.profiles || [], identityEmail, identityProfile, match: oc.matchProfile, label: oc.profileLabel });
   if (!pick.ok) return si.blocked(site, pick.reason);
   const profile = pick.profile;
   const label = oc.profileLabel(profile);
@@ -1359,14 +1367,16 @@ async function signInStart(id: string, body: any): Promise<SignInOutcome> {
     g.done.then(() => { if (signInJobs.get(id)?.gcloud === g) sharedDesktop.get().touch(id); });
     return { status: 'driving', site: 'gcloud', account: label, next: `gcloud auth login opened Google's consent page in the owner's Chrome (${label}) on the shared desktop. Pick the account and press Continue / Allow there — gcloud gets the answer on its own, there is no code to copy. ${si.DRIVE_HOW.replace('sign_in({site, done:true})', 'sign_in({site:"gcloud", done:true})')}` };
   }
-  signInJobs.set(id, { site, input: raw, profile, label, doneTries: 0, before: lv.sessionCookieNames(raw, profile) });
-  if (!fresh && lv.detectProfile(raw, profile).present) return signInDone(id, { already: true });
-  const url = si.startUrl(raw);
-  const launched = dc().sharedLaunch(bin, [`--profile-directory=${profile.profileDir}`, url]);
+  signInJobs.set(id, { site, input: raw, profile, label, doneTries: 0, before: lv.sessionCookieNames(raw, profile), ...(consent ? { consent: true } : {}) });
+  if (!consent && !fresh && lv.detectProfile(raw, profile).present) return signInDone(id, { already: true });
+  const url = consent || si.startUrl(raw);
+  const launched = dc().sharedLaunch(bin, [...oc.OWNER_CHROME_FLAGS, `--profile-directory=${profile.profileDir}`, url]);
   sharedDesktop.get().touch(id);
   console.log(`[sign-in] ${new Date().toISOString()} ${id} opened ${hostOfUrl(url)} in owner Chrome ${profile.profileDir} (pid ${launched.pid})`);
   await new Promise((r2) => setTimeout(r2, 2500));
-  return { status: 'driving', site, account: label, next: `${url} is open in the owner's own Chrome (${label}) on the shared desktop, and the desktop is yours for this sign-in. ${si.DRIVE_HOW}` };
+  if (consent)
+    return { status: 'driving', site, account: label, profile: profile.profileDir, next: `${hostOfUrl(url)} is open in the owner's own Chrome (${label}) on the shared desktop, signed in to their Google there, and the desktop is yours. Finish the consent (pick the account, Allow / Continue) with desktop_screenshot / desktop_pointer ({shared:true}); a password field: sign_in({site, fill:"password"}). Then sign_in({site, done:true}) gives the desktop back — check the result where your playbook polls it.` };
+  return { status: 'driving', site, account: label, profile: profile.profileDir, next: `${url} is open in the owner's own Chrome (${label}) on the shared desktop, and the desktop is yours for this sign-in. ${si.DRIVE_HOW}` };
 }
 
 const hostOfUrl = (u: string): string => { try { return new URL(u).host; } catch { return u; } };
@@ -1506,6 +1516,10 @@ async function signInDone(id: string, o: { already?: boolean } = {}): Promise<Si
   if (!job) return si.blocked('', 'no sign-in is running for this session — call sign_in({site}) first');
   const L = sharedDesktop.get();
   const finish = () => { signInJobs.delete(id); L.release(id); };
+  if (job.consent) {
+    finish();
+    return { status: 'signed_in', site: job.site, via: 'shared-chrome', account: job.label, profile: job.profile.profileDir, next: 'the consent page was handled in the owner\'s Chrome and the desktop is released — check the connection where your playbook polls it.' };
+  }
   if (job.gcloud) {
     const r = await Promise.race([job.gcloud.done, new Promise<null>((r2) => setTimeout(() => r2(null), 120_000))]);
     if (!r) {
@@ -1546,7 +1560,7 @@ async function signInDone(id: string, o: { already?: boolean } = {}): Promise<Si
   finish();
   const policy = ls.decide(site, det.storageOrigins.length ? ['(unread)'] : []).policy;
   if (policy === 'never')
-    return { status: 'signed_in', site: job.site, via: 'shared-chrome', account: job.label, next: `${site.label} is signed in in the owner's Chrome (${job.label}); it does not accept a copied session, so work there: shared_desktop_acquire({site:"${job.site}"}) and desktop_*({shared:true}).` };
+    return { status: 'signed_in', site: job.site, via: 'shared-chrome', account: job.label, profile: job.profile.profileDir, next: `${site.label} is signed in in the owner's Chrome (${job.label}); it does not accept a copied session, so work there: shared_desktop_acquire({site:"${job.site}"}) and desktop_*({shared:true}).` };
   const r = await lv.transfer(id, job.input, undefined, [job.profile], { weak, force: true }).catch((e) => ({ ok: false, error: (e as Error).message }) as any);
   if (!r.ok) return si.blocked(job.site, `signed in in the owner's Chrome (${job.label}), but the copy into your browser failed: ${r.error}`);
   return { status: 'signed_in', site: job.site, via: o.already ? 'saved' : 'shared-chrome', account: job.label, next: `${o.already ? 'the owner was already signed in there; ' : ''}the ${site.label} login is in your browser now${r.check ? ` (checked: ${r.check.url})` : ''} — browser_open the site and continue. The shared desktop is released.` };

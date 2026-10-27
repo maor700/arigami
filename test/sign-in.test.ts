@@ -12,7 +12,7 @@ import * as si from '../server/lib/sign-in.ts';
 import * as ls from '../server/lib/login-sites.ts';
 import * as lv from '../server/lib/login-vault.ts';
 import * as cr from '../server/lib/credentials.ts';
-import { resolveOwnerProfile, listProfiles, matchProfile, profileLabel, type OwnerProfile } from '../server/lib/owner-chrome.ts';
+import { resolveOwnerProfile, listProfiles, matchProfile, profileLabel, shouldSeedOwnerChrome, OWNER_CHROME_FLAGS, type OwnerProfile } from '../server/lib/owner-chrome.ts';
 import { SharedDesktopLease } from '../server/lib/shared-desktop.ts';
 import { totp, totpSpec, base32Decode } from '../web/src/lib/totp.js';
 import { tmpDir } from './_tmp.js';
@@ -334,4 +334,35 @@ test('TOTP (RFC 6238 test vectors) and the two ways an entry holds its secret', 
   expect(totpSpec({ 'TOTP Seed': secret, 'TOTP Settings': '30;6' })).toMatchObject({ secret, digits: 6, period: 30 });
   expect(totpSpec({ Password: 'x' })).toBe(null);
   expect((await totp({ secret, digits: 6, period: 30, algorithm: 'SHA1' }, 59_000))).toBe('287082');
+});
+
+// ---- a Chrome to sign in to, from the first boot; Google once, in it ------------------------------------------------
+
+test('shouldSeedOwnerChrome: open the everyday Chrome once on a fresh Linux host with a shared desktop — and only then', () => {
+  const fresh = { platform: 'linux' as const, inContainer: false, config: {}, env: {}, hasProfile: false, displayUp: true, chromeRunning: false };
+  expect(shouldSeedOwnerChrome(fresh)).toEqual({ seed: true });
+  expect(shouldSeedOwnerChrome({ ...fresh, hasProfile: true })).toMatchObject({ seed: false });
+  expect(shouldSeedOwnerChrome({ ...fresh, chromeRunning: true })).toMatchObject({ seed: false });
+  expect(shouldSeedOwnerChrome({ ...fresh, displayUp: false })).toMatchObject({ seed: false, why: 'no shared desktop' });
+  expect(shouldSeedOwnerChrome({ ...fresh, inContainer: true })).toMatchObject({ seed: false });
+  expect(shouldSeedOwnerChrome({ ...fresh, platform: 'darwin' })).toMatchObject({ seed: false });
+  expect(shouldSeedOwnerChrome({ ...fresh, config: false })).toMatchObject({ seed: false });
+  expect(shouldSeedOwnerChrome({ ...fresh, env: { ARIGAMI_OWNER_CHROME: '0' } })).toMatchObject({ seed: false });
+  expect(shouldSeedOwnerChrome({ ...fresh, config: { userDataDir: '/elsewhere' } })).toMatchObject({ seed: false });
+  // started like a person would: never a DevTools port, cookies on the basic store the host can read
+  expect(OWNER_CHROME_FLAGS).toContain('--password-store=basic');
+  expect(OWNER_CHROME_FLAGS.join(' ')).not.toMatch(/remote-debugging|user-data-dir|headless/);
+  expect(si.isOwnerChromeCmd(['/usr/bin/google-chrome-stable', ...OWNER_CHROME_FLAGS], '/h/.config/google-chrome', '/h/.config/google-chrome')).toBe(true);
+});
+
+test('consentUrl: a playbook hands over an https consent page, nothing else', () => {
+  expect(si.consentUrl('https://accounts.google.com/o/oauth2/auth?client_id=x')).toBe('https://accounts.google.com/o/oauth2/auth?client_id=x');
+  for (const bad of ['http://x.example/', 'javascript:alert(1)', 'file:///etc/passwd', '', null, 'not a url']) expect(si.consentUrl(bad)).toBe(null);
+});
+
+test("chooseProfile: the identity's own profile (identity.json chrome:<dir>) is the default for a new sign-in", () => {
+  const ps = [P('Default', 'Your Chrome'), P('Profile 1', 'work.example'), P('Profile 2', 'Personal')];
+  expect((pick(ps, { identityProfile: 'Profile 2', identityEmail: 'nobody@else.example' }) as any).profile.profileDir).toBe('Profile 2');
+  expect((pick(ps, { identityProfile: 'Gone' }) as any).profile.profileDir).toBe('Default');
+  expect((pick(ps, { identityProfile: 'Profile 2', signedInIn: ['Profile 1'] }) as any).profile.profileDir).toBe('Profile 1'); // already signed in wins
 });

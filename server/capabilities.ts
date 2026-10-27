@@ -176,7 +176,7 @@ export interface Identity {
   email: string;
   provider: 'google';
   connectedAt: string;
-  chromeProfile: string; // 'base' — the shared chrome-base profile (T8)
+  chromeProfile: string; // 'chrome:<dir>' — a profile of the owner's Chrome on the shared desktop (sign_in); 'base' — the older chrome-base
   providers: Record<string, { at: string }>;
 }
 
@@ -482,9 +482,9 @@ function staticCapabilities(p: CapabilityProbes, owner: Owner = GLOBAL_OWNER): C
         const from: Owner = own ? owner : GLOBAL_OWNER;
         return id
           ? { ok: true, owner: from, detail: `signed in as ${id.email}${from !== owner ? ' (shared)' : ''}`, data: { email: id.email, connectedAt: id.connectedAt, providers: Object.keys(id.providers), owner: from } }
-          : { ok: false, detail: 'sign in to Google once on the session desktop — the agent can then connect other services itself' };
+          : { ok: false, detail: "sign in to Google once, in your own Chrome on the shared desktop — the agent can then connect other services and sign in with Google itself" };
       },
-      manual: { kind: 'takeover', help: 'The agent opens accounts.google.com on its desktop and hands the screen to you; you sign in, click Done.' },
+      manual: { kind: 'takeover', help: 'The agent opens Google in your own Chrome on the shared desktop; the password comes from your vault, you approve on your phone if Google asks.' },
       autoCapable: false,
       playbook: 'connect-identity',
       events: [...SETUP_EVENTS],

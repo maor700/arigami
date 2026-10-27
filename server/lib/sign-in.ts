@@ -130,7 +130,7 @@ export type ProfilePick = { ok: true; profile: OwnerProfile } | { ok: false; rea
  */
 export function chooseProfile(
   profiles: OwnerProfile[],
-  o: { account?: string | null; signedInIn: string[]; identityEmail?: string | null; match: (ps: OwnerProfile[], a: string) => OwnerProfile | null; label: (p: OwnerProfile) => string }
+  o: { account?: string | null; signedInIn: string[]; identityEmail?: string | null; identityProfile?: string | null; match: (ps: OwnerProfile[], a: string) => OwnerProfile | null; label: (p: OwnerProfile) => string }
 ): ProfilePick {
   if (!profiles.length) return { ok: false, reason: "the owner's everyday Chrome has no profile on this host" };
   if (o.account) {
@@ -141,7 +141,8 @@ export function chooseProfile(
   if (holding.length === 1) return { ok: true, profile: holding[0] };
   if (holding.length > 1) return { ok: false, reason: `signed in under two accounts (${holding.map(o.label).join('; ')}) — call sign_in again with account: one of them` };
   const id = (o.identityEmail || '').toLowerCase();
-  return { ok: true, profile: (id && profiles.find((p) => (p.email || '').toLowerCase() === id)) || profiles[0] };
+  const byDir = o.identityProfile ? profiles.find((p) => p.profileDir === o.identityProfile) : undefined;
+  return { ok: true, profile: byDir || (id && profiles.find((p) => (p.email || '').toLowerCase() === id)) || profiles[0] };
 }
 
 // ---- the vault fill on the shared desktop (pure guard) ------------------------------------------------------------
@@ -349,10 +350,24 @@ export function startGcloudLogin(bin: string, o: { display: string; chrome: stri
 // ---- what the model is told (one place) ---------------------------------------------------------------------------
 
 export type Outcome =
-  | { status: 'signed_in'; site: string; via: 'connection' | 'saved' | 'shared-chrome' | 'cli'; account?: string; next: string }
+  | { status: 'signed_in'; site: string; via: 'connection' | 'saved' | 'shared-chrome' | 'cli'; account?: string; profile?: string; next: string }
   | { status: 'blocked'; site: string; reason: string }
   /** The owner's Chrome on the shared desktop shows the site's sign-in: your hands (clicks), the host's typing. */
-  | { status: 'driving'; site: string; account: string; next: string };
+  | { status: 'driving'; site: string; account: string; profile?: string; next: string };
+
+/**
+ * Pure: an OAuth / consent page a connect playbook hands to sign_in({site, url}) — it is finished in the owner's Chrome
+ * (signed in to Google there) instead of the session's empty browser. https only.
+ */
+export function consentUrl(url: unknown): string | null {
+  const s = String(url || '').trim();
+  if (!/^https:\/\//i.test(s)) return null;
+  try {
+    return new URL(s).href;
+  } catch {
+    return null;
+  }
+}
 
 export const DRIVE_HOW =
   "Look with desktop_screenshot({shared:true}) and click with desktop_pointer({shared:true}) — that is the owner's own Chrome, use it like a person. " +

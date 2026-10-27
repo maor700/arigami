@@ -32,8 +32,7 @@ Server side: `server/oauth-login.js` via `POST /__api/accounts/oauth/start|code`
    - **Authorize screen** ("Claude Code wants to access…", button *Authorize*):
      click Authorize.
    - **Login screen** (email box / "Continue with Google"): if `identity` is
-     connected click *Continue with Google* and pick the identity email in the
-     chooser; if a password/2FA/email-code screen follows, or there is no identity:
+     connected, finish it in the owner's Chrome, where their Google is signed in: `sign_in({site:"<service>", url:"<the page's current URL>", reason})`, pick the identity email and Allow there (`desktop_screenshot` / `desktop_pointer` with shared:true), then `sign_in({site, done:true})` and continue polling here; if a password/2FA/email-code screen follows, or there is no identity:
      `capture_screen`, `request_screen({prompt:"Connecting your Claude account — claude.ai asks you to sign in.", reason:"login", hint:"Sign in, click Authorize on the next page, wait for the page that shows a code, then click Done."})`.
 4. After Authorize (yours or the human's): the host itself watches THIS
    session's Chrome (connect.sh sends `X-Arigami-Session`, so the flow started

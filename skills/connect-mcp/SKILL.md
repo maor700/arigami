@@ -69,7 +69,7 @@ its own. You never choose it — the host returns it as `name`.
 3. **Account chooser / workspace picker** (Notion asks which workspace, Atlassian
    which site, Sentry which org): pick the one the human named in `why`; if the
    card did not say and there is more than one, `request_action` and ask — do not
-   guess. A Google chooser: click the row whose email equals the identity email,
+   guess. A Google chooser or Google sign-in: finish it in the owner's Chrome, where their Google is signed in: `sign_in({site:"<service>", url:"<the page's current URL>", reason})`, pick the identity email and Allow there (`desktop_screenshot` / `desktop_pointer` with shared:true), then `sign_in({site, done:true})` and continue polling here; in the chooser, the row whose email equals the identity email,
    never "Use another account".
 4. **Consent**: click **Authorize / Allow access / Approve**. A vendor login form instead →
    `sign_in` (rule 1), then continue. A 2FA push → `capture_screen`,

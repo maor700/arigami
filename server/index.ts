@@ -532,6 +532,7 @@ server.listen(cfg.port, cfg.bind, () => {
   import('./lib/desktops.js')
     .then((m: any) => m.ensureGlobalDesktop())
     .then((r: any) => console.log(r?.started ? `[host] global desktop up on ${r.display} (vnc :${r.vncPort})` : `[host] global desktop not started: ${r?.reason}`))
+    .then(() => seedOwnerChrome())
     .catch((e: any) => console.error('[host] global desktop failed:', e?.message));
 });
 
@@ -589,4 +590,31 @@ if (process.env.ARIGAMI_SUPERVISOR === 'self' && process.platform !== 'win32' &&
   }, 2000);
   // Never hold the process open on our own account.
   (watch as unknown as { unref?: () => void }).unref?.();
+}
+
+/**
+ * sign_in signs new sites in to the owner's everyday Chrome on the shared desktop (docs/LOGIN.md). A fresh install has
+ * Chrome and the display but no profile until someone opens it: open it once, as a person would (no DevTools port), so
+ * the profile exists and Chrome stays there on the screen. Default instance only, and only when nothing is there yet.
+ */
+async function seedOwnerChrome(): Promise<void> {
+  const { IS_DEFAULT_INSTANCE } = await import('./lib/instance.js');
+  if (!IS_DEFAULT_INSTANCE) return;
+  const oc = await import('./lib/owner-chrome.js');
+  const si = await import('./lib/sign-in.js');
+  const os = await import('node:os');
+  const fs = await import('node:fs');
+  const display = String(cfg.screen?.display || ':99');
+  const n = Number(display.replace(/^:/, ''));
+  const userDataDir = (await import('node:path')).join(os.homedir(), '.config', 'google-chrome');
+  const d = oc.shouldSeedOwnerChrome({
+    platform: process.platform, inContainer: oc.ownerChromeInContainer(), config: (cfg as any).ownerChrome ?? null, env: process.env,
+    hasProfile: !!oc.ownerProfile(), displayUp: Number.isFinite(n) && fs.existsSync(`/tmp/.X11-unix/X${n}`), chromeRunning: si.ownerChromePids(userDataDir).length > 0,
+  });
+  if (!d.seed) return;
+  const chrome = await import('./lib/chrome.js');
+  const { spawn } = await import('node:child_process');
+  const p = spawn(chrome.chromeBin(), oc.OWNER_CHROME_FLAGS, { env: chrome.chromeEnv({ ...process.env, DISPLAY: display }), detached: true, stdio: 'ignore' });
+  p.unref();
+  console.log(`[host] opened the owner's everyday Chrome on ${display} once, so sign_in has a profile to sign sites in to (pid ${p.pid})`);
 }

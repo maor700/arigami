@@ -109,7 +109,29 @@ export function matchProfile(profiles: OwnerProfile[], account: string | null | 
 /** A profile's label for a card or a tool result: "work.example (me@work.example)" / "Your Chrome". */
 export const profileLabel = (p: OwnerProfile): string => (p.name || p.profileDir) + (p.email ? ` (${p.email})` : '');
 
+/**
+ * Pure: should the host open the owner's everyday Chrome once on the shared desktop, so it HAS a profile? sign_in signs
+ * new sites in there and copies logins out of it; a fresh install has the browser and the display but no profile until
+ * someone opens Chrome on it. Only where an everyday Chrome is auto-detected (Linux, not a container, not turned off)
+ * and nothing is there yet.
+ */
+export function shouldSeedOwnerChrome(o: { platform: NodeJS.Platform; inContainer: boolean; config: OwnerChromeConfig | false | null | undefined; env: NodeJS.ProcessEnv; hasProfile: boolean; displayUp: boolean; chromeRunning: boolean }): { seed: true } | { seed: false; why: string } {
+  if (o.config === false || o.env.ARIGAMI_OWNER_CHROME === '0' || o.env.ARIGAMI_OWNER_CHROME === 'false') return { seed: false, why: 'owner Chrome turned off' };
+  if (o.env.ARIGAMI_OWNER_CHROME && o.env.ARIGAMI_OWNER_CHROME !== '1') return { seed: false, why: 'an explicit owner Chrome is configured' };
+  if (o.config && o.config.userDataDir) return { seed: false, why: 'an explicit owner Chrome is configured' };
+  if (o.platform !== 'linux' || o.inContainer) return { seed: false, why: 'no everyday Chrome on this kind of host' };
+  if (!o.displayUp) return { seed: false, why: 'no shared desktop' };
+  if (o.hasProfile) return { seed: false, why: 'the profile is there' };
+  if (o.chromeRunning) return { seed: false, why: 'Chrome is starting' };
+  return { seed: true };
+}
+
+/** The flags the owner's everyday Chrome is started with when the HOST starts it — no DevTools port, ever. */
+export const OWNER_CHROME_FLAGS = ['--password-store=basic', '--no-first-run', '--no-default-browser-check'];
+
 const inContainer = (): boolean => fs.existsSync('/.dockerenv') || !!process.env.KUBERNETES_SERVICE_HOST;
+
+export const ownerChromeInContainer = (): boolean => inContainer();
 
 /** The owner's everyday Chrome profile on this host, or null. Read fresh: the owner may switch profiles. */
 export function ownerProfile(): OwnerProfile | null {
