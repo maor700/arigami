@@ -102,6 +102,28 @@ or a take-over), offer `save_login({site})` — the human approves it on a card,
 and later sessions get that site through `request_login` with no password at
 all. An agent session keeps its own identity with `save_browser_logins()`.
 
+## The shared desktop — one session at a time, through the lease
+
+The global desktop (`:99` on Linux) is the owner's own screen; on a host where the owner uses an everyday Chrome
+there, it is the browser Google treats as a person (an SSO sign-up that My browser could not get through — a
+CAPTCHA, "enter your email" — usually goes through there). It is ONE machine for every session and the owner,
+so it is driven only through the host's lease:
+
+1. `shared_desktop_acquire({site, reason})`. `{granted:true}` → yours. `{queued:true, position}` → **stop and end
+   your turn**; the host messages you `[host] Your turn…`. Never poll.
+2. Act with `desktop_screenshot` / `desktop_pointer` / `desktop_keyboard` / `desktop_launch` and `shared:true`.
+   No raw `xinput.py` / `scrot` on it: that bypasses the lease, and the host reads it as someone else's input.
+3. Screenshot first; open your own tab (`ctrl+t`), stay on the site and the sign-in provider's pages, never the
+   owner's other tabs. Typing is limited by the host to the site's URLs, sign-in providers and the owner's
+   account email; a password or code is `request_screen`; text the human gave in the chat: `from_human:true`.
+4. `request_screen` (or any card) parks your lease: others may use the screen meanwhile and you are first in line
+   when the human answers — wait for `[host] Your turn…`, and redo a step whose page expired meanwhile.
+5. The owner's own input pauses you (`paused:true` → end your turn; `[host] The owner is done…` wakes you). After
+   60 s without an action the lease goes to the next session.
+6. Signed in → `shared_desktop_release` right away, then `request_login(site)`: logins in the owner's everyday
+   Chrome are visible to `browser_logins` / `request_login` (`sources: chrome`), so the site comes to your own
+   browser and the work continues there.
+
 ## The convention
 
 ### 1. Opening message

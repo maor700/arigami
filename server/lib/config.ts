@@ -254,6 +254,9 @@ export interface Config {
   devServerPorts: number[];
   dispatcher: DispatcherConfig;
   screen: ScreenConfig;
+  // The owner's everyday Chrome as a second source of logins (lib/owner-chrome.ts): unset = auto (Linux, not in a
+  // container, ~/.config/google-chrome present), false = off, or where it is.
+  ownerChrome?: { userDataDir?: string; profile?: string } | false;
   brain: BrainConfig;
   artifacts: ArtifactsConfig;
   share: ShareConfig;
@@ -367,6 +370,9 @@ export const DEFAULTS: Config = {
     displayBase: IS_DEFAULT_INSTANCE ? 100 : 200,
     keepProfiles: false,
   },
+  // {} = auto (lib/owner-chrome.ts). It must be a DEFAULTS key: loadFile() reads only those, and a config.json
+  // `"ownerChrome": false` was silently dropped — the owner's Chrome stayed on (measured on a scratch host).
+  ownerChrome: {},
   brain: {
     heartbeatEnabled: false,
     heartbeatEvery: '30m',

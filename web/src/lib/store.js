@@ -60,6 +60,9 @@ let state = {
   //     global view (rail icon); {sessionId, requestId} = opened by "Take
   //     over" on a request_screen card, so the modal shows Done / Cancel.
   screen: { controlRequestId: null, panel: null, modal: false },
+  // The shared desktop's lease (server/lib/shared-desktop.ts): who holds it, who waits, whether the owner is on it.
+  // GET /__api/shared-desktop once, then 'shared-desktop' over WS. null = not loaded.
+  sharedDesktop: null,
 };
 
 const listeners = new Set();
@@ -692,6 +695,21 @@ export function setScreenPanel(open) {
 // machine — side panel "enlarge", no open request), or {sessionId,
 // requestId} (Take over, same as {sessionId} plus the request context/
 // Done/Cancel footer — see ScreenModal.jsx).
+export async function loadSharedDesktop() {
+  try {
+    const r = await api.get('/shared-desktop');
+    if (r?.lease) setState({ sharedDesktop: r.lease });
+  } catch {
+    /* an older host has no lease */
+  }
+}
+
+/** The owner takes the shared desktop back from the agent holding it. */
+export async function releaseSharedDesktop() {
+  await api.post('/shared-desktop/release', {});
+  await loadSharedDesktop();
+}
+
 export function setScreenModal(open) {
   const modal = open && typeof open === 'object' ? open : open ? {} : false;
   setState({ screen: { ...state.screen, modal } });
@@ -1182,6 +1200,11 @@ function handleEvent(msg) {
             ? payload
             : null;
       patchSession(sid, { progress });
+      return;
+    }
+    case 'shared-desktop': {
+      const lease = msg.lease ?? payload?.lease;
+      if (lease) setState({ sharedDesktop: lease });
       return;
     }
     case 'health': {

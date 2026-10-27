@@ -156,9 +156,11 @@ test('sample: the process table is attributed and sorted, or honestly empty', ()
     if (process.platform === 'win32') expect(p.cpuPct).toBe(null);
   }
 
-  // Every rolled-up session must come from a process that named it.
-  for (const row of s.sessions)
-    expect(s.processes.some((p) => p.session === row.session)).toBe(true);
+  // Every rolled-up session must come from a process that named it. The roll-up counts EVERY process, the table only
+  // the heaviest few — on a busy host a session's processes can all sit below the top 8 — so look in the full table.
+  const full = sample({ topProcesses: Number.MAX_SAFE_INTEGER });
+  for (const row of full.sessions)
+    expect(full.processes.some((p) => p.session === row.session)).toBe(true);
 });
 
 // ---------------------------------------------------------------------------

@@ -35,3 +35,30 @@ Passwords, 2FA and OTP codes are never typed by the agent — that is `request_s
 51 actions, 0 misplaced clicks on simple pages, but plumbing failures that this layer removes: a screenshot returned
 as a file link instead of an image, a background Chrome that died with its shell, and an `xinput.py` path the session
 had to guess. Long unattended tasks still need verification between steps: every action is a screenshot round-trip.
+
+## The shared desktop — a lease, not a free-for-all
+
+The global desktop (`:99`, the one the cockpit's screen icon shows) is the owner's own screen. On a host where the
+owner keeps an everyday Chrome there, it is the browser Google signs in without a CAPTCHA — so agents want it too.
+Every agent action on it goes through the host (`server/lib/shared-desktop.ts`):
+
+| Tool | |
+|---|---|
+| `shared_desktop_acquire({site, reason})` | `{granted}` or `{queued, position}`. A queued session ends its turn; the host messages it `[host] Your turn…` when the machine is its (FIFO). |
+| `desktop_screenshot` / `_pointer` / `_keyboard` / `_launch` with `shared:true` | The same tools, on the shared desktop, for the holder only (`409` with `queued` / `parked` / `paused` / `expired` otherwise). |
+| `shared_desktop_release` | Back to the next in line. |
+
+* **Released** after 60 s without an action (120 s for a session just woken from the queue), on release, when the
+  session is archived or deleted, and when the owner presses **Take it back** in the screen view (which shows the
+  holder, the queue and who waits for the owner).
+* **Parked** while the holder waits on the human (`request_screen` — whose card then shows the shared screen — or
+  any card): the next session may use the machine, the holder's window stays, and when the human answers the holder
+  is at the head of the queue (ahead of sessions that asked earlier).
+* **The owner first.** Input on the display that did not come through the host — the owner over VNC — pauses the
+  holder until the screen has been quiet for 8 s, and the queue waits too. Told apart by the X server's idle counter
+  (`server/lib/xidle.py`, XScreenSaver): every input event resets it, and the host knows when its own XTEST input ran.
+* **Guards** (the owner's real browser has no DevTools port, so they are on what goes in): navigation keys only (no
+  paste, no closing or quitting windows); typed text only a URL of the leased site or a sign-in provider, or the
+  owner's identity email — anything else needs `from_human:true` (text the human gave in the chat); only a browser
+  can be launched, without debugging/profile flags; nothing can be quit.
+

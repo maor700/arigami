@@ -12,7 +12,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { pickDriver } from './screen-driver.js';
-import { chromeExtraFlags } from './chrome.js';
+import { chromeEnv, chromeExtraFlags } from './chrome.js';
+import { cfg } from './config.js';
+import { screenTarget } from './desktops.js';
+import { captureScreen } from '../vnc.js';
 import { SKILLS_DIR } from '../skills.js';
 
 export const XINPUT = path.join(SKILLS_DIR, '_lib', 'xinput.py');
@@ -89,9 +92,47 @@ function run(argv: string[], display: string, timeoutMs = 15_000): Promise<{ cod
 export async function desktopAct(sessionId: string, a: DesktopAction): Promise<{ ok: true } | { ok: false; error: string }> {
   const args = xinputArgs(a);
   const { display } = await ownDesktop(sessionId);
+  return actOn(display, args);
+}
+
+async function actOn(display: string, args: string[]): Promise<{ ok: true } | { ok: false; error: string }> {
   const r = await run([XINPUT, ...args], display);
   if (r.code !== 0) return { ok: false, error: r.err || `xinput exited ${r.code}` };
   return { ok: true };
+}
+
+// ---- the SHARED desktop (the owner's screen, :99) — only through the lease in shared-desktop.ts ------------------
+
+/** The shared display, or an error when this host has none to drive. */
+export function sharedDisplay(): string {
+  const driver = pickDriver();
+  if (driver.id !== 'x11') throw new Error(`desktop control needs the x11 driver (Linux); this host uses "${driver.id}"`);
+  const d = String(cfg.screen?.display || ':99');
+  if (!/^:\d+$/.test(d)) throw new Error('this host has no shared desktop display');
+  return d;
+}
+
+/** One action on the shared desktop. The caller has checked the lease and the input guards. */
+export async function sharedAct(a: DesktopAction): Promise<{ ok: true } | { ok: false; error: string }> {
+  const args = xinputArgs(a);
+  const display = sharedDisplay();
+  const sd = await import('./shared-desktop.js');
+  return sd.agentInput(() => actOn(display, args));
+}
+
+export async function sharedScreenshot(sessionId: string): Promise<DesktopShot> {
+  sharedDisplay();
+  const cap = await captureScreen(screenTarget(null));
+  return keepShot(sessionId, cap.png, cap.width ?? null, cap.height ?? null);
+}
+
+/** Start a browser on the shared desktop (the owner's own, when it is not running). Not tracked for desktop_quit. */
+export function sharedLaunch(command: string, args: string[]): { pid: number } {
+  if (!command || /[\s;&|`$<>]/.test(command)) throw new Error('command must be a single program name or path (put its arguments in args)');
+  const child = spawn(command, args.map(String), { env: chromeEnv({ ...process.env, DISPLAY: sharedDisplay() }), detached: true, stdio: 'ignore' });
+  child.unref();
+  if (!child.pid) throw new Error(`could not start ${command}`);
+  return { pid: child.pid };
 }
 
 export interface DesktopShot {
@@ -111,17 +152,21 @@ export async function desktopScreenshot(sessionId: string): Promise<DesktopShot>
   if (driver.id !== 'x11') throw new Error(`desktop control needs the x11 driver (Linux); this host uses "${driver.id}"`);
   await driver.ensure(sessionId);
   const cap = await driver.capture(sessionId);
+  return keepShot(sessionId, cap.png, cap.width ?? null, cap.height ?? null);
+}
+
+function keepShot(sessionId: string, png: Buffer, width: number | null, height: number | null): DesktopShot {
   const dir = path.join(process.env.ARIGAMI_DIR || path.join(os.homedir(), '.arigami'), 'desktop-shots', sessionId);
   fs.mkdirSync(dir, { recursive: true });
   const ts = Date.now();
   const file = path.join(dir, `${ts}.png`);
-  fs.writeFileSync(file, cap.png);
+  fs.writeFileSync(file, png);
   // keep only the last few frames of a session
   try {
     const old = fs.readdirSync(dir).sort().slice(0, -8);
     for (const f of old) fs.rmSync(path.join(dir, f), { force: true });
   } catch {}
-  return { png: cap.png, width: cap.width ?? null, height: cap.height ?? null, ts, file };
+  return { png, width, height, ts, file };
 }
 
 const launched = new Map<string, Map<number, { cmd: string }>>(); // session → pid → record
@@ -144,8 +189,9 @@ export function launchArgs(command: string, args: string[], flags: string[]): st
 export async function desktopLaunch(sessionId: string, command: string, args: string[] = []): Promise<{ pid: number }> {
   if (!command || /[\s;&|`$<>]/.test(command)) throw new Error('command must be a single program name or path (put its arguments in args)');
   const { display } = await ownDesktop(sessionId);
+  const env = { ...process.env, DISPLAY: display };
   const child = spawn(command, launchArgs(command, args.map(String), chromeExtraFlags()), {
-    env: { ...process.env, DISPLAY: display },
+    env: CHROME_RE.test(command) ? chromeEnv(env) : env,
     detached: true,
     stdio: 'ignore',
   });

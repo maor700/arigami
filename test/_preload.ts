@@ -22,6 +22,10 @@ process.env.ARIGAMI_SHIPPED_BUNDLES_DIR = new URL('./fixtures/bundles', import.m
 // signed in to claude / codex must not decide which engine a new session gets (see registerEngineReadiness).
 process.env.ARIGAMI_ENGINE_AUTOPICK = '0';
 
+// A login list must not depend on the everyday Chrome of the machine running the tests (lib/owner-chrome.ts):
+// tests that exercise it point ARIGAMI_OWNER_CHROME at a fixture profile themselves.
+process.env.ARIGAMI_OWNER_CHROME = '0';
+
 // Web tests compare rendered Hebrew against exact literals. The UI wraps Latin runs inside Hebrew in invisible
 // bidi isolates (web/src/lib/i18n.js isolateLatin); tests that exercise it call isolateLatin() directly.
 (globalThis as any).__ARIGAMI_PLAIN_T = true;
@@ -35,8 +39,15 @@ process.env.ARIGAMI_ENGINE_AUTOPICK = '0';
   const fs = require('node:fs') as typeof import('node:fs');
   const path = require('node:path') as typeof import('node:path');
   const os = require('node:os') as typeof import('node:os');
-  const parent = os.tmpdir();
   const PREFIX = 'arigami-testrun-';
+  // Chrome puts its singleton socket at $TMPDIR/.com.google.Chrome.XXXXXX/SingletonSocket and aborts at start when
+  // TMPDIR is longer than 66 bytes (CHROME_TMPDIR_MAX in server/lib/chrome.ts, measured). The host gives the Chrome
+  // it spawns a short TMPDIR itself (chromeEnv), but tests also start Chrome directly with this run's TMPDIR — and
+  // under an Arigami session's ~62-byte scratch dir the run root alone is ~90. Such a run puts its root in /tmp
+  // instead: still removed at exit, and swept by the next run like any other.
+  const rootLen = (p: string) => path.join(p, `${PREFIX}${process.pid}-XXXXXX`).length;
+  let parent = os.tmpdir();
+  if (process.platform !== 'win32' && rootLen(parent) > 66 && fs.existsSync('/tmp')) parent = '/tmp';
   for (const n of fs.readdirSync(parent)) {
     const pid = Number(n.startsWith(PREFIX) ? n.slice(PREFIX.length).split('-')[0] : NaN);
     if (!Number.isInteger(pid) || pid <= 0) continue;

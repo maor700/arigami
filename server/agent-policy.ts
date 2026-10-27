@@ -63,7 +63,7 @@ export const CRON_BUILTINS = ['CronCreate', 'CronDelete', 'CronList'];
 const BROWSER_TOOLS = ['browser_open', 'browser_navigate', 'browser_snapshot', 'browser_click', 'browser_type', 'browser_scroll', 'browser_close', 'browser_logins', 'request_login', 'sso_login', 'sso_look', 'sso_click', 'sso_navigate', 'sso_done', 'request_credentials', 'save_login'];
 
 export const FAMILIES: Record<string, string[]> = {
-  desktop: ['open_tab', 'update_tab', 'close_tab', 'activate_tab', 'capture_screen', 'request_screen', 'save_browser_logins', ...BROWSER_TOOLS],
+  desktop: ['open_tab', 'update_tab', 'close_tab', 'activate_tab', 'capture_screen', 'request_screen', 'save_browser_logins', 'shared_desktop_acquire', 'shared_desktop_release', ...BROWSER_TOOLS],
   browser: [...BROWSER_TOOLS],
   whatsapp: ['whatsapp', 'mcp__whatsapp__*', 'mcp__composio-mcp__WHATSAPP_*'],
   gmail: ['mcp__composio-mcp__GMAIL_*'],

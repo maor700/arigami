@@ -15,12 +15,16 @@ rung that works.
       carries the login into the session. No SSO → a fresh sign-in on the site's form with
       `request_credentials`: the human fills it from their credential vault (or types it once on the card), the host
       puts it into the page, and the agent never sees it.
-   2. **Blocked by automation detection** (Google "this browser may not be secure", a CAPTCHA, Cloudflare Turnstile)
-      → do the SSO in the **shared machine's Chrome** (the desktop icon; the human's own profile, already signed in to
-      Google), driven with `desktop_*`. This saves the human an intervention. If Google asks for the password again,
-      that is `request_screen` — the agent never types it.
-   3. **Keep the result.** Close that Chrome **gracefully** (`browser_close` does; a SIGTERM loses fresh cookies), then
-      open the CDP Chrome on a **copy of that profile directory** (see below) and carry on.
+   2. **Blocked by automation detection** (Google "this browser may not be secure", a CAPTCHA, "enter your email",
+      Cloudflare Turnstile) → do the SSO in the **shared desktop's Chrome** (the owner's everyday profile, already
+      signed in to Google), through the host's lease: `shared_desktop_acquire({site})`, then the `desktop_*` tools with
+      `shared:true` — one session at a time, the others queued and woken (see `docs/DESKTOP-CONTROL.md`). If Google
+      asks for the password again, that is `request_screen` — the agent never types it.
+   3. **Keep the result.** `shared_desktop_release`, then `request_login(site)`: the host reads that one site's login
+      from the everyday profile **on disk** (a snapshot copy opened by a headless Chrome of its own — the owner's
+      Chrome is never driven or written) and carries it into the session's Chrome, with the same per-site approval,
+      policies and post-transfer check as a My-browser login. Off where there is no everyday Chrome (containers,
+      Windows/macOS by default); `ownerChrome` in config.json / `ARIGAMI_OWNER_CHROME` set it (`false` / `0` = off).
 
 Passwords, 2FA and OTP are never typed by the agent: a sign-in form is `request_credentials`; a CAPTCHA, a payment or a
 push approval is `request_screen`.
