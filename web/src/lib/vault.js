@@ -82,6 +82,7 @@ export function useVault() {
       if (!status.loaded) refreshVault().catch(() => setStatus({}));
       return () => subs.delete(fn);
     },
-    () => status
+    () => status,
+    () => status // a server render (tests, SSR) needs the snapshot too, or React throws "Missing getServerSnapshot"
   );
 }

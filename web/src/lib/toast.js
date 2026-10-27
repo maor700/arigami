@@ -59,5 +59,5 @@ function subscribe(fn) {
 }
 
 export function useToasts() {
-  return useSyncExternalStore(subscribe, () => toasts);
+  return useSyncExternalStore(subscribe, () => toasts, () => toasts);
 }
