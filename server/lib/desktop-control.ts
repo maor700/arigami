@@ -120,6 +120,59 @@ export async function sharedAct(a: DesktopAction): Promise<{ ok: true } | { ok: 
   return sd.agentInput(() => actOn(display, args));
 }
 
+/**
+ * sign_in's vault fill: type ONE value into whatever has focus on the shared desktop. The value goes to xinput.py on
+ * stdin (argv shows in `ps`), the error text never carries it, and nothing here logs it. The caller has checked the
+ * lease and the fill guard (lib/sign-in.ts sharedFillGuard).
+ */
+export async function sharedTypeSecret(value: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  const display = sharedDisplay();
+  const sd = await import('./shared-desktop.js');
+  return sd.agentInput(
+    () =>
+      new Promise((resolve) => {
+        const p = spawn('python3', [XINPUT, 'type-secret'], { env: { ...process.env, DISPLAY: display }, stdio: ['pipe', 'ignore', 'pipe'] });
+        let err = '';
+        const kill = setTimeout(() => { try { p.kill('SIGKILL'); } catch {} }, 30_000);
+        p.stderr.on('data', (d) => (err += d));
+        p.on('close', (code) => {
+          clearTimeout(kill);
+          resolve(code === 0 ? { ok: true } : { ok: false, error: err.trim().replace(/^xinput: /, '') || `xinput exited ${code}` });
+        });
+        p.on('error', (e) => { clearTimeout(kill); resolve({ ok: false, error: String(e.message) }); });
+        p.stdin.end(value);
+      })
+  );
+}
+
+export interface ActiveWindow {
+  pid: number | null;
+  wmClass: string;
+  title: string;
+}
+
+/** The focused window on the shared desktop (xprop): its process, class and title. Null when it cannot be read. */
+export async function sharedActiveWindow(): Promise<ActiveWindow | null> {
+  const display = sharedDisplay();
+  const xprop = (args: string[]) =>
+    new Promise<string>((resolve) => {
+      const p = spawn('xprop', args, { env: { ...process.env, DISPLAY: display }, stdio: ['ignore', 'pipe', 'ignore'] });
+      let out = '';
+      const kill = setTimeout(() => { try { p.kill('SIGKILL'); } catch {} }, 3000);
+      p.stdout.on('data', (d) => (out += d));
+      p.on('close', () => { clearTimeout(kill); resolve(out); });
+      p.on('error', () => { clearTimeout(kill); resolve(''); });
+    });
+  const root = await xprop(['-root', '_NET_ACTIVE_WINDOW']);
+  const id = /window id # (0x[0-9a-f]+)/i.exec(root)?.[1];
+  if (!id || /^0x0$/i.test(id)) return null;
+  const w = await xprop(['-id', id, '_NET_WM_PID', 'WM_CLASS', '_NET_WM_NAME']);
+  const pid = Number(/_NET_WM_PID\(CARDINAL\) = (\d+)/.exec(w)?.[1]) || null;
+  const wmClass = /WM_CLASS\(STRING\) = (.*)/.exec(w)?.[1]?.trim() || '';
+  const title = /_NET_WM_NAME\(UTF8_STRING\) = "(.*)"/.exec(w)?.[1] || '';
+  return { pid, wmClass, title };
+}
+
 export async function sharedScreenshot(sessionId: string): Promise<DesktopShot> {
   sharedDisplay();
   const cap = await captureScreen(screenTarget(null));

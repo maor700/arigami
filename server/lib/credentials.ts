@@ -32,16 +32,60 @@ export interface CredentialRequest {
   fields: CredRole[];
   reason?: string;
   pref: LoginPref;
+  /** 'shared' = the field is in the owner's Chrome on the shared desktop (sign_in); typed there with real keys. */
+  target?: 'shared';
+  /** The Chrome profile it is typed into, for the card ("work.example"). */
+  account?: string;
 }
 
 interface Pending {
   sessionId: string;
   origin: string;
+  /** The session-browser tab (target 'session'); '' for the shared desktop. */
   tabId: string;
   fields: CredRole[];
   at: number;
   /** what the card shows — the session's copy is a mirror of this, never read back */
   request: CredentialRequest;
+  /** Shared desktop: re-checks, right before the keys go out, that the focused field is still on `origin`. */
+  recheck?: () => Promise<string | null>;
+}
+
+/** How a request ended — what a host-side waiter (sign_in) hears. Never a value. */
+export type Settled = 'filled' | 'manual' | 'cancel' | 'expired';
+const settleWaiters = new Map<string, (s: Settled) => void>();
+
+/** Wait for a request to be answered (filled / the owner types it / cancelled), at most `timeoutMs`. */
+export function waitSettled(requestId: string, timeoutMs = REQUEST_TTL_MS): Promise<Settled> {
+  return new Promise((resolve) => {
+    const t = setTimeout(() => {
+      settleWaiters.delete(requestId);
+      resolve('expired');
+    }, timeoutMs);
+    (t as any).unref?.();
+    settleWaiters.set(requestId, (v) => {
+      clearTimeout(t);
+      resolve(v);
+    });
+  });
+}
+
+/** Does a host-side caller wait on this request (then IT tells the agent, not a "[host] …" message)? */
+export const hasWaiter = (requestId: string): boolean => settleWaiters.has(requestId);
+
+export function settle(requestId: string, outcome: Settled): void {
+  const w = settleWaiters.get(requestId);
+  if (!w) return;
+  settleWaiters.delete(requestId);
+  w(outcome);
+}
+
+/** The keys that type a value on the shared desktop — the real one, or a test's. */
+export type SharedTyper = (value: string) => Promise<{ ok: true } | { ok: false; error: string }>;
+let sharedTyper: SharedTyper = async (value) => (await import('./desktop-control.js')).sharedTypeSecret(value);
+/** Test hook. */
+export function _setSharedTyper(fn: SharedTyper): void {
+  sharedTyper = fn;
 }
 
 export const REQUEST_TTL_MS = 15 * 60_000;
@@ -252,6 +296,29 @@ export async function request(sessionId: string, opts: { site?: string; reason?:
   return { status: 'pending', request };
 }
 
+/**
+ * sign_in on the shared desktop: a card for ONE field the agent has clicked into, in the owner's Chrome. The host
+ * already checked the page is on `origin` (lib/sign-in.ts sharedFillGuard) and checks it again right before typing.
+ * Google and GitHub are not refused here: the refusal is about scripted sign-ins in an automated browser, and this is
+ * the owner's own Chrome, typed into with real keys.
+ */
+export function requestShared(
+  sessionId: string,
+  o: { origin: string; field: CredRole; reason?: string; account?: string; recheck: () => Promise<string | null> }
+): { status: 'pending'; request: CredentialRequest } | { status: 'manual'; origin: string; host: string } {
+  const host = hostOf(o.origin);
+  const pref = prefFor(o.origin);
+  if (pref === 'manual') return { status: 'manual', origin: o.origin, host };
+  for (const [id, p] of pending) if (p.sessionId === sessionId) { pending.delete(id); settle(id, 'cancel'); }
+  const requestId = 'cred_' + crypto.randomBytes(9).toString('base64url');
+  const request: CredentialRequest = {
+    requestId, at: new Date().toISOString(), origin: o.origin, host, fields: [o.field], pref, target: 'shared',
+    ...(o.account ? { account: o.account.slice(0, 120) } : {}), ...(o.reason ? { reason: String(o.reason).slice(0, 200) } : {}),
+  };
+  pending.set(requestId, { sessionId, origin: o.origin, tabId: '', fields: [o.field], at: Date.now(), request, recheck: o.recheck });
+  return { status: 'pending', request };
+}
+
 export function getPending(sessionId: string, requestId: string): Pending | null {
   const p = pending.get(requestId);
   if (!p || p.sessionId !== sessionId) return null;
@@ -262,12 +329,13 @@ export function getPending(sessionId: string, requestId: string): Pending | null
   return p;
 }
 
-export function forget(requestId: string): void {
+export function forget(requestId: string, outcome: Settled = 'cancel'): void {
   pending.delete(requestId);
+  settle(requestId, outcome);
 }
 
 export function forgetSession(sessionId: string): void {
-  for (const [id, p] of pending) if (p.sessionId === sessionId) pending.delete(id);
+  for (const [id, p] of pending) if (p.sessionId === sessionId) { pending.delete(id); settle(id, 'cancel'); }
 }
 
 export class FillError extends Error {
@@ -292,6 +360,7 @@ export async function fill(
   const values: Partial<Record<CredRole, string>> = {};
   for (const r of ROLES) if (typeof raw[r] === 'string' && (raw[r] as string).length && (raw[r] as string).length <= 1024) values[r] = raw[r] as string;
   if (!Object.keys(values).length) throw new FillError('nothing to fill', 400);
+  if (p.request.target === 'shared') return fillShared(requestId, p, values);
   const tab = (await listTabs(sessionId)).find((t) => t.id === p.tabId && t.webSocketDebuggerUrl);
   if (!tab) throw new FillError('the sign-in tab was closed', 410);
   const submit = opts.submit !== false;
@@ -318,7 +387,29 @@ export async function fill(
     if (step?.submitted) submitted = true;
   }
   pending.delete(requestId);
+  settle(requestId, 'filled');
   return { filled: [...filled], submitted, origin: p.origin };
+}
+
+/**
+ * The shared desktop: type the ONE field the card was for, with real keys, into the field that has the focus — after
+ * the page is checked again. Nothing is submitted: the agent presses Enter / the button, as a person would.
+ */
+async function fillShared(requestId: string, p: Pending, values: Partial<Record<CredRole, string>>): Promise<{ filled: CredRole[]; submitted: boolean; origin: string }> {
+  const role = p.fields[0];
+  const value = values[role];
+  if (typeof value !== 'string') throw new FillError(`the card was for the ${role}, and none was given`, 400);
+  const moved = p.recheck ? await p.recheck() : null;
+  if (moved) {
+    pending.delete(requestId);
+    settle(requestId, 'cancel');
+    throw new FillError(`nothing was typed: ${moved}`, 409);
+  }
+  const r = await sharedTyper(value);
+  if (!r.ok) throw new FillError(`typing on the shared desktop failed: ${r.error}`, 500);
+  pending.delete(requestId);
+  settle(requestId, 'filled');
+  return { filled: [role], submitted: false, origin: p.origin };
 }
 
 /** Test hook: put a pending request in place without a browser. */

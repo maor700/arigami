@@ -1,52 +1,109 @@
-# Getting signed in to a service — the order to try
+# Getting signed in — `sign_in`
 
-An agent that needs a service never starts with a browser. Walk the ladder top to bottom and stop at the first
-rung that works.
+This file is the one description of how an Arigami session gets into a service. The prompt block (`login`,
+`server/prompt-blocks.ts`) is three lines that point here; the vault design (`docs/INSTRUCTIONS-AND-VAULT.md`) covers
+how values are stored and filled, not the order.
 
-1. **An Arigami MCP connection** (`mcp:<service>` — Linear, Notion, Sentry, Vercel, Figma…; the host holds the grant
-   for every engine, see `connect-mcp`). If the host already has it, use its tools. No browser, no login.
-2. **The model's own connection** — a connector the engine itself carries (Claude's or Codex's). Check it before
-   opening anything; it costs the human nothing.
-3. **The browser**, in this order:
-   1. **The session's isolated Chrome over CDP** (`browser_open`, `request_login` / the login vault). Best for in-page
-      work: DOM-precise, cheap, concurrent. A site that offers **SSO** (Continue with Google / Microsoft…) → `sso_login`
-      first: the SSO runs in the owner's own browser ("My browser" — the only one signed in to their account), the
-      agent clicks through it in a tab of its own (no typing, only that site and the sign-in pages), and `sso_done`
-      carries the login into the session. No SSO → a fresh sign-in on the site's form with
-      `request_credentials`: the human fills it from their credential vault (or types it once on the card), the host
-      puts it into the page, and the agent never sees it.
-   2. **Blocked by automation detection** (Google "this browser may not be secure", a CAPTCHA, "enter your email",
-      Cloudflare Turnstile) → do the SSO in the **shared desktop's Chrome** (the owner's everyday profile, already
-      signed in to Google), through the host's lease: `shared_desktop_acquire({site})`, then the `desktop_*` tools with
-      `shared:true` — one session at a time, the others queued and woken (see `docs/DESKTOP-CONTROL.md`). If Google
-      asks for the password again, that is `request_screen` — the agent never types it.
-   3. **Keep the result.** `shared_desktop_release`, then `request_login(site)`: the host reads that one site's login
-      from the everyday profile **on disk** (a snapshot copy opened by a headless Chrome of its own — the owner's
-      Chrome is never driven or written) and carries it into the session's Chrome, with the same per-site approval,
-      policies and post-transfer check as a My-browser login. Off where there is no everyday Chrome (containers,
-      Windows/macOS by default); `ownerChrome` in config.json / `ARIGAMI_OWNER_CHROME` set it (`false` / `0` = off).
+An agent calls **one tool**: `sign_in({site, reason})`. The order is in code (`server/lib/sign-in.ts` `ladder()`,
+pinned by `test/sign-in.test.ts`), not in a prompt the model has to run in its head. The tool waits and answers one of:
 
-Passwords, 2FA and OTP are never typed by the agent: a sign-in form is `request_credentials`; a CAPTCHA, a payment or a
-push approval is `request_screen`.
+| Answer | Meaning |
+|---|---|
+| `{status: "signed_in", via, next}` | done — `via` is `connection`, `saved`, `shared-chrome` or `cli`; `next` says where to work |
+| `{status: "blocked", reason}` | stop and tell the human that one reason |
+| `{status: "driving", next}` | a new sign-in is open in the owner's own Chrome and the shared desktop is the agent's — see below |
 
-## Why a profile copy, not exported cookies
+## The ladder
 
-Measured on Linear and Notion (Google SSO, the profile already signed in to Google):
+0. **A CLI** (`site: "gcloud"`): a credential that still works (`gcloud auth print-access-token`) is reused. Otherwise
+   `gcloud auth login` runs with its browser step in the owner's Chrome (below): `BROWSER` is a tiny opener that hands
+   the URL to the chosen profile, and the OAuth redirect lands on gcloud's own localhost listener — no code to copy.
+1. **A connection the host already has** — `mcp:<service>` (Linear, Notion, Sentry, Figma, Vercel…), `composio:<toolkit>`
+   (Gmail, Calendar, Drive, Slack), `git` (gh). Use its tools; no browser. `browser:true` skips this rung when the web
+   page itself is needed.
+2. **A saved login that is really signed in**, in the owner's everyday Chrome (any of its profiles) or in My browser.
+   "Signed in" means a **session cookie** (`sessionIndicator` in `server/lib/login-sites.ts`: per site — Facebook
+   `c_user`+`xs`, Google `SID`, GitHub `user_session`, Reddit `reddit_session`…; for other sites a cookie whose name
+   reads like a sign-in — auth, token, remember-me — and is not a known visitor cookie; a plain framework session
+   cookie like `rack.session` / `PHPSESSID`, which anonymous visitors get too, counts only at `done`). A visitor cookie (Facebook's `datr`, `fr`, `sb`, Cloudflare's
+   `__cf_bm`, Google's `NID`) is httpOnly+secure too and is **not** a login — that was the false positive that sent an
+   approved "Facebook login" with nothing in it. The login moves into the session's browser on the owner's standing
+   "Always for <site>" or after their answer on a card. Google does not accept a copied session: signed in there means
+   "work in the owner's Chrome" (`via: shared-chrome`), or use the Composio connection.
+3. **A new sign-in in the owner's everyday Chrome on the shared desktop** (`:99`, their real profile). Driven with real
+   mouse and keyboard (XTEST, `skills/_lib/xinput.py`) — **never DevTools**: a CDP browser trips bot checks (Facebook's
+   "I'm not a robot", Google's "this browser may not be secure"). The host takes the shared-desktop lease itself
+   (waiting in the queue if needed), opens the site in the chosen profile, and answers `driving`.
 
-* Exporting only the cookies into a fresh CDP Chrome did **not** sign Linear in (back to its login page). A site's
-  session is more than its cookies (localStorage, IndexedDB, device state).
-* A CDP Chrome started on a **copy** of the signed-in profile was signed in to Linear immediately, and "Continue with
-  Google" on Notion went straight to the account chooser → dashboard, with no Google password or challenge.
+No shared desktop on the host (containers, macOS/Windows by default) → rung 3 is `blocked` with that reason.
+
+## Driving a new sign-in
+
+- **The agent looks and clicks**: `desktop_screenshot({shared:true})`, `desktop_pointer({shared:true})`,
+  `desktop_keyboard({key, shared:true})` for Enter / Tab. It may type the account email; nothing else of its own.
+- **The host types secrets**: the agent clicks into a field and calls `sign_in({site, fill: "username" | "password" | "otp"})`.
+  The host checks (`sharedFillGuard`) that it still holds the lease, that the focused window is the owner's own Chrome
+  browser process (not a CDP one), and that the page the profile last navigated to (its History) is on the site or a
+  sign-in provider. A vault card for exactly that origin and that one field goes up; with the owner's per-site
+  **auto** choice, an unlocked vault fills it with no tap. The value goes cockpit → host → `xinput.py type-secret` on
+  **stdin** (never argv, never a log line, never the tool result), after the same check runs once more. A TOTP secret in
+  the entry (`otp` = an `otpauth://` URI, or KeePass's `TOTP Seed`) fills a one-time-code field the same way.
+- **The one hand-over**: a CAPTCHA, an SMS code or a push only the owner can do → `sign_in({site, human: "<exactly what to
+  do>"})`. The card says where (the shared desktop, which Chrome profile) and what; the lease is parked meanwhile and
+  comes back first.
+- **Done**: `sign_in({site, done: true})` waits up to 45 s for the session cookie to reach disk (Chrome writes cookies in
+  batches), releases the desktop, and carries that one site into the session's browser. A page that only *looks* signed
+  in is not enough.
+
+### The per-site vault permission
+
+The minimal safe rule: the owner approves a site **once** — "Remember this choice" on its vault card, or the choice in
+Settings › Connections › Passwords › *Choices per site* (`$ARIGAMI_DIR/login-prefs.json`, origin → `auto` | `manual`).
+`auto` fills without a card only when the vault is unlocked in a cockpit tab and holds exactly one entry for that exact
+origin; anything else shows the card. `manual` = the owner types that site themselves (the hand-over card). Nothing is
+filled on a site that is not on the lease, and never into a window that is not the owner's Chrome.
+
+## Where a login lives: one writer, one account per profile
+
+The signed-in profile of the owner's Chrome is the source. Chrome is the only writer to it; sessions get a **copy of one
+site** read from a snapshot of its files (`server/lib/owner-chrome.ts`, a headless Chrome of our own on the copy) and
+nothing is written back — no `save_login` into My browser after a sign-in. The owner's two accounts of a site (work and
+personal) live in two Chrome profiles: `sign_in({site, account})` picks one (an email, a profile name like `work.example`, a
+domain); a site signed in under two profiles without `account` is `blocked` until the agent says which. Without either,
+a new sign-in uses the profile signed in to the owner's identity (Google SSO works there), else the one Chrome last used.
+
+## The identity once, at setup — and a Chrome to sign in to
+
+* **The profile exists from the first boot.** The installer puts Chrome and the shared desktop on the host; on boot the
+  host opens the owner's everyday Chrome there once if it has no profile yet (`seedOwnerChrome`, server/index.ts —
+  default instance, Linux, not in a container, not turned off), the way a person would: no DevTools port,
+  `--password-store=basic` so its cookies stay readable to the host.
+* **The identity is signed in there — Google, Microsoft or Apple.** Settings › Connections › Sign-in identity runs
+  `connect-identity`: `sign_in` to that provider (`accounts.google.com`, `microsoft` → login.microsoftonline.com /
+  login.live.com, `apple` → account.apple.com) in that Chrome — the password from the vault, the owner approves the
+  provider's push — and records the provider and the profile (`identity.json` `provider`, `chromeProfile:
+  "chrome:<dir>"`). A new sign-in then defaults to that profile, so "Continue with <provider>" anywhere goes through
+  without the owner. Chrome's own sign-in (sync) is Google-only and not needed: the provider is signed in INSIDE a
+  profile, and a profile without a Chrome account is named by its profile name ("Work", "Personal").
+* **Connect playbooks finish their provider step there too.** A consent page that wants the identity's provider (Composio, Claude, Codex,
+  Tailscale, MCP vendors) is handed over with `sign_in({site, url})`: it opens that page in the identity's profile, the
+  agent picks the account and allows, `done` gives the desktop back, and the playbook keeps polling its own result.
+
+## The tools that became internal
+
+`browser_logins`, `request_login`, `request_credentials`, `sso_login` / `sso_look` / `sso_click` / `sso_navigate` /
+`sso_done`, `save_login` are not listed to the model and refuse a call with "use sign_in"; their routes stay for the
+cards already up and for `sign_in` itself. `save_browser_logins` stays for agent sessions (their own identity).
+`shared_desktop_acquire` / `release` and `request_screen` stay for work that is not a sign-in.
 
 ## Gotchas
 
-* Chrome refuses `--remote-debugging-port` on its **default** user-data-dir ("requires a non-default data
-  directory"). Copy the profile folder (`Profile 1`, the one named after the account — look in `Local State` →
-  `profile.info_cache`, not `Default`) plus `Local State` to a new dir, then start Chrome there with the port.
-* Do the copy **after** a graceful close, or the cookie journal is half-written.
-* A profile copy holds live sessions: keep it under the instance dir with the same permissions as the login vault,
-  never commit or share it.
-* `--remote-debugging-port` sets `navigator.webdriver`; some sites (and Google's sign-in) react to it. That is why
-  rung 3.2 exists.
-* Cloudflare Turnstile on some sites rejects synthetic clicks even in a real-profile Chrome — a site-specific
-  limit, not a reason to skip the ladder.
+* Chrome's cookies on Linux with the basic password store are `v10` (a fixed key) and readable from a copy; a profile
+  tied to a keyring (`v11`) is not offered.
+* The owner's Chrome has no DevTools port, so the host knows its page only from the outside: the focused window's pid
+  (`xprop _NET_WM_PID`) and the profile's History (committed within ~10 s). A sign-in page loaded more than 20 minutes
+  ago is reloaded before a fill.
+* `ownerChrome` in config.json / `ARIGAMI_OWNER_CHROME` choose the everyday Chrome (`false` / `0` = off);
+  `ARIGAMI_OWNER_CHROME_PROFILE` pins one profile.
+* Cloudflare Turnstile on some sites rejects synthetic clicks even in a real-profile Chrome — a site-specific limit;
+  that is the `human` hand-over.

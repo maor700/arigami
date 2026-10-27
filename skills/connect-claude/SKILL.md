@@ -13,9 +13,8 @@ Server side: `server/oauth-login.js` via `POST /__api/accounts/oauth/start|code`
 `GET /__api/accounts/oauth/status?id=` (already exists; no new endpoint needed).
 
 ## Hard rules
-1. **Never type passwords / 2FA / OTP / magic-link codes.** A code field on claude.ai's login →
-   `request_credentials` (the human fills it; you never see it); a magic link in their mail or a Google
-   password → take-over (`request_screen`). "Continue with Google" is fine to click when
+1. **Never type passwords / 2FA / OTP / magic-link codes.** A claude.ai login → `sign_in({site:"claude.ai", browser:true})`
+   (the host types vault values; you never see them), then reload; a magic link in their mail → take-over (`request_screen`). "Continue with Google" is fine to click when
    `identity` is connected — the account chooser is not a password screen.
 2. `export CONNECT_ALLOW="claude.ai claude.com platform.claude.com console.anthropic.com accounts.google.com google.com"`.
 3. Consent first; ≤ 2 attempts; nothing written to disk by you — the host stores
@@ -33,8 +32,7 @@ Server side: `server/oauth-login.js` via `POST /__api/accounts/oauth/start|code`
    - **Authorize screen** ("Claude Code wants to access…", button *Authorize*):
      click Authorize.
    - **Login screen** (email box / "Continue with Google"): if `identity` is
-     connected click *Continue with Google* and pick the identity email in the
-     chooser; if a password/2FA/email-code screen follows, or there is no identity:
+     connected, finish it in the owner's Chrome, where their identity's provider (Google / Microsoft / Apple — `GET /__api/setup/capabilities` → identity) is signed in; choose "Continue with <that provider>" when the page offers several: `sign_in({site:"<service>", url:"<the page's current URL>", reason})`, pick the identity email and Allow there (`desktop_screenshot` / `desktop_pointer` with shared:true), then `sign_in({site, done:true})` and continue polling here; if a password/2FA/email-code screen follows, or there is no identity:
      `capture_screen`, `request_screen({prompt:"Connecting your Claude account — claude.ai asks you to sign in.", reason:"login", hint:"Sign in, click Authorize on the next page, wait for the page that shows a code, then click Done."})`.
 4. After Authorize (yours or the human's): the host itself watches THIS
    session's Chrome (connect.sh sends `X-Arigami-Session`, so the flow started

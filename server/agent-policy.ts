@@ -57,10 +57,10 @@ export const CRON_BUILTINS = ['CronCreate', 'CronDelete', 'CronList'];
 // AND folded into `desktop` for compatibility (an agent already ticked
 // `desktop` gets browsing for free; a NEW agent can also grant just `browser`
 // without the rest of desktop's tools).
-// browser_logins / request_login / save_login ride with the browser: a login is
+// sign_in (and its internals: browser_logins / request_login / save_login…) rides with the browser: a login is
 // only useful to an agent that can drive one, and each hand-over is still
 // approved by a person on a card.
-const BROWSER_TOOLS = ['browser_open', 'browser_navigate', 'browser_snapshot', 'browser_click', 'browser_type', 'browser_scroll', 'browser_close', 'browser_logins', 'request_login', 'sso_login', 'sso_look', 'sso_click', 'sso_navigate', 'sso_done', 'request_credentials', 'save_login'];
+const BROWSER_TOOLS = ['browser_open', 'browser_navigate', 'browser_snapshot', 'browser_click', 'browser_type', 'browser_scroll', 'browser_close', 'sign_in', 'browser_logins', 'request_login', 'sso_login', 'sso_look', 'sso_click', 'sso_navigate', 'sso_done', 'request_credentials', 'save_login'];
 
 export const FAMILIES: Record<string, string[]> = {
   desktop: ['open_tab', 'update_tab', 'close_tab', 'activate_tab', 'capture_screen', 'request_screen', 'save_browser_logins', 'shared_desktop_acquire', 'shared_desktop_release', ...BROWSER_TOOLS],

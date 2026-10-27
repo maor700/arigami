@@ -863,9 +863,6 @@ async function handleScreenRequest(
   const sessionId = body.session_id as string | undefined;
   const s = sessionId && state.getSession(sessionId);
   if (!s) return badRequest(res, `unknown session_id: ${sessionId}`);
-  const requestId = 'scrn_' + nano();
-  (await import('./funnel.js')).firstTime('screen.first_request');
-  const prompt = String(body.prompt || '');
   // Optional context shown on the card: why the agent is blocked and what
   // exactly the human should complete. Unknown reasons collapse to 'other'.
   const reason: ScreenRequestReason | undefined = body.reason
@@ -873,18 +870,29 @@ async function handleScreenRequest(
       ? (String(body.reason) as ScreenRequestReason)
       : 'other'
     : undefined;
-  const hint = body.hint ? String(body.hint) : undefined;
+  const { done } = await openScreenRequest(sessionId!, { prompt: String(body.prompt || ''), reason, hint: body.hint ? String(body.hint) : undefined, shared: body.shared === true });
+  await respondBlocking(res, body, sessionId!, done); // CHAT1: long-poll legs
+}
+
+/** The screen hand-over card itself — request_screen's, and sign_in's for a CAPTCHA / push (lib/sign-in.ts). */
+async function openScreenRequest(
+  sessionId: string,
+  o: { prompt: string; reason?: ScreenRequestReason; hint?: string; shared?: boolean }
+): Promise<{ done: Promise<ScreenRequestResult> }> {
+  const requestId = 'scrn_' + nano();
+  (await import('./funnel.js')).firstTime('screen.first_request');
+  const { prompt, reason, hint } = o;
   // A session working on the SHARED desktop hands THAT screen over (the card shows it), and its lease is parked
   // meanwhile: others may use the machine; it gets it back first when the human answers (lib/shared-desktop.ts).
   const lease = sharedDesktop.get();
-  const shared = body.shared === true || lease.holder?.sessionId === sessionId || lease.parked.has(sessionId!);
-  if (shared) lease.park(sessionId!, 'request_screen');
+  const shared = o.shared === true || lease.holder?.sessionId === sessionId || lease.parked.has(sessionId);
+  if (shared) lease.park(sessionId, 'request_screen');
   // Lazy per-session desktop (T8): by the time the card/panel mount and
   // connect, metadata.screen should already point at this session's own
   // machine, not the global one. A failed allocation (binary missing, ports
   // exhausted) isn't fatal — screenTarget() falls back to the global desktop.
-  if (!shared) try { await pickDriver().ensure(sessionId!); } catch (e) { console.error('[screen] desktop alloc failed for', sessionId, (e as Error).message); }
-  const promise = new Promise<ScreenRequestResult>((resolve) => {
+  if (!shared) try { await pickDriver().ensure(sessionId); } catch (e) { console.error('[screen] desktop alloc failed for', sessionId, (e as Error).message); }
+  const done = new Promise<ScreenRequestResult>((resolve) => {
     const timer = setTimeout(() => {
       pendingScreenRequests.delete(requestId);
       screens.stopAutoSnapshots(requestId);
@@ -917,7 +925,7 @@ async function handleScreenRequest(
       SCREEN_REASON_LABEL[reason ?? ''] || 'needs you on the machine'
     );
   });
-  await respondBlocking(res, body, sessionId!, promise); // CHAT1: long-poll legs
+  return { done };
 }
 
 // Force-resolve any screen request left pending for a session — e.g. its
@@ -1193,7 +1201,7 @@ const SHARE_KIND = 'share';
 // host — the agent never touches the owner's browser itself.
 const LOGIN_KIND = 'login';
 // What a session does when there is no login to hand over: the sign-in card (VAULT1), never a take-over for a password.
-const SIGN_IN_FRESH = "sign in fresh: if the site offers SSO (Continue with Google / Microsoft…), sso_login(site) — first; otherwise open its login page with browser_open and call request_credentials — the human fills it, you never see it";
+const SIGN_IN_FRESH = "sign in fresh with sign_in({site}) — a new sign-in happens in the owner's own Chrome on the shared desktop, and the host types vault values there; you never see one";
 const LOGIN_SAVE_KIND = 'login-save';
 // SSO1: "sign in to <site> through your identity provider, in My browser" (lib/sso.ts).
 const SSO_KIND = 'sso';
@@ -1216,6 +1224,348 @@ const SSO_HOW =
   'Use sso_look to see the tab (a screenshot and its text) and sso_click to press the SSO button ("Continue with Google", "Sign in with Microsoft"…) and pick the account; ' +
   "sso_navigate only within the site and the sign-in providers. There is no typing: a password or 2FA prompt there is the owner's — tell them in one line and wait for their word. " +
   "When the site shows you signed in, call sso_done: the tab closes and the site's login moves into your browser.";
+// ---- sign_in (lib/sign-in.ts): the ladder in code, and the new sign-in in the owner's own Chrome -------------------
+// One job per session: the site, the Chrome profile (= which of the owner's accounts), and for gcloud its login process.
+interface SignInJob {
+  site: string;
+  input: string;
+  profile: import('./lib/owner-chrome.js').OwnerProfile;
+  label: string;
+  gcloud?: { done: Promise<{ ok: boolean }>; proc: import('node:child_process').ChildProcess };
+  /** A consent page (sign_in({url})): done = give the desktop back; the playbook checks its own result. */
+  consent?: boolean;
+  doneTries: number;
+  /** The site's httpOnly cookie names in the profile when sign_in opened the page (names only) — diffed at done. */
+  before?: string[];
+}
+const signInJobs = new Map<string, SignInJob>();
+/** The session is gone: its sign-in (and a gcloud login waiting on a browser) goes with it. */
+function forgetSignIn(id: string): void {
+  const j = signInJobs.get(id);
+  if (j?.gcloud) try { j.gcloud.proc.kill('SIGTERM'); } catch {}
+  signInJobs.delete(id);
+  import('./lib/credentials.js').then((cr) => cr.forgetSession(id)).catch(() => {});
+}
+/** sign_in raised the login card and waits on it itself: the answer resolves here instead of messaging the session. */
+const signInCardWaiters = new Map<string, (value: string) => void>();
+const SIGN_IN_WAIT_MS = 10 * 60_000;
+
+function sharedChromeHere(): boolean {
+  if (process.platform !== 'linux') return false;
+  try {
+    return /^:\d+$/.test(String(cfg.screen?.display || ':99'));
+  } catch {
+    return false;
+  }
+}
+
+async function ownerChromeBin(userDataDir: string): Promise<string> {
+  const si = await import('./lib/sign-in.js');
+  for (const pid of si.ownerChromePids(userDataDir)) {
+    try {
+      const argv0 = fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0')[0];
+      if (argv0) return argv0;
+    } catch {
+      /* gone */
+    }
+  }
+  return chrome.chromeBin();
+}
+
+/** Wait until the lease is this session's and the owner is not mid-input on the screen. */
+async function holdSharedDesktop(id: string, site: string, reason: string): Promise<string | null> {
+  const L = sharedDesktop.get();
+  const r = L.acquire(id, site, reason);
+  if ('queued' in r && !(await L.waitForGrant(id, SIGN_IN_WAIT_MS))) return `the shared desktop stayed busy for ${SIGN_IN_WAIT_MS / 60_000} minutes (another session's sign-in) — try again later`;
+  for (let i = 0; i < 120 && L.humanActive(); i++) await new Promise((r2) => setTimeout(r2, 1000));
+  L.touch(id);
+  return null;
+}
+
+type SignInOutcome = import('./lib/sign-in.js').Outcome;
+
+async function signInStart(id: string, body: any): Promise<SignInOutcome> {
+  const si = await import('./lib/sign-in.js');
+  const lv = await import('./lib/login-vault.js');
+  const ls = await import('./lib/login-sites.js');
+  const oc = await import('./lib/owner-chrome.js');
+  const raw = String(body?.site || '').trim();
+  const reason = String(body?.reason || '').slice(0, 200);
+  const cli = si.cliFor(raw);
+  const site = cli ? 'google.com' : si.siteKey(raw);
+  const profilesAll = oc.ownerProfiles();
+  const sharedChrome = profilesAll.length > 0 && sharedChromeHere();
+  const owner = ownerOfSession(id, 'identity');
+  const ident = caps.readIdentity(owner) || caps.readIdentity(caps.GLOBAL_OWNER);
+  const identityEmail = ident?.email ?? null;
+  // the identity's Chrome profile on the shared desktop ('chrome:<dir>'), when connect-identity signed Google in there
+  const identityProfile = /^chrome:/.test(ident?.chromeProfile || '') ? ident!.chromeProfile.slice('chrome:'.length) : null;
+  const consent = body?.url !== undefined ? si.consentUrl(body.url) : null;
+  if (body?.url !== undefined && !consent) return si.blocked(si.siteKey(raw), 'url must be an https page (the consent / authorize page to finish in the owner\'s Chrome)');
+
+  // facts, cheapest first; each rung's check runs only when the rungs above did not apply
+  let gc: Awaited<ReturnType<typeof si.gcloudStatus>> | null = null;
+  if (cli) gc = await si.gcloudStatus();
+  if (cli && !gc?.bin) return si.blocked('gcloud', 'gcloud is not installed on this host');
+  const capability = cli ? null : si.connectionFor(raw);
+  let connected = false;
+  if (capability && body?.browser !== true) {
+    try {
+      connected = !caps.isNeedsSetup(await caps.ensure(capability, reason || `sign in to ${raw}`, {}, ownerOfSession(id, capability)));
+    } catch {
+      connected = false;
+    }
+  }
+  const account = body?.account ? String(body.account) : null;
+  const scope = account ? [oc.matchProfile(profilesAll, account)].filter((p): p is NonNullable<typeof p> => !!p) : profilesAll;
+  if (account && !scope.length) return si.blocked(site, `no Chrome profile for "${account}" — the owner's are: ${profilesAll.map(oc.profileLabel).join(', ') || 'none'}`);
+  const d = cli ? null : lv.detect(raw, undefined, scope);
+  const policy = d ? ls.decide(d.site, d.storageOrigins.length ? ['(unread)'] : []).policy : 'cookies';
+  const rung = consent ? { rung: 'shared-chrome' as const } : si.ladder({
+    cli,
+    cliSignedIn: !!gc?.ok,
+    connection: capability ? { capability, connected } : null,
+    wantBrowser: body?.browser === true,
+    saved: d ? { present: d.present, policy, inOwnerChrome: d.sources.includes('chrome') } : null,
+    sharedChrome,
+  });
+  console.log(`[sign-in] ${new Date().toISOString()} ${id} ${raw} → ${rung.rung}`);
+
+  if (rung.rung === 'blocked') return si.blocked(site, rung.reason);
+  if (rung.rung === 'cli-ok') return { status: 'signed_in', site: 'gcloud', via: 'cli', ...(gc?.account ? { account: gc.account } : {}), next: `gcloud is signed in${gc?.account ? ` as ${gc.account}` : ''} and its credential works — run gcloud commands (it is ${gc?.bin}).` };
+  if (rung.rung === 'connection')
+    return { status: 'signed_in', site, via: 'connection', next: `the host is connected to ${raw} (${rung.capability}): use its tools (mcp__${rung.capability.split(':')[1] || rung.capability}__… / gh for git), no browser. Only if you need the web page itself: sign_in({site, browser:true}).` };
+  if (rung.rung === 'owner-chrome-only') {
+    const holders = scope.filter((p) => d?.profiles?.includes(p.profileDir));
+    const prof = holders.find((p) => p.profileDir === identityProfile) || holders[0];
+    return {
+      status: 'signed_in', site, via: 'shared-chrome', ...(prof ? { account: oc.profileLabel(prof), profile: prof.profileDir } : {}),
+      next: `${d?.site.label || site} is signed in in the owner's Chrome on the shared desktop${prof ? ` (${oc.profileLabel(prof)})` : ''}; it does not accept a copied session, so it is not in your browser. For mail / calendar / drive use the host connection (check_setup composio:gmail…); for a ${d?.site.label || site} page itself, shared_desktop_acquire({site:"${site}"}) and work there with desktop_*({shared:true}).`,
+    };
+  }
+  let fresh = false;
+  if (rung.rung === 'saved') {
+    const r = await signInSaved(id, raw, d!, scope, reason);
+    if (r) return r;
+    // the saved login did not take (stale, or the owner asked for a fresh one): a new sign-in, below — on the page,
+    // not by copying the same login again
+    fresh = true;
+  }
+  // ---- a NEW sign-in in the owner's Chrome on the shared desktop -------------------------------------------------
+  const pick = si.chooseProfile(scope.length ? scope : profilesAll, { account: null, signedInIn: consent ? [] : d?.profiles || [], identityEmail, identityProfile, match: oc.matchProfile, label: oc.profileLabel });
+  if (!pick.ok) return si.blocked(site, pick.reason);
+  const profile = pick.profile;
+  const label = oc.profileLabel(profile);
+  const busy = await holdSharedDesktop(id, cli ? 'google.com' : site, reason || `sign in to ${raw}`);
+  if (busy) return si.blocked(site, busy);
+  const bin = await ownerChromeBin(profile.userDataDir);
+  if (cli) {
+    const prev = signInJobs.get(id)?.gcloud;
+    if (prev) try { prev.proc.kill('SIGTERM'); } catch {}
+    const g = si.startGcloudLogin(gc!.bin!, { display: dc().sharedDisplay(), chrome: bin, profileDir: profile.profileDir, dir: (await import('./lib/instance.js')).RUN_DIR });
+    signInJobs.set(id, { site: 'google.com', input: 'gcloud', profile, label, gcloud: g, doneTries: 0 });
+    g.done.then(() => { if (signInJobs.get(id)?.gcloud === g) sharedDesktop.get().touch(id); });
+    return { status: 'driving', site: 'gcloud', account: label, next: `gcloud auth login opened Google's consent page in the owner's Chrome (${label}) on the shared desktop. Pick the account and press Continue / Allow there — gcloud gets the answer on its own, there is no code to copy. ${si.DRIVE_HOW.replace('sign_in({site, done:true})', 'sign_in({site:"gcloud", done:true})')}` };
+  }
+  signInJobs.set(id, { site, input: raw, profile, label, doneTries: 0, before: lv.sessionCookieNames(raw, profile), ...(consent ? { consent: true } : {}) });
+  if (!consent && !fresh && lv.detectProfile(raw, profile).present) return signInDone(id, { already: true });
+  const url = consent || si.startUrl(raw, ls.resolve(raw).signInUrl);
+  const launched = dc().sharedLaunch(bin, [...oc.OWNER_CHROME_FLAGS, `--profile-directory=${profile.profileDir}`, url]);
+  sharedDesktop.get().touch(id);
+  console.log(`[sign-in] ${new Date().toISOString()} ${id} opened ${hostOfUrl(url)} in owner Chrome ${profile.profileDir} (pid ${launched.pid})`);
+  await new Promise((r2) => setTimeout(r2, 2500));
+  if (consent)
+    return { status: 'driving', site, account: label, profile: profile.profileDir, next: `${hostOfUrl(url)} is open in the owner's own Chrome (${label}) on the shared desktop, signed in to their Google there, and the desktop is yours. Finish the consent (pick the account, Allow / Continue) with desktop_screenshot / desktop_pointer ({shared:true}); a password field: sign_in({site, fill:"password"}). Then sign_in({site, done:true}) gives the desktop back — check the result where your playbook polls it.` };
+  return { status: 'driving', site, account: label, profile: profile.profileDir, next: `${url} is open in the owner's own Chrome (${label}) on the shared desktop, and the desktop is yours for this sign-in. ${si.DRIVE_HOW}` };
+}
+
+const hostOfUrl = (u: string): string => { try { return new URL(u).host; } catch { return u; } };
+const dc = (): typeof import('./lib/desktop-control.js') => desktopControl!;
+let desktopControl: typeof import('./lib/desktop-control.js') | null = null;
+import('./lib/desktop-control.js').then((m) => { desktopControl = m; }).catch(() => {});
+
+/** Rung 2: carry a genuinely signed-in login in — on the owner's standing "always", else after their answer on a card. */
+async function signInSaved(id: string, raw: string, d: import('./lib/login-vault.js').Detection, scope: import('./lib/owner-chrome.js').OwnerProfile[], reason: string): Promise<SignInOutcome | null> {
+  const lv = await import('./lib/login-vault.js');
+  const si = await import('./lib/sign-in.js');
+  const site = d.site;
+  const two = (d.profiles?.length || 0) > 1;
+  if (two) {
+    const oc = await import('./lib/owner-chrome.js');
+    const names = scope.filter((p) => d.profiles!.includes(p.profileDir)).map(oc.profileLabel);
+    return si.blocked(site.id, `${site.label} is signed in under two accounts (${names.join('; ')}) — call sign_in again with account: one of them`);
+  }
+  let value = lv.grants()[site.id] ? 'always' : '';
+  if (!value) {
+    const action = {
+      id: 'act_' + nano(),
+      at: new Date().toISOString(),
+      kind: LOGIN_KIND,
+      signIn: true,
+      login: { site: site.id, label: site.label },
+      prompt: `Use your ${site.label} login in this session?` + (reason ? ` — ${reason}` : ''),
+      buttons: [
+        { label: `Use my ${site.label} login`, value: 'use', style: 'primary' },
+        { label: `Always for ${site.label}`, value: 'always' },
+        { label: 'Sign in fresh', value: 'fresh' },
+        { label: 'No', value: 'deny', style: 'danger' },
+      ],
+    };
+    const answered = new Promise<string>((resolve) => {
+      const t = setTimeout(() => { signInCardWaiters.delete(action.id); resolve('timeout'); }, SIGN_IN_WAIT_MS);
+      (t as any).unref?.();
+      signInCardWaiters.set(action.id, (v) => { clearTimeout(t); resolve(v); });
+    });
+    state.patchSession(id, { action });
+    pushIntervention(id, 'action', action.prompt, 'waiting for your answer');
+    value = await answered;
+    if ((state.getSession(id)?.action as any)?.id === action.id) state.patchSession(id, { action: null });
+  }
+  if (value === 'timeout') return si.blocked(site.id, `nobody answered the "${site.label} login" card in ${SIGN_IN_WAIT_MS / 60_000} minutes`);
+  if (value === 'deny') return si.blocked(site.id, `the owner refused the ${site.label} login — do not sign in to ${site.label} in this turn`);
+  if (value === 'fresh') return null;
+  if (value === 'always') lv.grantAlways(site.id);
+  const r = await lv.transfer(id, raw, undefined, scope).catch((e) => ({ ok: false, error: (e as Error).message }) as any);
+  if (!r.ok) {
+    console.log(`[sign-in] ${new Date().toISOString()} ${id} ${site.id} saved login did not take: ${String(r.error).slice(0, 80)}`);
+    return null;
+  }
+  return { status: 'signed_in', site: site.id, via: 'saved', ...(r.profile ? { account: r.profile } : {}), next: `the owner's ${site.label} login is in your browser now${r.check ? ` (checked: ${r.check.url})` : ''} — browser_open the site and continue.` };
+}
+
+/** sign_in({fill}): the host types ONE vault value into the field the agent clicked, in the owner's Chrome. */
+async function signInFill(id: string, field: string, reason: string): Promise<SignInOutcome> {
+  const si = await import('./lib/sign-in.js');
+  const cr = await import('./lib/credentials.js');
+  const job = signInJobs.get(id);
+  if (!si.FILL_FIELDS.includes(field as any)) return si.blocked(job?.site || '', `fill is one of ${si.FILL_FIELDS.join(' | ')}`);
+  // the desktop went back while the agent looked (60 s idle): take it again for the same sign-in, then check
+  if (job && sharedDesktop.get().holder?.sessionId !== id) {
+    const busy = await holdSharedDesktop(id, job.site, reason || `sign in to ${job.site}`);
+    if (busy) return si.blocked(job.site, busy);
+  }
+  const facts = async () => {
+    const L = sharedDesktop.get();
+    const active = await dc().sharedActiveWindow().catch(() => null);
+    return si.sharedFillGuard({
+      sessionId: id,
+      holder: L.holder ? { sessionId: L.holder.sessionId, site: L.holder.site } : null,
+      job: job ? { site: job.site, profileDir: job.profile.profileDir } : null,
+      active,
+      ownerPids: job ? si.ownerChromePids(job.profile.userDataDir) : [],
+      lastUrl: job ? si.lastVisit(job.profile.profilePath, Date.now(), active?.title) : null,
+    });
+  };
+  const gate = await facts();
+  if (!gate.ok) {
+    console.log(`[sign-in] ${new Date().toISOString()} ${id} fill ${field} refused: ${gate.reason.slice(0, 80)}`);
+    if (!job) return si.blocked('', gate.reason);
+    return { status: 'driving', site: job.site, account: job.label, next: `nothing was typed: ${gate.reason}.` };
+  }
+  const recheck = async () => {
+    const g = await facts();
+    if (!g.ok) return g.reason;
+    return g.origin === gate.origin ? null : `the page moved to ${g.host}`;
+  };
+  const out = cr.requestShared(id, { origin: gate.origin, field: field as any, reason: reason || `sign in to ${job!.site}`, account: job!.label, recheck });
+  if (out.status === 'manual') return signInHuman(id, `type your ${field} for ${out.host} in the field that is focused`);
+  const req = out.request;
+  state.patchSession(id, { credentialRequest: req });
+  if (req.pref !== 'auto') pushIntervention(id, 'action', `Sign in to ${req.host} (${field})` + (req.reason ? ` — ${req.reason}` : ''), 'waiting for your sign-in');
+  // The focused field must stay focused while the owner answers: the lease is kept, not parked.
+  const keep = setInterval(() => sharedDesktop.get().touch(id), 15_000);
+  let settled: import('./lib/credentials.js').Settled;
+  try {
+    settled = await cr.waitSettled(req.requestId, SIGN_IN_WAIT_MS);
+  } finally {
+    clearInterval(keep);
+    if ((state.getSession(id) as any)?.credentialRequest?.requestId === req.requestId) state.patchSession(id, { credentialRequest: null });
+  }
+  if (settled === 'filled') return { status: 'driving', site: job!.site, account: job!.label, next: `the host typed the ${field} from the vault into the focused field (nobody saw it). Submit it (Enter with desktop_keyboard, or click the button), then desktop_screenshot({shared:true}) and go on.` };
+  if (settled === 'manual') return signInHuman(id, `type your ${field} for ${req.host} in the field that is focused`);
+  // blocked: the desktop goes back now, not after its idle minute
+  signInJobs.delete(id);
+  sharedDesktop.get().release(id);
+  if (settled === 'cancel') return si.blocked(job!.site, `the owner cancelled the ${req.host} sign-in`);
+  cr.forget(req.requestId, 'expired');
+  return si.blocked(job!.site, `nobody answered the ${req.host} sign-in card in ${SIGN_IN_WAIT_MS / 60_000} minutes (the vault may be locked in the cockpit)`);
+}
+
+/** sign_in({human}): the one hand-over — the owner does a step only a person can, on the shared desktop. */
+async function signInHuman(id: string, what: string): Promise<SignInOutcome> {
+  const si = await import('./lib/sign-in.js');
+  const job = signInJobs.get(id);
+  if (!job) return si.blocked('', 'no sign-in is running for this session — call sign_in({site}) first');
+  const task = String(what || '').replace(/\s+/g, ' ').trim().slice(0, 300) || 'finish the sign-in';
+  const prompt = `${job.input === 'gcloud' ? 'gcloud' : job.site}: ${task}`;
+  const hint = `On the shared desktop, in your own Chrome (${job.label}). Press Done when it is done — the agent carries on from there.`;
+  const reasonKind = /captcha|robot|puzzle|image/i.test(task) ? 'captcha' : /code|sms|2fa|push|approve|phone/i.test(task) ? '2fa' : 'login';
+  const { done } = await openScreenRequest(id, { prompt, hint, reason: reasonKind as ScreenRequestReason, shared: true });
+  const r = await done;
+  const busy = await holdSharedDesktop(id, job.site, `sign in to ${job.site}`);
+  if (busy) return si.blocked(job.site, busy);
+  return { status: 'driving', site: job.site, account: job.label, next: `the owner answered${r.note ? ` ("${String(r.note).slice(0, 120)}")` : ''}. Take a desktop_screenshot({shared:true}) and go on; when the page shows you signed in, sign_in({site, done:true}).` };
+}
+
+/** sign_in({done}): check the session is really there (a session cookie, not a page that looks signed in), bring it in. */
+async function signInDone(id: string, o: { already?: boolean } = {}): Promise<SignInOutcome> {
+  const si = await import('./lib/sign-in.js');
+  const lv = await import('./lib/login-vault.js');
+  const ls = await import('./lib/login-sites.js');
+  const job = signInJobs.get(id);
+  if (!job) return si.blocked('', 'no sign-in is running for this session — call sign_in({site}) first');
+  const L = sharedDesktop.get();
+  const finish = () => { signInJobs.delete(id); L.release(id); };
+  if (job.consent) {
+    finish();
+    return { status: 'signed_in', site: job.site, via: 'shared-chrome', account: job.label, profile: job.profile.profileDir, next: 'the consent page was handled in the owner\'s Chrome and the desktop is released — check the connection where your playbook polls it.' };
+  }
+  if (job.gcloud) {
+    const r = await Promise.race([job.gcloud.done, new Promise<null>((r2) => setTimeout(() => r2(null), 120_000))]);
+    if (!r) {
+      job.doneTries++;
+      if (job.doneTries < 2) return { status: 'driving', site: 'gcloud', account: job.label, next: 'gcloud is still waiting for Google\'s answer — press Continue / Allow on the consent page (desktop_screenshot({shared:true}) to see it), then sign_in({site:"gcloud", done:true}) again.' };
+      try { job.gcloud.proc.kill('SIGTERM'); } catch {}
+      finish();
+      return si.blocked('gcloud', 'gcloud auth login never got Google\'s answer (the consent page was not completed)');
+    }
+    const st = await si.gcloudStatus();
+    finish();
+    return st.ok
+      ? { status: 'signed_in', site: 'gcloud', via: 'cli', ...(st.account ? { account: st.account } : {}), next: `gcloud is signed in${st.account ? ` as ${st.account}` : ''} — run gcloud commands (${st.bin}).` }
+      : si.blocked('gcloud', 'gcloud auth login finished but its credential does not work');
+  }
+  const site = ls.resolve(job.input);
+  // Chrome writes cookies to disk in batches (about every 30 s): look for the session for up to 45 s.
+  // after a sign-in the agent saw land, a plain session cookie counts too (weak); "already signed in" needs a strong one
+  const weak = !o.already;
+  const look = () => {
+    const d = lv.detectProfile(job.input, job.profile, { weak });
+    if (d.present || !weak || !job.before) return d;
+    const fresh = si.newSessionCookies(job.before, lv.sessionCookieNames(job.input, job.profile), ls.VISITOR_COOKIES);
+    return fresh.length ? { ...d, present: true, by: `${fresh.join('+')} (new since the sign-in started)` } : d;
+  };
+  let det = look();
+  for (let i = 0; !det.present && i < (o.already ? 0 : 15); i++) {
+    L.touch(id);
+    await new Promise((r2) => setTimeout(r2, 3000));
+    det = look();
+  }
+  if (!det.present) {
+    job.doneTries++;
+    if (job.doneTries < 2) return { status: 'driving', site: job.site, account: job.label, next: `not signed in yet: ${det.why || 'no session cookie'}. Finish the sign-in on the page (desktop_screenshot({shared:true})), then sign_in({site, done:true}) again.` };
+    finish();
+    return si.blocked(job.site, `the sign-in did not land: ${det.why || 'no session cookie'} in the owner's Chrome (${job.label})`);
+  }
+  finish();
+  const policy = ls.decide(site, det.storageOrigins.length ? ['(unread)'] : []).policy;
+  if (policy === 'never')
+    return { status: 'signed_in', site: job.site, via: 'shared-chrome', account: job.label, profile: job.profile.profileDir, next: `${site.label} is signed in in the owner's Chrome (${job.label}); it does not accept a copied session, so work there: shared_desktop_acquire({site:"${job.site}"}) and desktop_*({shared:true}).` };
+  const r = await lv.transfer(id, job.input, undefined, [job.profile], { weak, force: true }).catch((e) => ({ ok: false, error: (e as Error).message }) as any);
+  if (!r.ok) return si.blocked(job.site, `signed in in the owner's Chrome (${job.label}), but the copy into your browser failed: ${r.error}`);
+  return { status: 'signed_in', site: job.site, via: o.already ? 'saved' : 'shared-chrome', account: job.label, next: `${o.already ? 'the owner was already signed in there; ' : ''}the ${site.label} login is in your browser now${r.check ? ` (checked: ${r.check.url})` : ''} — browser_open the site and continue. The shared desktop is released.` };
+}
+
 // Outbound cards (lib/outbound.ts): a message to a PERSON, shown verbatim; the
 // host sends it only on a person's Send.
 const OUTBOUND_KIND = 'outbound';
@@ -2315,7 +2665,8 @@ async function applyManualSetup(capability: string, body: any, req: IncomingMess
     // F6: no email typed → read the signed-in account from the session's Chrome profile (or chrome-base).
     const email = String(body?.email || '').trim() || chrome.googleAccountEmail(String(body?.sessionId || req.headers['x-session-id'] || '') || null) || '';
     if (!email) throw new Error('identity: no Google sign-in detected in the agent\'s browser — pass the account email');
-    const identity = caps.writeIdentity({ email, chromeProfile: body?.chromeProfile ? String(body.chromeProfile) : undefined }, owner);
+    if (body?.provider !== undefined && !caps.isIdentityProvider(body.provider)) throw new Error(`identity: provider is one of ${caps.IDENTITY_PROVIDERS.join(', ')}`);
+    const identity = caps.writeIdentity({ email, chromeProfile: body?.chromeProfile ? String(body.chromeProfile) : undefined, ...(body?.provider ? { provider: body.provider } : {}) }, owner);
     out = { identity, email: identity.email, owner };
   } else if (capability === 'desktop') {
     const enable = body?.enable !== false;
@@ -2675,6 +3026,7 @@ export async function destroySession(id: string): Promise<reap.ReapReport | null
   pickDriver().release(id);
   import('./lib/desktop-control.js').then((m) => m.desktopRelease(id)).catch(() => {});
   sharedDesktop.get().forget(id); // nothing held or waited for on the shared desktop
+  forgetSignIn(id);
   // Processes (incl. detached dev servers), the owned worktree, scratch dir and
   // transcript — in that order, see reap.ts.
   const report = await reap.reapSession(s, reap.ALL);
@@ -6589,8 +6941,9 @@ export async function handle(
       const host = ls.hostOf(url);
       const site = sso.siteOf(host);
       if (!site || !sso.allowed(site, url)) return json(res, { ok: false, error: `not an https site: ${rawUrl}` });
+      // Google / GitHub themselves (and gcloud's Google step) are not a dead end: sign_in does them in the owner's Chrome.
       if (sso.providerOf(url) || (await import('./lib/credentials.js')).refusedSite(host))
-        return json(res, { ok: false, error: `${host} is an identity provider itself — use a connection (check_setup / request_setup) for it`, next: 'request_setup' });
+        return json(res, { ok: false, error: `${host} is signed in to in the owner's own Chrome, not through an SSO window`, next: `sign_in({site:"${host}"})` });
       if (lv.detect(site).present)
         return json(res, { ok: true, available: true, site, next: `the owner is already signed in to ${site} in their browser: call request_login("${site}")` });
       const label = ls.resolve(site).label || site;
@@ -6656,7 +7009,7 @@ export async function handle(
       // ok:false answers are 200 so the agent's tool sees `next` (the MCP client turns a non-2xx into a bare error)
       if (out.status === 'error') return json(res, { ok: false, error: out.error, ...(out.next ? { next: out.next } : {}) });
       if (out.status === 'refused')
-        return json(res, { ok: false, refused: true, site: out.site.id, error: `${out.site.label} is never signed in to with a password here`, next: `ask the owner to sign in to ${out.site.label} in My browser (Settings › My browser), then call request_login for it` });
+        return json(res, { ok: false, refused: true, site: out.site.id, error: `${out.site.label} is not signed in to with a password in an automated browser`, next: `sign_in({site:"${out.site.id}"}) — it runs in the owner's own Chrome` });
       if (out.status === 'manual')
         return json(res, { ok: true, manual: true, host: out.host, next: `the owner types ${out.host} sign-ins themselves: call request_screen now (reason "login") and wait` });
       state.patchSession(id, { credentialRequest: out.request });
@@ -6680,8 +7033,13 @@ export async function handle(
       if (sub === 'credentials/answer') {
         const choice = body.choice === 'manual' ? 'manual' : 'cancel';
         if (choice === 'manual' && body.remember === true) cr.setPref(card.origin, 'manual');
-        cr.forget(card.requestId);
+        const owned = cr.hasWaiter(card.requestId); // sign_in waits on it and tells the agent itself
+        cr.forget(card.requestId, choice);
         state.patchSession(id, { credentialRequest: null });
+        if (owned) {
+          claude.appendChat(id, { kind: 'system', text: choice === 'manual' ? `🔑 You chose to type the ${card.host} sign-in yourself.` : `🔑 Sign-in to ${card.host} cancelled.` });
+          return json(res, { ok: true });
+        }
         claude.appendChat(id, { kind: 'system', text: choice === 'manual' ? `🔑 You chose to type the ${card.host} sign-in yourself.` : `🔑 Sign-in to ${card.host} cancelled.` });
         const line = choice === 'manual'
           ? `[host] The owner will type the ${card.host} sign-in themselves. Call request_screen now (reason "login", hint: what to sign in to) and wait for it.`
@@ -6690,6 +7048,7 @@ export async function handle(
         return json(res, { ok: true });
       }
       let r;
+      const owned = cr.hasWaiter(card.requestId);
       try {
         r = await cr.fill(id, card.requestId, body.values && typeof body.values === 'object' ? body.values : {}, { submit: body.submit !== false });
       } catch (e) {
@@ -6702,13 +7061,34 @@ export async function handle(
       }
       if (body.remember === true) cr.setPref(card.origin, 'auto');
       state.patchSession(id, { credentialRequest: null });
+      if (owned) {
+        claude.appendChat(id, { kind: 'system', text: `🔑 Typed your ${r.filled.join(', ')} for ${card.host} from your vault into your Chrome on the shared desktop${body.auto === true ? ' (automatically)' : ''} — the agent did not see it.` });
+        return json(res, { ok: true, filled: r.filled, submitted: r.submitted });
+      }
       claude.appendChat(id, { kind: 'system', text: `🔑 Signed in to ${card.host} from your vault${body.auto === true ? ' (automatically)' : ''} — the agent did not see the details.` });
       const line =
         `[host] The owner filled the ${card.host} sign-in (${r.filled.join(', ') || 'nothing'})${r.submitted ? ' and it was submitted' : ' — not submitted: press the sign-in button with browser_click'}. ` +
         'Check the page with browser_snapshot and continue. Never read a password field. ' +
-        `If the site asks for a one-time code next, call request_credentials again. Once signed in, offer save_login so later sessions need no password.`;
+        `If the site asks for a one-time code next, call request_credentials again.`;
       try { claude.sendMessage(id, line); } catch (e) { return json(res, { error: (e as Error).message }, 500); }
       return json(res, { ok: true, filled: r.filled, submitted: r.submitted });
+    }
+    // ---- sign_in: ONE tool for getting in anywhere (lib/sign-in.ts). Blocks (long-poll legs) until one outcome. ----
+    if (sub === 'sign-in' && m === 'POST') {
+      const body = (await readBody(req)) as any;
+      if (!body?.site && !body?.done && !body?.fill && !body?.human) return badRequest(res, 'site required');
+      const step: Promise<SignInOutcome> = (async () => {
+        try {
+          if (body.fill) return await signInFill(id, String(body.fill), String(body?.reason || ''));
+          if (body.human) return await signInHuman(id, String(body.human));
+          if (body.done === true) return await signInDone(id);
+          return await signInStart(id, body);
+        } catch (e) {
+          console.error(`[sign-in] ${id} failed:`, (e as Error).message);
+          return { status: 'blocked', site: String(body?.site || ''), reason: `the host failed: ${(e as Error).message}` } as SignInOutcome;
+        }
+      })();
+      return respondBlocking(res, body, id, step);
     }
     // ---- logins: one site at a time, only with the owner's approval ----------
     // (login-vault.ts). The agent learns WHICH sites have a login — never a value.
@@ -6910,12 +7290,18 @@ export async function handle(
           const r = await startSso(id, url);
           line = r.ok
             ? `[host] The owner APPROVED signing in to ${label} through SSO in their browser. ${label} is open in a tab of its own there. ${SSO_HOW}`
-            : `[host] The owner approved, but My browser could not be opened: ${r.error}. Sign in with request_credentials instead.`;
+            : `[host] The owner approved, but My browser could not be opened: ${r.error}. Use sign_in({site:"${site}"}) instead.`;
         } else {
-          line = `[host] The owner does NOT want the SSO sign-in to ${label} in their browser. Use request_credentials on the site's form instead, or ask them.`;
+          line = `[host] The owner does NOT want the SSO sign-in to ${label} in My browser. Use sign_in({site:"${site}"}) instead, or ask them.`;
         }
         state.patchSession(id, { action: null });
         try { claude.sendMessage(id, line); } catch (e) { return json(res, { error: (e as Error).message }, 500); }
+        return json(res, { ok: true });
+      }
+      if (cardKind === LOGIN_KIND && (cur as any).signIn && signInCardWaiters.has(cur.id)) {
+        // sign_in raised it and waits: it does the transfer and tells the agent itself
+        signInCardWaiters.get(cur.id)!(String(value));
+        signInCardWaiters.delete(cur.id);
         return json(res, { ok: true });
       }
       if ((cardKind === LOGIN_KIND || cardKind === LOGIN_SAVE_KIND) && (cur as any).login?.site) {
@@ -6935,7 +7321,7 @@ export async function handle(
           const r = await lv.transfer(id, site).catch((e) => ({ ok: false, error: (e as Error).message }) as any);
           line = r.ok
             ? `[host] The human APPROVED their ${label} login for this session; it is now in your browser (from ${r.source === 'chrome' ? 'their everyday Chrome' : 'My browser'})${r.check ? ` (checked: ${r.check.url})` : ''}. Open the site and continue.`
-            : `[host] The human approved, but the ${label} login could not be used: ${r.error}. Sign in fresh: SSO on the site → sso_login; otherwise its login page with request_credentials — the human fills it, you never see it.`;
+            : `[host] The human approved, but the ${label} login could not be used: ${r.error}. Sign in fresh with sign_in({site:"${site}"}).`;
           // Some sites allow one session only: check the owner kept theirs.
           if (r.ok)
             setTimeout(() => {
@@ -6947,7 +7333,7 @@ export async function handle(
                 .catch(() => {});
             }, 120_000).unref?.();
         } else if (v === 'fresh') {
-          line = `[host] The human wants a FRESH ${label} sign-in, not their own login. SSO on the site → sso_login; otherwise open its login page and call request_credentials — the human fills it, you never see it. Do not ask for a password in the chat.`;
+          line = `[host] The human wants a FRESH ${label} sign-in, not their own login: sign_in({site:"${site}"}). Do not ask for a password in the chat.`;
         } else {
           line = `[host] The human REFUSED the ${label} login. Do not sign in to ${label} and do not ask again in this turn.`;
         }

@@ -59,18 +59,18 @@ test('detect / list: the owner Chrome joins the vault; keyring cookies are not o
   const vault = tmpDir('owner-vault-');
   const ud = tmpDir('owner-ud-');
   fakeChrome(ud, 'Profile 1', [
-    ['.todoist.com', 'session', 1, 1, 'v10'],
+    ['.notes.example', 'auth_session', 1, 1, 'v10'], // a session NAME (sessionIndicator), not an anonymous framework cookie
     ['.ads.example', 'track', 0, 0, 'v10'],
-    ['.keyring.example', 'sid', 1, 1, 'v11'],
+    ['.keyring.example', 'auth_sid', 1, 1, 'v11'],
   ]);
   const own = resolveOwnerProfile({ platform: 'linux', env: { ARIGAMI_OWNER_CHROME: ud } })!;
-  const d = lv.detect('todoist.com', vault, own);
+  const d = lv.detect('notes.example', vault, own);
   expect(d.present).toBe(true);
   expect(d.sources).toEqual(['chrome']);
   expect(lv.detect('keyring.example', vault, own).present).toBe(false);
-  expect(lv.detect('todoist.com', vault, null).present).toBe(false); // no owner Chrome: the vault alone, as before
+  expect(lv.detect('notes.example', vault, null).present).toBe(false); // no owner Chrome: the vault alone, as before
   const ids = lv.list(vault, own).map((s) => `${s.id}:${s.sources.join('+')}`);
-  expect(ids).toContain('todoist.com:chrome');
+  expect(ids).toContain('notes.example:chrome');
   expect(ids.join()).not.toContain('keyring.example');
   expect(ids.join()).not.toContain('ads.example'); // not a login
   expect(JSON.stringify(lv.list(vault, own))).not.toContain('xxxxxxxx'); // names only
@@ -124,7 +124,7 @@ beforeAll(() => {
      const server = Bun.serve({ port: 0, fetch(req) {
        const u = new URL(req.url);
        if (u.pathname === '/login') return new Response('<!doctype html>ok', { headers: { 'content-type': 'text/html',
-         'set-cookie': 'sid=OWNER-SESSION; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=86400' } });
+         'set-cookie': 'auth_sid=OWNER-SESSION; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=86400' } });
        return new Response('<!doctype html>ok', { headers: { 'content-type': 'text/html' } });
      } });
      const ORIGIN = 'http://localhost:' + server.port;
@@ -172,7 +172,7 @@ test.skipIf(!chrome)("a login in the owner's Chrome is detected from disk and re
   expect(e2e.profileDir).toBe('Profile 1');
   expect(e2e.sources).toEqual(['chrome']);
   expect(e2e.storage).toBe(1);
-  expect(e2e.cookies).toEqual([expect.stringMatching(/^sid=OWNER-SESSION@localhost$/)]); // decrypted by our Chrome
+  expect(e2e.cookies).toEqual([expect.stringMatching(/^auth_sid=OWNER-SESSION@localhost$/)]); // decrypted by our Chrome
   expect(e2e.dbs).toEqual(['firebaseLocalStorageDb']);
   expect(e2e.names).toEqual(['firebaseLocalStorageDb']); // read in a page of the origin (not on the browser target)
   expect(e2e.local).toEqual(['owner']);

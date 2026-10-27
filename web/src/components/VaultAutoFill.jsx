@@ -19,7 +19,7 @@ export default function VaultAutoFill() {
         .then((m) => {
           const exact = m.filter((x) => x.exact);
           if (exact.length !== 1) return;
-          return fillFromVault({ sessionId: s.id, requestId: r.requestId, origin: r.origin, fields: r.fields, entryId: exact[0].id, remember: true, auto: true });
+          return fillFromVault({ sessionId: s.id, requestId: r.requestId, origin: r.origin, fields: r.fields, entryId: exact[0].id, remember: true, auto: true, exact: r.target === 'shared' });
         })
         .catch(() => { /* the card stays up; the owner answers it */ });
     }

@@ -172,11 +172,16 @@ export const AUDIT_FILE = path.join(ARIGAMI_DIR, 'connections.log');
 // F6: open setup cards survive a host restart (server/api.ts persists them here).
 export const SETUP_PENDING_FILE = path.join(ARIGAMI_DIR, 'setup-pending.json');
 
+/** The sign-in providers an identity can be: the account sites offer as "Continue with …". */
+export type IdentityProvider = 'google' | 'microsoft' | 'apple';
+export const IDENTITY_PROVIDERS: IdentityProvider[] = ['google', 'microsoft', 'apple'];
+export const isIdentityProvider = (v: unknown): v is IdentityProvider => typeof v === 'string' && (IDENTITY_PROVIDERS as string[]).includes(v);
+
 export interface Identity {
   email: string;
-  provider: 'google';
+  provider: IdentityProvider;
   connectedAt: string;
-  chromeProfile: string; // 'base' — the shared chrome-base profile (T8)
+  chromeProfile: string; // 'chrome:<dir>' — a profile of the owner's Chrome on the shared desktop (sign_in); 'base' — the older chrome-base
   providers: Record<string, { at: string }>;
 }
 
@@ -200,16 +205,17 @@ export function readIdentity(owner: Owner = GLOBAL_OWNER): Identity | null {
 }
 
 /** Write (or merge into) identity.json. Refuses anything that smells like a secret. */
-export function writeIdentity(patch: { email?: string; chromeProfile?: string; provider?: 'google' }, owner: Owner = GLOBAL_OWNER): Identity {
+export function writeIdentity(patch: { email?: string; chromeProfile?: string; provider?: IdentityProvider }, owner: Owner = GLOBAL_OWNER): Identity {
   const cur = readIdentity(owner);
   const email = String(patch.email ?? cur?.email ?? '').trim().toLowerCase();
   if (!EMAIL_RE.test(email)) throw new Error('identity: a valid email is required');
   for (const v of Object.values(patch)) {
     if (typeof v === 'string' && SECRET_RE.test(v) && !EMAIL_RE.test(v)) throw new Error('identity: refusing to store what looks like a secret');
   }
+  if (patch.provider !== undefined && !isIdentityProvider(patch.provider)) throw new Error(`identity: provider is one of ${IDENTITY_PROVIDERS.join(', ')}`);
   const id: Identity = {
     email,
-    provider: 'google',
+    provider: patch.provider || (cur?.email === email ? cur.provider : undefined) || 'google',
     connectedAt: cur?.email === email ? cur.connectedAt : new Date().toISOString(),
     // A2: an agent's identity lives in the agent's own Chrome profile.
     chromeProfile: patch.chromeProfile || cur?.chromeProfile || (ownerSlug(owner) ? owner : 'base'),
@@ -472,7 +478,7 @@ function staticCapabilities(p: CapabilityProbes, owner: Owner = GLOBAL_OWNER): C
   return [
     {
       id: 'identity',
-      title: 'Google identity (Chrome)',
+      title: 'Sign-in identity (Google / Microsoft / Apple)',
       group: 'core',
       provider: 'local',
       check: () => {
@@ -482,9 +488,9 @@ function staticCapabilities(p: CapabilityProbes, owner: Owner = GLOBAL_OWNER): C
         const from: Owner = own ? owner : GLOBAL_OWNER;
         return id
           ? { ok: true, owner: from, detail: `signed in as ${id.email}${from !== owner ? ' (shared)' : ''}`, data: { email: id.email, connectedAt: id.connectedAt, providers: Object.keys(id.providers), owner: from } }
-          : { ok: false, detail: 'sign in to Google once on the session desktop — the agent can then connect other services itself' };
+          : { ok: false, detail: "sign in once to your Google, Microsoft or Apple account, in your own Chrome on the shared desktop — the agent can then use \"Continue with …\" and connect other services itself" };
       },
-      manual: { kind: 'takeover', help: 'The agent opens accounts.google.com on its desktop and hands the screen to you; you sign in, click Done.' },
+      manual: { kind: 'takeover', help: 'The agent opens your account provider (Google, Microsoft or Apple) in your own Chrome on the shared desktop; the password comes from your vault, you approve on your phone if it asks.' },
       autoCapable: false,
       playbook: 'connect-identity',
       events: [...SETUP_EVENTS],

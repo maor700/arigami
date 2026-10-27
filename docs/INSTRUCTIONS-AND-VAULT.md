@@ -1,8 +1,10 @@
 # Editable instructions, per-agent/session inheritance, and a credential vault — design
 
-Status: **phases 1, 2 and 3a built** (server/prompt-blocks.ts, Settings › Customization, agent and session Advanced;
-server/lib/credentials.ts, web/src/lib/vault.worker.js, the sign-in card, Settings › Connections › Passwords). Phase 3b
-(passkey unlock, TOTP filling, the sync setting) is still a proposal. Each phase is shippable on its own.
+Status: **phases 1, 2, 3a and 3c built** (server/prompt-blocks.ts, Settings › Customization, agent and session Advanced;
+server/lib/credentials.ts, web/src/lib/vault.worker.js, the sign-in card, Settings › Connections › Passwords; `sign_in`
+filling in the owner's Chrome on the shared desktop, TOTP from an entry). Phase 3b (passkey unlock, the sync setting) is
+still a proposal. Each phase is shippable on its own. **The order of signing in lives in `docs/LOGIN.md`** — this file
+is about storing and filling values.
 
 Goal: automate everything that can be automated and take load off the owner — without the model, the chat or the
 host's disk ever holding a password.
@@ -21,11 +23,10 @@ What the host puts in a session's context (all hard-coded):
 | Simple mode (`SIMPLE_MODE_REMINDER`) | `server/claude.js` | both | every turn while on |
 | Host rules: $TMPDIR, logins, outbound cards, teardown, container | `INSTRUCTIONS`, `mcp/host-mcp.js` | engines that surface MCP server instructions | MCP initialize |
 
-Logins today: each session's Chrome starts empty; the owner's **My browser** (`chrome-base`, the login vault in
-`server/lib/login-vault.ts`) hands one site's cookies to a session on approval (`request_login`), and takes a fresh one
-back on approval (`save_login`). A password is typed by the owner through take-over (`request_screen`). Nothing stores
-passwords. `docs/LOGIN.md` describes an older path (copying a whole personal Chrome profile) that this design retires
-from the core and leaves to a user's own instructions.
+Logins before this design: each session's Chrome starts empty; the owner's **My browser** (`chrome-base`, the login
+vault in `server/lib/login-vault.ts`) handed one site's cookies to a session on approval, and took a fresh one back on
+approval. A password was typed by the owner through take-over (`request_screen`). Nothing stored passwords. Today all
+of it sits behind one tool, `sign_in` — see `docs/LOGIN.md`.
 
 ## Phase 1 — instruction blocks the owner can edit
 
@@ -70,10 +71,8 @@ default beside the override, Reset, On/Off, and an "as a session sees it" previe
 block shows a small "edited" mark there and nowhere else. An owner who never opens it never sees any of this — the
 defaults just work.
 
-The `login` block ships with Arigami's order (connections → engine connector → `request_login` → fresh sign-in with the
-credential card / take-over → "sign in in My browser" for sites that refuse automation). An owner whose machine has
-another way (e.g. a personal Chrome profile on the shared desktop) writes it in `user/prompts/login.md` or a custom
-block — the core stays generic.
+The `login` block is three lines: sign in with `sign_in`, never type or ask for a secret yourself, report a `blocked`
+reason. The order itself is code (`server/lib/sign-in.ts`, `docs/LOGIN.md`), so editing the block cannot reorder it.
 
 ## Phase 2 — what an agent or a session inherits
 
@@ -130,7 +129,7 @@ narrow that, they don't close it.
 1. The agent calls a new tool, `request_credentials({site, reason})`, when its browser is on a sign-in form (the login
    block tells it to; `browser_type` already refuses password fields and points here).
 2. The host inspects the page over CDP: origin, and the username / password / one-time-code inputs (selectors only).
-   Google and GitHub are refused here, as in `request_login`: the card says to sign in in My browser instead.
+   Google and GitHub are refused here (an automated browser): `sign_in` signs in to them in the owner's own Chrome.
 3. A **credential card** appears (session state, like `screenRequest` — not a chat event with values):
    - vault unlocked and an entry for this origin → **Sign in as `<user>`** (one tap); with the preference "automatic",
      no tap;
@@ -147,8 +146,8 @@ narrow that, they don't close it.
 7. "I'll type it myself" opens today's take-over (`request_screen`). With "remember", that site always goes straight to
    take-over. Preferences without secrets live in `$ARIGAMI_DIR/login-prefs.json` (origin → auto | ask | manual).
 
-After a successful sign-in the agent still offers `save_login` (cookies into My browser), so most later sessions get
-the site through `request_login` without any password at all.
+(As built, 3c: the agent no longer calls this tool — `sign_in` does, and its new sign-ins run in the owner's Chrome.
+Later sessions get the site from that profile; nothing is saved back into My browser.)
 
 ### Hardening that comes with it
 
@@ -177,6 +176,22 @@ the site through `request_login` without any password at all.
 - Lives in Settings › Connections › **Passwords** (status, lock, entries, unlock window, per-site choices, download the
   `.kdbx` for KeePassXC).
 
+### As built (3c) — filling in the owner's Chrome on the shared desktop
+
+`sign_in` (`docs/LOGIN.md`) does a new sign-in in the owner's everyday Chrome, driven with real input, never DevTools.
+The same vault and card fill it, with three differences:
+
+- **One field per card, typed with real keys.** The agent clicks into a field and asks for that role
+  (`sign_in({fill})`); the card (`target: "shared"`, the Chrome profile shown on it) fills exactly that one value — the
+  worker's `exact` flag drops the "password for the next screen" a CDP card adds. The host types it with
+  `xinput.py type-secret`, the value on stdin; nothing is submitted for the agent.
+- **The origin is read from the outside.** No DevTools port means no in-page origin check; the host requires the focused
+  window to be the owner's Chrome browser process and the profile's last navigation (History) to be on the lease's site
+  or a sign-in provider, before the card and again right before typing (`sharedFillGuard`, `recheck`).
+- **The answer goes to `sign_in`**, which is waiting on it: no "[host] …" line, the tool result says "typed" and never a
+  value.
+- TOTP: an entry's `otp` field (`otpauth://totp/…`) or `TOTP Seed` fills an `otp` field (`web/src/lib/totp.js`, RFC 6238).
+
 ## Order of work
 
 1. Phase 1: registry + overrides + Settings page + the `login` block (and the MCP rules moved in). Tests: composition
@@ -184,7 +199,7 @@ the site through `request_login` without any password at all.
 2. Phase 2: agent and session layers + their Advanced sections. Tests: resolution order, restart prompt.
 3. Phase 3a: vault file + cockpit unlock (master password) + credential card + fill route + preferences + the Chrome
    password-service switch. Tests: origin check, session-token 403, nothing in chat/log, KDBX round-trip with KeePassXC.
-4. Phase 3b: passkey unlock, TOTP filling, sync setting.
+4. Phase 3b: passkey unlock, sync setting. (TOTP filling shipped with 3c.)
 
 Phase 3 gets a security review of this section before code.
 

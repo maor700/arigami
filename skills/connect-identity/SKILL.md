@@ -1,95 +1,72 @@
 ---
-description: JIT-setup playbook for the `identity` capability — get the human logged in to Google ONCE in the session Chrome (take-over; the agent never types the password), verify the signed-in state on myaccount.google.com, sync the login to the shared base profile (save_browser_logins) and register the identity with the host (POST /__api/setup/identity). After this, connect-composio / connect-claude / connect-tailscale can pick the Google account automatically.
-triggers: request_setup returned {state:'auto'} for capability `identity`; a SetupCard asks "sign in to Google once"; any connect-* playbook finds no Google account in the session Chrome; "connect my Google account", "תתחבר לגוגל".
+description: JIT-setup playbook for the `identity` capability — get the owner's account provider (Google, Microsoft or Apple) signed in ONCE in their own Chrome on the shared desktop (sign_in — the host types the password from the vault, the owner only approves a 2FA push), read which account it is, and register the identity with the host (POST /__api/setup/identity, provider + chromeProfile "chrome:<profile dir>"). After this, "Continue with Google / Microsoft / Apple" and the connect-* playbooks use that Chrome profile.
+triggers: request_setup returned {state:'auto'} for capability `identity`; a SetupCard asks to sign in once; onboarding; "connect my Google / Microsoft / Apple account", "תתחבר לגוגל", "תתחבר למיקרוסופט".
 capability: identity
-allowlist: accounts.google.com myaccount.google.com google.com
-argument-hint: [expected email, optional]
+allowlist: accounts.google.com myaccount.google.com google.com login.microsoftonline.com login.live.com account.microsoft.com myaccount.microsoft.com appleid.apple.com account.apple.com
+argument-hint: [provider google|microsoft|apple, expected email or which account — work / personal; all optional]
 ---
 
-# connect-identity — Google login once, via take-over
+# connect-identity — the account provider once, in the owner's own Chrome
 
-Follow `skills/machine-work/SKILL.md` (narration, the four screenshot moments,
-hand-over rules). Helpers: `skills/_lib/connect.sh` (open / nav / url / wait-url /
-shot / click / key / type / api / report) and `skills/_lib/chrome.sh`.
+Which provider: what the human named (or `$ARGUMENTS`); otherwise ask once with `request_action` — Google, Microsoft or
+Apple. Chrome's own sign-in (sync) is Google-only and not needed: the provider is signed in INSIDE a Chrome profile, and
+a profile without a Chrome account is told apart by its name ("Work", "Personal").
 
-## Hard rules (apply to every connect-* playbook)
+| provider | `sign_in` site | where the account email shows |
+|---|---|---|
+| google | `accounts.google.com` | `myaccount.google.com` (under the avatar) |
+| microsoft | `microsoft` (opens login.microsoftonline.com; personal accounts go on to login.live.com) | `myaccount.microsoft.com` (work) or `account.microsoft.com` (personal) |
+| apple | `apple` (opens account.apple.com) | `account.apple.com` |
 
-1. **Never type passwords, 2FA codes, OTPs, recovery codes or CAPTCHA answers.**
-   Any screen that asks for one is the **take-over boundary**: `capture_screen`,
-   then `request_screen` and wait. `connect.sh type` is for URLs and one-time
-   *device* codes shown to you by a CLI — nothing the human knows and you don't.
-2. **Domain allowlist.** Export `CONNECT_ALLOW="accounts.google.com myaccount.google.com google.com"`
-   before any `open`/`nav`; `connect.sh` refuses everything else. If a redirect lands
-   outside the list, stop and hand over — do not follow it yourself.
-3. **Consent first.** You only run because the human clicked "Connect automatically"
-   on the SetupCard (or asked in chat). Never start a login flow on your own.
-4. **≤ 2 attempts.** On the second failure call `report_setup({ok:false})` with the
-   reason — the card falls back to manual; you do not loop.
-5. **No secrets on disk.** Cookies live only in the session Chrome profile and its
-   base sync. Never write tokens/cookies/emails into files, artifacts or memory.
+Follow `skills/machine-work/SKILL.md` (narration, the screenshot moments). The sign-in itself is `sign_in`
+(`docs/LOGIN.md`): it runs in the owner's everyday Chrome on the shared desktop, where Google treats it as a person, and
+the host — not you — types the password from the vault.
+
+## Hard rules
+
+1. **Never type passwords, 2FA codes or recovery codes.** The password is `sign_in({site, fill:"password"})`; a phone
+   approval, an SMS code or a CAPTCHA is `sign_in({site, human:"<exactly what to do>"})`. You may type the account email.
+2. **Consent first.** You run because the human clicked "Connect automatically" or asked. Never start a sign-in on your own.
+3. **≤ 2 attempts**, then `report_setup({ok:false})` with the one reason `sign_in` gave.
+4. **No secrets on disk.** The email is the only thing written (identity.json).
+5. **One account per Chrome profile.** Work and personal Google accounts live in two profiles of that Chrome; pass
+   `account` (an email, a profile name, "Profile 1") when the human said which.
 
 ## Steps
 
-0. Opening line in chat (machine-work §1) and `set_progress` with the steps below.
-1. `export CONNECT_ALLOW="accounts.google.com myaccount.google.com google.com"`.
-2. Open the account page — this is where a signed-in profile shows its avatar,
-   and a signed-out one shows the login form:
-   `skills/_lib/connect.sh open "https://myaccount.google.com/"` (`open` also
-   navigates a Chrome that is already running — it never leaves the old page up)
-   then `connect.sh wait-url 'google\.com' 30` and `connect.sh shot first` — view it
-   (`Read` the PNG) and `capture_screen({caption:"Google account page loaded"})`.
-3. **Already signed in?** (avatar + name on myaccount, URL stays on
-   `myaccount.google.com`): skip to step 6.
-   **Signed out** looks like a redirect to `google.com/account/about` (the
-   marketing page with "Sign in with Google" / "Go to Google Account") — treat it
-   exactly like step 4: `connect.sh nav "https://accounts.google.com/"` to reach the
-   login form, then hand over.
-4. **Login form / account chooser with no session** (URL on `accounts.google.com`):
-   this is the boundary. Post one line ("Google asks for the password — handing over"),
-   `capture_screen`, then:
-   ```
-   request_screen({
-     prompt: "Signing in to Google once so I can connect services for you — it asks for your password.",
-     reason: "login",
-     hint:   "Sign in (password + 2FA if asked). When you see your Google Account page with your name, click Done."
-   })
-   ```
-   Do nothing on the machine while it blocks. The host resolves the open identity
-   card itself when the human clicks Done and a Google account is detected in the
-   session's Chrome (`POST /__api/setup/identity` becomes a no-op then) — a
-   `{state:"skipped"}` only ever means the human clicked "Not now".
-5. After Done: `capture_screen({caption:"After human login"})`, `connect.sh nav "https://myaccount.google.com/"`,
-   `wait-url 'myaccount\.google\.com' 30`, `shot verify` and confirm the signed-in
-   state. Not signed in → one more `request_screen` with a more specific hint
-   (rule 4), then give up.
-6. Offer to keep the login for future sessions: `save_login({ site: "google.com",
-   reason: "so other sessions can ask for it" })`. The human sees a card and
-   nothing is saved unless they approve; only Google moves, nothing else in your
-   browser. When you run as an AGENT (ARIGAMI_AGENT is set), `save_browser_logins()`
-   instead keeps it in the agent's own profile (`agents/<slug>/browser`).
-7. Register the identity with the host. The email is what the account page shows
-   (top-right avatar → the address). Read it from the screenshot; if `$ARGUMENTS`
-   gave an expected email and it differs, stop and `request_action` (wrong account
-   vs. continue). Then:
-   `connect.sh api POST /__api/setup/identity '{"email":"<email>","provider":"google","chromeProfile":"base"}'`
-   (S1 writes `$ARIGAMI_DIR/identity.json` — no secrets, the email only. A2: from
-   an agent session the host writes the AGENT's `agents/<slug>/identity.json`
-   instead — owner `agent:<slug>`; omit `chromeProfile` then.)
-8. Evidence: `connect.sh shot final` → `publish_artifact({path:<png>, title:"identity — Google signed in"})`
-   → `report_setup({capability:"identity", ok:true, evidence:"<artifact path>"})`.
-   `capture_screen({caption:"Final state — Google signed in"})`.
-9. Summary line (machine-work §5): what was connected, that the human typed the
-   password (you didn't), and that Chrome is left signed in on purpose.
+0. Opening line in chat and `set_progress`: "signing <provider> in once in your own Chrome — the password from your vault,
+   you may get a push on your phone". `export CONNECT_ALLOW="accounts.google.com myaccount.google.com google.com login.microsoftonline.com login.live.com account.microsoft.com myaccount.microsoft.com appleid.apple.com account.apple.com"`
+   (the provider hosts of the table) (`skills/_lib/connect.sh` is used for the host call in step 4).
+1. `sign_in({site:<the provider's site>, reason:"connect your Google account once", account:<if given>})`.
+   - `signed_in` → Google is already signed in there: go to step 3 (its `profile` is the Chrome profile dir).
+   - `blocked` → `report_setup({capability:"identity", ok:false, detail:<reason>})`, stop.
+   - `driving` → step 2.
+2. Drive the sign-in (machine-work §3): `desktop_screenshot({shared:true})`; the email box → click it and type the
+   account email (`desktop_keyboard({text, shared:true})`, then Return); the password box → click it,
+   `sign_in({site:<the provider's site>, fill:"password"})`, Return; "Verify it's you" / a push / an SMS code →
+   `sign_in({site:<the provider's site>, human:"Approve the sign-in on your phone (Google prompt), then press Done"})`.
+   When the page shows the Google account: `sign_in({site:<the provider's site>, done:true})` → `signed_in`.
+3. Read the email: `shared_desktop_acquire({site:<the provider's domain>, reason:"read which account is signed in"})`,
+   `desktop_keyboard({key:"ctrl+t", shared:true})`, type the account page from the table + Return, `desktop_screenshot({shared:true})`
+   and read the account address; `capture_screen({caption:"<provider> signed in — your Chrome"})` and publish that
+   frame as the evidence (`publish_artifact({path:<the desktop_screenshot file>, title:"identity — <provider> signed in"})`);
+   `shared_desktop_release`. If `$ARGUMENTS` named a different email, stop and
+   `request_action` (wrong account vs. continue).
+4. Register it: `connect.sh api POST /__api/setup/identity '{"email":"<email>","provider":"<google|microsoft|apple>","chromeProfile":"chrome:<profile>"}'`
+   with `<profile>` = the `profile` field of the `signed_in` answer (e.g. `Profile 1`). (From an AGENT session the host
+   writes the agent's own identity; omit chromeProfile then.)
+5. `report_setup({capability:"identity", ok:true, evidence:"<artifact path>"})`, one summary line: which account, which Chrome profile, that the
+   password came from the vault and the human only approved what Google asked.
 
 ## Failure handling
 
 | Symptom | Do |
 |---|---|
 | `request_screen` timed out | `report_setup({ok:false, detail:"human did not complete login"})`, stop |
-| Google shows "This browser may not be secure" | hand over with hint "sign in from the Take-over view; if Google refuses, use Manual on the card" |
+| Google shows "This browser may not be secure" | it should not in the owner's own Chrome; `sign_in({site, human})` with exactly what the page shows |
 | Redirect outside the allowlist (SSO portal of a workspace) | do not follow; `request_screen` with reason `login` |
 | `POST /__api/setup/identity` → 404 | S1 not deployed on this host: still `report_setup`; mention identity.json wasn't written |
-| No desktop (`DISPLAY` unset, `chrome.sh` fails) | `report_setup({ok:false, detail:"no desktop"})` — the card goes manual |
+| `sign_in` answers blocked: no shared desktop | the older way, on this session's desktop: `capture_screen`, `request_screen({prompt:"Signing in to Google once so I can connect services for you.", reason:"login", hint:"Sign in (password + 2FA if asked). When you see your Google Account page with your name, click Done."})`; still nothing → `report_setup({ok:false, detail:<reason>})` |
 
 ## Retro
 If a selector/wait/hint would have saved a round-trip, `skill_propose({name:"connect-identity", …})` once.

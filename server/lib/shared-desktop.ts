@@ -91,6 +91,8 @@ export class SharedDesktopLease {
   private pausedSessions = new Set<string>();
   /** Sessions whose lease went idle: their next action says so instead of "acquire first". */
   private expired = new Set<string>();
+  /** A caller inside the host waiting for this session's turn (sign_in): woken directly instead of by a message. */
+  private grantWaiters = new Map<string, () => void>();
 
   constructor(private deps: LeaseDeps) {}
 
@@ -124,7 +126,30 @@ export class SharedDesktopLease {
     if (!next) return;
     this.grant(next);
     this.deps.log?.(`${next.sessionId} woken from the queue`);
-    this.deps.notify(next.sessionId, WAKE(next.site));
+    const w = this.grantWaiters.get(next.sessionId);
+    if (w) {
+      this.grantWaiters.delete(next.sessionId);
+      w();
+    } else this.deps.notify(next.sessionId, WAKE(next.site));
+  }
+
+  /**
+   * Resolves when `sessionId` holds the machine (now, or when the queue reaches it); false after `timeoutMs`. For a
+   * host-side caller that waits itself (sign_in) — the session is not messaged "[host] Your turn".
+   */
+  waitForGrant(sessionId: string, timeoutMs: number): Promise<boolean> {
+    if (this.holder?.sessionId === sessionId) return Promise.resolve(true);
+    return new Promise((resolve) => {
+      const t = setTimeout(() => {
+        this.grantWaiters.delete(sessionId);
+        resolve(false);
+      }, timeoutMs);
+      (t as any).unref?.();
+      this.grantWaiters.set(sessionId, () => {
+        clearTimeout(t);
+        resolve(true);
+      });
+    });
   }
 
   position(sessionId: string): number {
@@ -206,6 +231,7 @@ export class SharedDesktopLease {
     const before = this.queue.length;
     this.queue = this.queue.filter((w) => w.sessionId !== sessionId);
     did = this.parked.delete(sessionId) || did || this.queue.length !== before;
+    this.grantWaiters.delete(sessionId);
     this.pausedSessions.delete(sessionId);
     this.expired.delete(sessionId);
     this.advance();
@@ -250,6 +276,11 @@ export class SharedDesktopLease {
     this.deps.log?.(`${sessionId} unparked`);
     if (!this.holder && !this.queue.length && !this.humanActive()) {
       this.grant(p);
+    } else if (this.grantWaiters.has(sessionId)) {
+      const at = this.queue.findIndex((w) => !w.resume);
+      const w: Waiter = { sessionId, site: p.site, reason: p.reason, at: this.now(), resume: true };
+      if (at < 0) this.queue.push(w);
+      else this.queue.splice(at, 0, w);
     } else {
       const at = this.queue.findIndex((w) => !w.resume);
       const w: Waiter = { sessionId, site: p.site, reason: p.reason, at: this.now(), resume: true };

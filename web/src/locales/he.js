@@ -25,6 +25,7 @@ export const he = {
   'settings.advanced': 'מתקדם',
   // VAULT1 — כרטיס ההתחברות והגדרות › חיבורים › סיסמאות
   'vault.card.title': 'התחברות ל-{host}',
+  'vault.card.shared': 'מוקלד במקלדת אמיתית לכרום שלך במחשב המשותף ({account}), לשדה שהסוכן לחץ עליו, שדה אחד לכל כרטיס.',
   'vault.card.private': 'רק אתה רואה את הפרטים: הם עוברים ישר לדף ההתחברות. הסוכן והצ׳אט לא מקבלים אותם.',
   'vault.card.signInAs': 'התחבר בתור {user}',
   'vault.card.other': 'פרטים אחרים',
@@ -62,7 +63,7 @@ export const he = {
   'vault.window': 'נשארת פתוחה',
   'vault.minutes': '{n} דק׳',
   'vault.prefs': 'בחירות לפי אתר',
-  'vault.prefsHint': 'נקבעות ב"זכור את הבחירה" בכרטיס התחברות.',
+  'vault.prefsHint': 'נקבעות ב"זכור את הבחירה" בכרטיס התחברות. "auto" = sign_in ממלא את האתר מהכספת בלי כרטיס (רשומה שמורה אחת, כספת פתוחה), גם בכרום שלך במחשב המשותף.',
   'vault.pref.auto': 'מילוי אוטומטי',
   'vault.pref.manual': 'אני מקליד בעצמי',
   'vault.prefReset': 'שאל שוב',

@@ -233,8 +233,9 @@ test('SSO: the session asks, the owner answers — the session can neither answe
 
 test('SSO: never onto an identity provider itself, and nothing to drive without an approved window', async () => {
   const g = await call('POST', `/__api/sessions/${sid}/sso-request`, 'session', { site: 'https://accounts.google.com/' });
+  // no SSO window onto Google itself — but not a dead end either: sign_in does it in the owner's own Chrome
   expect(g.json).toMatchObject({ ok: false });
-  expect(g.json.error).toMatch(/identity provider/);
+  expect(g.json.next).toMatch(/^sign_in\(\{site:"accounts\.google\.com"\}\)/);
   for (const sub of ['look', 'click', 'navigate', 'done']) {
     const r = await call('POST', `/__api/sessions/${sid}/sso/${sub}`, 'session', { text: 'x', url: 'https://x.example/' });
     expect(r.json.ok).toBe(false);
