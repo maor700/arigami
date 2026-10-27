@@ -17,8 +17,8 @@ test('origin patterns: exact, or any subdomain of a "*." one — never a look-al
 });
 
 test("rewriteQuery: the host's own origin in a query becomes the site's — raw and percent-encoded, behind a TLS proxy too", () => {
-  const req = { headers: { host: '127.0.0.1:3099', 'x-forwarded-host': 'box.tailnet.ts.net' } } as any;
-  const url = '/login/?redirect_uri=' + encodeURIComponent('https://box.tailnet.ts.net/dashboard?x=1') + '&back=http://127.0.0.1:3099/a';
+  const req = { headers: { host: '127.0.0.1:3099', 'x-forwarded-host': 'box.proxy.example' } } as any;
+  const url = '/login/?redirect_uri=' + encodeURIComponent('https://box.proxy.example/dashboard?x=1') + '&back=http://127.0.0.1:3099/a';
   const out = rewriteHostInQuery(url, req, 'https://app.example.com');
   expect(decodeURIComponent(out)).toContain('redirect_uri=https://app.example.com/dashboard?x=1');
   expect(out).toContain('back=https://app.example.com/a');
@@ -56,5 +56,5 @@ test('an extension declares proxy.sites only with the "proxy:sites" permission, 
 test("the tunnel's X-Forwarded-Host reaches only a dev server on this box — a real site rejects a host it doesn't own", async () => {
   const { keepsForwardedHost } = await import('../server/proxy.ts');
   for (const h of ['127.0.0.1', 'localhost', '[::1]']) expect(keepsForwardedHost(h)).toBe(true);
-  for (const h of ['www.example.com', 'app.example.io', '127.0.0.1.example.com', '10.0.0.5']) expect(keepsForwardedHost(h)).toBe(false);
+  for (const h of ['www.example.com', 'app.example.io', '127.0.0.1.example.com', '203.0.113.5']) expect(keepsForwardedHost(h)).toBe(false);
 });

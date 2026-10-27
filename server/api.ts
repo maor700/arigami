@@ -7071,8 +7071,10 @@ export async function handle(
         console.log(`[shared-desktop] ${new Date().toISOString()} ${id} release${did ? '' : ' (held nothing)'}`);
         return json(res, { ok: true, released: did });
       }
+      // The site is what the guards check typing against and what the owner sees in the cockpit: no site, no lease
+      // (an agent calling the tool before loading its schema sent {} and used to be granted a lease for nothing).
       const site = sharedDesktop.leaseSite(body?.site);
-      if (body?.site && !site) return badRequest(res, `not a site: ${body.site}`);
+      if (!site) return badRequest(res, body?.site ? `not a site: ${body.site}` : 'site required — the site you are signing in to, e.g. {site:"example.com"}');
       const r = L.acquire(id, site, String(body?.reason || '').slice(0, 200));
       console.log(`[shared-desktop] ${new Date().toISOString()} ${id} acquire ${site || '-'} → ${'granted' in r ? 'granted' : `queued #${r.position}`}`);
       return json(res, { ok: true, ...r }, 'granted' in r ? 200 : 202);

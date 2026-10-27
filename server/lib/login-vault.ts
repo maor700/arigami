@@ -23,7 +23,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
-import { CHROME_BASE_DIR, chromeBin, chromeExtraFlags, openChrome, isChromeRunning } from './chrome.js';
+import { CHROME_BASE_DIR, chromeBin, chromeExtraFlags, chromeSessionDir, openChrome, isChromeRunning } from './chrome.js';
 import { cdpPort } from './chrome-cdp.js';
 import { pidAlive } from './platform.js';
 import { supervise, killTree } from './children.js';
@@ -452,12 +452,21 @@ export async function vaultStillLoggedIn(input: string, dir = VAULT_DIR, source:
 /** Carry one site back from a session's browser into the vault — only after the owner approved. */
 export async function saveToVault(sessionId: string, input: string, dir = VAULT_DIR): Promise<TransferResult> {
   const site = sites.resolve(input);
-  const decision = sites.decide(site);
+  // The session's storage of the site, from its disk (app.example.com keeps it on a subdomain the bare domain never
+  // shows): without it an unknown site was saved as cookies only — and a login that lives in IndexedDB/localStorage
+  // (any.do) was saved as nothing that signs in.
+  const storageOrigins = profileIdbOrigins(path.join(chromeSessionDir(sessionId), 'Default')).filter((o) => sites.cookieBelongs(new URL(o).hostname, site));
+  let decision = sites.decide(site, storageOrigins.length ? ['(unread)'] : []);
   if (decision.policy === 'never') return { ok: false, site: site.id, policy: 'never', error: decision.reason || 'this site must not be copied' };
   const cdp = await sessionCdp(sessionId);
   let state: SiteState;
   try {
-    const origins = decision.policy === 'copy' ? (site.origins?.length ? site.origins : site.domains.map((d) => `https://${d.replace(/^\./, '')}`)) : [];
+    let origins = decision.policy === 'copy' ? originsFor(site, storageOrigins) : [];
+    if (decision.policy === 'copy' && !origins.length) origins = site.domains.map((d) => `https://${d.replace(/^\./, '')}`);
+    if (origins.length && !site.known) {
+      decision = sites.decide(site, await dbNames(cdp, origins));
+      if (decision.policy !== 'copy') origins = [];
+    }
     state = await exportSite(cdp, (dom) => sites.cookieBelongs(dom, site), origins, decision.authDbs || null);
   } catch (e) {
     return { ok: false, site: site.id, policy: decision.policy, error: (e as Error).message };
