@@ -375,7 +375,8 @@ export function consentUrl(url: unknown): string | null {
 
 export const DRIVE_HOW =
   "Look with desktop_screenshot({shared:true}) and click with desktop_pointer({shared:true}) — that is the owner's own Chrome, use it like a person. " +
-  'A username / password / one-time-code field: click into it, then sign_in({site, fill:"username"|"password"|"otp"}) — the host types it from the vault; ' +
+  "Chrome's own password manager first: click into the username field — a saved login for this site in Chrome's dropdown (a key icon, the username) fills both fields; pick it and submit. " +
+  'No saved login there (only an address / email suggestion, or nothing): Escape, then for each username / password / one-time-code field click into it and sign_in({site, fill:"username"|"password"|"otp"}) — the host types it from the vault; ' +
   'you never type a secret and never see one. Your own text there: only the account email (desktop_keyboard). Enter / Tab with desktop_keyboard({key, shared:true}). ' +
   'A CAPTCHA, an SMS code or a push approval only the owner can do: sign_in({site, human:"<exactly what to do>"}). ' +
   'When the page shows you signed in: sign_in({site, done:true}).';

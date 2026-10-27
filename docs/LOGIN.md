@@ -41,6 +41,10 @@ No shared desktop on the host (containers, macOS/Windows by default) → rung 3 
 
 - **The agent looks and clicks**: `desktop_screenshot({shared:true})`, `desktop_pointer({shared:true})`,
   `desktop_keyboard({key, shared:true})` for Enter / Tab. It may type the account email; nothing else of its own.
+- **Chrome's password manager first**: the owner's Chrome may already hold a saved login for the site. The agent clicks
+  into the username field; a saved login in Chrome's dropdown (key icon) fills both fields, and the agent picks it and
+  submits. Chrome offers only logins for the page's own origin and the agent never sees the value. An address / email
+  suggestion is not a login: Escape it and go on to the vault.
 - **The host types secrets**: the agent clicks into a field and calls `sign_in({site, fill: "username" | "password" | "otp"})`.
   The host checks (`sharedFillGuard`) that it still holds the lease, that the focused window is the owner's own Chrome
   browser process (not a CDP one), and that the page the profile last navigated to (its History) is on the site or a

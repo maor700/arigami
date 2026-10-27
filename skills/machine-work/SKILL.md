@@ -157,8 +157,11 @@ that is really signed in, and a new sign-in in the owner's own Chrome on the sha
 - `blocked` → stop, tell the human its one `reason` in one line.
 - `driving` → the site's sign-in page is open in the owner's Chrome and the shared desktop is yours:
   `desktop_screenshot({shared:true})`, click with `desktop_pointer({shared:true})`, Enter / Tab with
-  `desktop_keyboard({key, shared:true})`. A username / password / code field: click into it, then
-  `sign_in({site, fill:"username"|"password"|"otp"})` — the host types it from the vault; submit it yourself.
+  `desktop_keyboard({key, shared:true})`. Chrome's own password manager first: click into the username field — a
+  saved login for this site in Chrome's dropdown (key icon, the username) fills both fields; pick it and submit. No
+  saved login (only an address / email suggestion, or nothing): Escape it, then for each username / password / code
+  field click into it and `sign_in({site, fill:"username"|"password"|"otp"})` — the host types it from the vault;
+  submit it yourself.
   SSO ("Continue with Google") is just a button there: click it and pick the account. A CAPTCHA, an SMS code or a
   push only the human can do: `sign_in({site, human:"<exactly what to do>"})`. The page shows you signed in:
   `sign_in({site, done:true})`.
