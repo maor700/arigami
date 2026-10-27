@@ -14,6 +14,7 @@ export const strings = {
   'rail.screenIdle': 'המסך ריק',
   'rail.screenIdleDetail': 'מחובר — עדיין לא נפתח כלום במכונה הזו.',
   'rail.screenDisconnected': 'מנותק',
+  'rail.screenZoomReset': 'התאם למסך',
   'rail.screenError': 'ההתחברות נכשלה',
   'rail.screenNeedsYou': 'המכונה ממתינה לך — פתחו את הסשן',
   'rail.screenNeedsYouShort': 'נדרש אתה',

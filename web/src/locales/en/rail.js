@@ -14,6 +14,7 @@ export const strings = {
   'rail.screenIdle': 'Desktop is idle',
   'rail.screenIdleDetail': 'Connected — nothing is open on this machine yet.',
   'rail.screenDisconnected': 'Disconnected',
+  'rail.screenZoomReset': 'Fit to screen',
   'rail.screenError': 'Connection failed',
   'rail.screenNeedsYou': 'The machine is waiting for you — open the session',
   'rail.screenNeedsYouShort': 'needs you',
