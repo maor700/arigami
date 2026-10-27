@@ -146,6 +146,19 @@ export function chromeExtraFlags(env: NodeJS.ProcessEnv = process.env, dockerenv
   return inContainer ? ['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu'] : [];
 }
 
+// Chrome makes its singleton socket at $TMPDIR/.com.google.Chrome.XXXXXX/SingletonSocket, and a unix socket path is
+// limited to 108 bytes. Measured with Chrome 153: a TMPDIR of 66 bytes starts, 67 aborts at once ("FATAL … Socket
+// path too long") — and whoever waits for its DevTools port waits out the whole timeout. An Arigami session's own
+// scratch TMPDIR is already ~62 bytes, so a host or a test started from a session lost every Chrome it launched.
+export const CHROME_TMPDIR_MAX = 66;
+
+/** The environment to start Chrome with: the same, with a short TMPDIR when the one given is too long for it. Pure. */
+export function chromeEnv(env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): NodeJS.ProcessEnv {
+  const t = env.TMPDIR || '';
+  if (platform === 'win32' || t.length <= CHROME_TMPDIR_MAX) return env;
+  return { ...env, TMPDIR: '/tmp' };
+}
+
 export function isChromeRunning(sessionId: string): boolean {
   const p = running.get(sessionId);
   return !!(p && p.exitCode === null && !p.killed);
@@ -204,7 +217,7 @@ export async function openChrome(sessionId: string, url?: string): Promise<{ dis
   const args = sessionChromeArgs(profileDir, url);
   const { env, extraArgs } = await driver.browserLaunch(sessionId);
   const child = spawn(chromeBin(), chromeExtraFlags().concat(extraArgs, args), {
-    env,
+    env: chromeEnv(env),
     stdio: ['ignore', 'ignore', 'pipe'],
   });
   supervise(child, `browser:${sessionId}`);

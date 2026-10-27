@@ -370,6 +370,9 @@ export const DEFAULTS: Config = {
     displayBase: IS_DEFAULT_INSTANCE ? 100 : 200,
     keepProfiles: false,
   },
+  // {} = auto (lib/owner-chrome.ts). It must be a DEFAULTS key: loadFile() reads only those, and a config.json
+  // `"ownerChrome": false` was silently dropped — the owner's Chrome stayed on (measured on a scratch host).
+  ownerChrome: {},
   brain: {
     heartbeatEnabled: false,
     heartbeatEvery: '30m',

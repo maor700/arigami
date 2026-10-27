@@ -42,6 +42,19 @@ test('resolveOwnerProfile: Linux auto from Local State; off in a container, else
   expect(resolveOwnerProfile({ platform: 'linux', config: { userDataDir: ud, profile: '../x' }, env: {} })).toBe(null);
 });
 
+test('config.json: "ownerChrome": false reaches the host (it used to be dropped as an unknown key), {userDataDir} too', () => {
+  const read = (conf: unknown) => {
+    const dir = tmpDir('owner-cfg-');
+    fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify(conf));
+    const r = runInChild(`const { cfg } = await import('./server/lib/config.ts'); emit(cfg.ownerChrome ?? null);`, { ARIGAMI_DIR: dir });
+    if (!r.ok) throw new Error(r.error);
+    return r.out[0];
+  };
+  expect(read({ ownerChrome: false })).toBe(false);
+  expect(read({ ownerChrome: { userDataDir: '/x', profile: 'Profile 2' } })).toEqual({ userDataDir: '/x', profile: 'Profile 2' });
+  expect(read({})).toEqual({}); // auto
+});
+
 test('detect / list: the owner Chrome joins the vault; keyring cookies are not offered', () => {
   const vault = tmpDir('owner-vault-');
   const ud = tmpDir('owner-ud-');

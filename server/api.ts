@@ -6934,7 +6934,7 @@ export async function handle(
           if (v === 'always') lv.grantAlways(site);
           const r = await lv.transfer(id, site).catch((e) => ({ ok: false, error: (e as Error).message }) as any);
           line = r.ok
-            ? `[host] The human APPROVED their ${label} login for this session; it is now in your browser${r.check ? ` (checked: ${r.check.url})` : ''}. Open the site and continue.`
+            ? `[host] The human APPROVED their ${label} login for this session; it is now in your browser (from ${r.source === 'chrome' ? 'their everyday Chrome' : 'My browser'})${r.check ? ` (checked: ${r.check.url})` : ''}. Open the site and continue.`
             : `[host] The human approved, but the ${label} login could not be used: ${r.error}. Sign in fresh: SSO on the site → sso_login; otherwise its login page with request_credentials — the human fills it, you never see it.`;
           // Some sites allow one session only: check the owner kept theirs.
           if (r.ok)

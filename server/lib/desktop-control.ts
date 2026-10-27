@@ -12,7 +12,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { pickDriver } from './screen-driver.js';
-import { chromeExtraFlags } from './chrome.js';
+import { chromeEnv, chromeExtraFlags } from './chrome.js';
 import { cfg } from './config.js';
 import { screenTarget } from './desktops.js';
 import { captureScreen } from '../vnc.js';
@@ -129,7 +129,7 @@ export async function sharedScreenshot(sessionId: string): Promise<DesktopShot> 
 /** Start a browser on the shared desktop (the owner's own, when it is not running). Not tracked for desktop_quit. */
 export function sharedLaunch(command: string, args: string[]): { pid: number } {
   if (!command || /[\s;&|`$<>]/.test(command)) throw new Error('command must be a single program name or path (put its arguments in args)');
-  const child = spawn(command, args.map(String), { env: { ...process.env, DISPLAY: sharedDisplay() }, detached: true, stdio: 'ignore' });
+  const child = spawn(command, args.map(String), { env: chromeEnv({ ...process.env, DISPLAY: sharedDisplay() }), detached: true, stdio: 'ignore' });
   child.unref();
   if (!child.pid) throw new Error(`could not start ${command}`);
   return { pid: child.pid };
@@ -189,8 +189,9 @@ export function launchArgs(command: string, args: string[], flags: string[]): st
 export async function desktopLaunch(sessionId: string, command: string, args: string[] = []): Promise<{ pid: number }> {
   if (!command || /[\s;&|`$<>]/.test(command)) throw new Error('command must be a single program name or path (put its arguments in args)');
   const { display } = await ownDesktop(sessionId);
+  const env = { ...process.env, DISPLAY: display };
   const child = spawn(command, launchArgs(command, args.map(String), chromeExtraFlags()), {
-    env: { ...process.env, DISPLAY: display },
+    env: CHROME_RE.test(command) ? chromeEnv(env) : env,
     detached: true,
     stdio: 'ignore',
   });

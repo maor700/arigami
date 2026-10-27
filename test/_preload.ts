@@ -40,14 +40,14 @@ process.env.ARIGAMI_OWNER_CHROME = '0';
   const path = require('node:path') as typeof import('node:path');
   const os = require('node:os') as typeof import('node:os');
   const PREFIX = 'arigami-testrun-';
-  // Chrome puts its singleton socket at $TMPDIR/.com.google.Chrome.XXXXXX/SingletonSocket, and a unix socket path
-  // has a 107-byte limit. Under a long TMPDIR (an Arigami session's scratch dir is ~55 bytes before this root) every
-  // test that starts a real Chrome hung until its timeout. Such a run puts its root in /tmp instead — still removed
-  // at exit, and swept by the next run like any other.
-  const SOCKET_TAIL = '/.com.google.Chrome.XXXXXX/SingletonSocket'.length;
+  // Chrome puts its singleton socket at $TMPDIR/.com.google.Chrome.XXXXXX/SingletonSocket and aborts at start when
+  // TMPDIR is longer than 66 bytes (CHROME_TMPDIR_MAX in server/lib/chrome.ts, measured). The host gives the Chrome
+  // it spawns a short TMPDIR itself (chromeEnv), but tests also start Chrome directly with this run's TMPDIR — and
+  // under an Arigami session's ~62-byte scratch dir the run root alone is ~90. Such a run puts its root in /tmp
+  // instead: still removed at exit, and swept by the next run like any other.
   const rootLen = (p: string) => path.join(p, `${PREFIX}${process.pid}-XXXXXX`).length;
   let parent = os.tmpdir();
-  if (process.platform !== 'win32' && rootLen(parent) + SOCKET_TAIL > 107 && fs.existsSync('/tmp')) parent = '/tmp';
+  if (process.platform !== 'win32' && rootLen(parent) > 66 && fs.existsSync('/tmp')) parent = '/tmp';
   for (const n of fs.readdirSync(parent)) {
     const pid = Number(n.startsWith(PREFIX) ? n.slice(PREFIX.length).split('-')[0] : NaN);
     if (!Number.isInteger(pid) || pid <= 0) continue;

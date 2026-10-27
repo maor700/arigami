@@ -23,7 +23,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
-import { CHROME_BASE_DIR, chromeBin, chromeExtraFlags, chromeSessionDir, openChrome, isChromeRunning } from './chrome.js';
+import { CHROME_BASE_DIR, chromeBin, chromeEnv, chromeExtraFlags, chromeSessionDir, openChrome, isChromeRunning } from './chrome.js';
 import { cdpPort } from './chrome-cdp.js';
 import { pidAlive } from './platform.js';
 import { supervise, killTree } from './children.js';
@@ -240,7 +240,7 @@ async function withHeadless<T>(dir: string, fn: (cdp: Cdp) => Promise<T>, label:
   } catch {
     /* none */
   }
-  const proc = spawn(chromeBin(), chromeExtraFlags().concat(vaultArgs(dir, true), ['about:blank']), { stdio: 'ignore' });
+  const proc = spawn(chromeBin(), chromeExtraFlags().concat(vaultArgs(dir, true), ['about:blank']), { env: chromeEnv(), stdio: 'ignore' });
   supervise(proc, label);
   try {
     const port = await waitPort(dir, proc);
@@ -288,7 +288,7 @@ export async function openVisible(env: NodeJS.ProcessEnv, url?: string, dir = VA
   if (visible && visible.exitCode === null) return { pid: visible.pid!, alreadyOpen: true };
   await busy; // never race a headless job for the profile lock
   fs.mkdirSync(dir, { recursive: true });
-  const proc = spawn(chromeBin(), chromeExtraFlags().concat(vaultArgs(dir, false), url ? [url] : []), { env, stdio: 'ignore' });
+  const proc = spawn(chromeBin(), chromeExtraFlags().concat(vaultArgs(dir, false), url ? [url] : []), { env: chromeEnv(env), stdio: 'ignore' });
   supervise(proc, 'browser:vault');
   proc.on('exit', () => {
     if (visible === proc) visible = null;
