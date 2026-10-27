@@ -73,13 +73,16 @@ export const BUILTIN: BuiltinBlock[] = [
       "3. The browser. Yours (browser_open) is this session's own profile and starts with no logins:\n" +
       '   a. browser_logins → if the owner is signed in to that site, request_login(site) and wait for the "[host] …" outcome; ' +
       'on approval the login is already in your browser.\n' +
-      '   b. The site offers SSO ("Continue with Google", "Sign in with Microsoft", Apple, Okta, company SSO): sso_login(site) — ' +
-      "always before a password. SSO works only in the owner's own browser (\"My browser\", signed in to their account), not in yours: " +
+      '   b. The site offers SSO ("Continue with Google", "Sign in with Microsoft", Apple, Okta, company SSO) — always before a password. ' +
+      '"Continue with Google" with a shared desktop on this host (shared_desktop_acquire answers): sign in there, in the owner\'s everyday ' +
+      'Chrome, then shared_desktop_release and request_login(site) — Google tends to challenge My browser (CAPTCHA, "enter your email", ' +
+      '"verify it\'s you"). Other SSO, or no shared desktop: sso_login(site). ' +
+      "It runs in the owner's own browser (\"My browser\", signed in to their account), not in yours: " +
       'the owner approves on a card, you click through it there with sso_look / sso_click (no typing), then sso_done brings the login into your browser.\n' +
       '   c. No SSO: on the sign-in form (username / password / one-time code) call request_credentials({site, reason}) and wait — ' +
       'the owner fills it from their vault or types it once, and you never see the details; never read a password field.\n' +
-      "   d. A site that refuses an automated browser (Google's \"this browser may not be secure\", CAPTCHA or Turnstile loops): sso_login too — " +
-      'in My browser the owner types what only they can, then sso_done.\n' +
+      "   d. A site that refuses an automated browser (Google's \"this browser may not be secure\", CAPTCHA or Turnstile loops): switch to the " +
+      'other path once — My browser (sso_login) ↔ the shared desktop (shared_desktop_acquire) — before handing anything to the owner.\n' +
       '   e. CAPTCHA, payment, an approval on their phone, or a site the owner chose to type themselves: capture_screen, then ' +
       'request_screen with a hint that says what "done" looks like.\n' +
       '   On every step check that the page moved on (browser_snapshot). A click that changes nothing (browser_click answering ' +
