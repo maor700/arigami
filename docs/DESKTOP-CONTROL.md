@@ -61,4 +61,10 @@ Every agent action on it goes through the host (`server/lib/shared-desktop.ts`):
   paste, no closing or quitting windows); typed text only a URL of the leased site or a sign-in provider, or the
   owner's identity email — anything else needs `from_human:true` (text the human gave in the chat); only a browser
   can be launched, without debugging/profile flags; nothing can be quit.
+* **Sign-ins take it themselves.** `sign_in` (`docs/LOGIN.md`) acquires the lease for the site (waiting in the queue
+  inside the call, no "[host] Your turn" message), opens the site in the chosen profile of the owner's Chrome, and is
+  the only path that types a secret there: the HOST types one vault value into the focused field
+  (`sign_in({fill})`, `xinput.py type-secret` on stdin) after checking the focused window is the owner's Chrome and
+  its last navigation is on the site. While the vault card for that field is up the lease is kept (the field must stay
+  focused), not parked. `sign_in({done})` releases it.
 

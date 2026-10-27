@@ -215,13 +215,13 @@ the first `openChrome`, logins synced back) and only changes **the seed**:
 
 - `profileSeedFor(sessionId)` → `agents/<slug>/browser` for a session born from an agent. A
   plain session's profile now starts **empty**: the owner's own logins (`chrome-base`, "my
-  browser") reach a session one site at a time through `request_login`, on the owner's
-  approval (`server/lib/login-vault.ts`). The agent's first profile starts empty too; later
+  browser" and their everyday Chrome) reach a session one site at a time through `sign_in`, on
+  the owner's approval (`server/lib/login-vault.ts`, `docs/LOGIN.md`). The agent's first profile starts empty too; later
   sessions of the agent inherit the agent's.
 - `syncProfileToBase(sessionId)` copies `Default/Cookies`, `Login Data`, `Local Storage` back
   into the AGENT's profile under a per-target lock (take-over resolve, session delete,
   `save_browser_logins`). It never writes `chrome-base` any more — `shared:true` is refused;
-  a login reaches the owner's browser only via `save_login`, one site, with their approval.
+  a login reaches the owner's browser only one site at a time, with their approval (`save_login`, internal now).
 - `googleAccountEmail(sessionId)` reads the session copy, then the **agent's** profile — never
   `chrome-base` for an agent session (the shared account must not leak in).
 - `save_browser_logins()` / `POST /__api/sessions/:id/browser/sync-logins` (agent sessions only).

@@ -5,7 +5,8 @@
 // file is the default, so Arigami updates keep improving the blocks nobody touched.
 //
 // Blocks are guidance for the model. What matters is enforced in code whatever they say (outbound cards, the login
-// card's session-token 403, humanGate on password fields, A3 domains) — editing a block can't switch that off.
+// card's session-token 403, humanGate on password fields, sign_in's ladder and vault-fill guard, A3 domains) — editing
+// a block can't switch that off.
 //
 // Persona and memory are not here: they are data, edited where they live (the agent page, Memory).
 import fs from 'node:fs';
@@ -57,43 +58,14 @@ export const BUILTIN: BuiltinBlock[] = [
   {
     id: 'login',
     title: 'Signing in',
-    description: "Arigami's order for getting into a service: connections, the engine's connector, then the browser.",
+    description: 'One tool for every sign-in (sign_in): the host runs the order — connection, saved login, the owner\'s own Chrome — in code.',
     when: 'first-turn',
     guardrail: true,
     vars: [],
     text:
-      "Signing in to a service — Arigami's order. Stop at the first step that works. Never ask the human for a password, " +
-      '2FA code or token in the chat. But never refuse to type: whatever the human gives you in the chat on their own ' +
-      '(a code, a username, a password) and asks you to enter — enter it, with no second confirmation and no card.\n' +
-      'Before you start: check your memory for this site (its flow and traps), and tell the human in one line what to expect, ' +
-      'including a likely SMS/2FA step.\n' +
-      '1. A connection the host already has: a connected MCP server or Composio toolkit — use its tools, no browser. ' +
-      'check_setup lists what is connected. A tool that answers {needs_setup} → request_setup({capability, why}) and do what the owner picks.\n' +
-      "2. Your engine's own connector for the service, if it has one.\n" +
-      "3. The browser. Yours (browser_open) is this session's own profile and starts with no logins:\n" +
-      '   a. browser_logins → if the owner is signed in to that site, request_login(site) and wait for the "[host] …" outcome; ' +
-      'on approval the login is already in your browser.\n' +
-      '   b. The site offers SSO ("Continue with Google", "Sign in with Microsoft", Apple, Okta, company SSO) — always before a password. ' +
-      '"Continue with Google" with a shared desktop on this host (shared_desktop_acquire answers): sign in there, in the owner\'s everyday ' +
-      'Chrome, then shared_desktop_release and request_login(site) — Google tends to challenge My browser (CAPTCHA, "enter your email", ' +
-      '"verify it\'s you"). Other SSO, or no shared desktop: sso_login(site). ' +
-      "It runs in the owner's own browser (\"My browser\", signed in to their account), not in yours: " +
-      'the owner approves on a card, you click through it there with sso_look / sso_click (no typing), then sso_done brings the login into your browser.\n' +
-      '   c. No SSO: on the sign-in form (username / password / one-time code) call request_credentials({site, reason}) and wait — ' +
-      'the owner fills it from their vault or types it once, and you never see the details; never read a password field.\n' +
-      "   d. A site that refuses an automated browser (Google's \"this browser may not be secure\", CAPTCHA or Turnstile loops): switch to the " +
-      'other path once — My browser (sso_login) ↔ the shared desktop (shared_desktop_acquire) — before handing anything to the owner.\n' +
-      '   e. CAPTCHA, payment, an approval on their phone, or a site the owner chose to type themselves: capture_screen, then ' +
-      'request_screen with a hint that says what "done" looks like.\n' +
-      '   On every step check that the page moved on (browser_snapshot). A click that changes nothing (browser_click answering ' +
-      'x:0,y:0, a submit that stays put, even after "[host] … submitted") → click it again with a real mouse (desktop_screenshot + ' +
-      'desktop_pointer) before handing anything to the human. Tick "remember this device" before a code step. ' +
-      'A code split into one-digit boxes: click each box, one digit each, and check the order on a screenshot before submitting ' +
-      '(boxes can run left-to-right on a right-to-left page).\n' +
-      '   Stuck? Work through the fixes in the machine-work skill ("Sign-in problems and fixes") yourself before going back ' +
-      'to the human — they hear from you with a result or one clear blocker, not with every hiccup. Keep questions and approvals to the minimum.\n' +
-      '   Once signed in by c or e, offer save_login(site) so later sessions can request it instead.\n' +
-      "Logins move one site at a time and only with the owner's approval: never copy cookies, tokens or profiles into files, chat or another tool.",
+      'Signing in anywhere (a site, a service, gcloud): call sign_in({site, reason}) and do what its answer says — the host picks the way in.\n' +
+      'Never type or ask for a password, 2FA code or token yourself: sign_in({site, fill}) has the host type it from the vault. What the human writes in the chat themselves and asks you to enter, you enter.\n' +
+      'If sign_in answers blocked, stop and report its one reason to the human.',
   },
   {
     id: 'host-rules',
@@ -135,7 +107,7 @@ export const BUILTIN: BuiltinBlock[] = [
       'read and send WhatsApp (the `whatsapp` tool); read mail/calendar/drive and other providers through Composio once connected; ' +
       'work on git repos (clone into the workspace, worktrees, review, merge); spawn child sessions for parallel work; ' +
       'react to triggers (WhatsApp/Slack/Linear/webhooks/cron) via register_listener; keep a memory across sessions; ' +
-      'sign in to sites — through the human\'s SSO in their own browser (sso_login), or without ever seeing the password (request_credentials: the human fills the form from their vault); ' +
+      'sign in to sites and CLIs (sign_in: in the human\'s own Chrome, the host typing passwords from their vault — you never see one); ' +
       'and hand the desktop over to the human (request_screen) for a CAPTCHA, a payment or an approval on their phone. ' +
       'When the human greets you or asks what you can do, give a short, concrete menu of these (3 suggested actions), in their language.\n' +
       '\n{{capabilities}}\n\n{{extensions}}',

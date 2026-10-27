@@ -13,9 +13,8 @@ Server side: `server/oauth-login.js` via `POST /__api/accounts/oauth/start|code`
 `GET /__api/accounts/oauth/status?id=` (already exists; no new endpoint needed).
 
 ## Hard rules
-1. **Never type passwords / 2FA / OTP / magic-link codes.** A code field on claude.ai's login →
-   `request_credentials` (the human fills it; you never see it); a magic link in their mail or a Google
-   password → take-over (`request_screen`). "Continue with Google" is fine to click when
+1. **Never type passwords / 2FA / OTP / magic-link codes.** A claude.ai login → `sign_in({site:"claude.ai", browser:true})`
+   (the host types vault values; you never see them), then reload; a magic link in their mail → take-over (`request_screen`). "Continue with Google" is fine to click when
    `identity` is connected — the account chooser is not a password screen.
 2. `export CONNECT_ALLOW="claude.ai claude.com platform.claude.com console.anthropic.com accounts.google.com google.com"`.
 3. Consent first; ≤ 2 attempts; nothing written to disk by you — the host stores

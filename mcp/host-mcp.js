@@ -677,7 +677,7 @@ export async function createArigamiServer(env = process.env) {
         'Show an action bar with buttons in the session UI. Answers come ONLY from a human click (delivered as a user message). ' +
         'Sends a push notification to the human\'s phone, so use it for real decisions, not status updates (use set_status_summary / set_progress for those). ' +
         'Best practice: one short question in `prompt` (what you need decided and why, ≤200 chars — that is the notification body), 2–4 buttons with clear labels, ' +
-        'and stop working until the answer arrives. Do NOT use it for things the human has to DO: a sign-in form is request_credentials; CAPTCHA, payment, a push approval is request_screen.',
+        'and stop working until the answer arrives. Do NOT use it for things the human has to DO: signing in anywhere is sign_in; CAPTCHA, payment, a push approval is request_screen.',
       inputSchema: obj({
         prompt: { type: 'string' },
         buttons: {
@@ -781,14 +781,14 @@ export async function createArigamiServer(env = process.env) {
     {
       name: 'request_screen',
       description:
-        'Hand the shared desktop over to the human for a step only their hands can do — CAPTCHA, payment, a push/app approval, an interactive installer, or a sign-in they chose to type themselves (request_credentials answered {manual:true}). An ordinary sign-in form is request_credentials, not this. ' +
+        'Hand the shared desktop over to the human for a step only their hands can do — CAPTCHA, payment, a push/app approval, an interactive installer, or an installer. Signing in to a site is sign_in, not this (inside it, a CAPTCHA / push is sign_in({site, human})). ' +
         'Shows a live embedded view in the chat with a "Take over" / "Done" control and pushes a notification to the human\'s phone. ' +
         'BLOCKS until they click Done (or ~30 min timeout); the response may include a short note about what they did. ' +
         'Best practice (see the machine-work skill): (1) call capture_screen right before, so the human sees where you are; ' +
         '(2) `prompt` = one sentence on what you were trying to do and where you got stuck; (3) set `reason` to the closest category — it drives the notification title; ' +
         '(4) `hint` = exactly what the human should do and what "done" looks like (e.g. "enter the SMS code and wait for the dashboard, then click Done"); ' +
         '(5) after it returns, verify the state yourself (re-read the page / capture_screen) before continuing — do not assume it worked; ' +
-        '(6) never ask for passwords or codes in chat. An ordinary sign-in form (username / password / one-time code) is NOT this tool: call request_credentials — come here for it only when that answers {manual:true}. ' +
+        '(6) never ask for passwords or codes in chat. Signing in (username / password / one-time code) is NOT this tool: call sign_in. ' +
         'Opens in Watch (view-only) mode; the human can click "Take over" to drive the machine, then "Done". Returns {takenOver: boolean, note?: string} — takenOver=true means the human actually intervened. ' +
         'Do not call it for questions or decisions — use request_action for those.',
       inputSchema: obj(
@@ -818,7 +818,7 @@ export async function createArigamiServer(env = process.env) {
         'The host posts a Setup card in the chat (with a QR / token field / OAuth button / Auto-Manual switch as appropriate) and pushes "the agent needs <capability>" to the human\'s phone. ' +
         'mode: omit to let the host pick — "auto" when a Google identity is connected and the capability is auto-capable, else "manual". ' +
         'ALWAYS BLOCKS (≤15 min) until the human acts on the card: connects it manually → {state:"done"}, clicks "Not now" → {state:"skipped"}, nobody → {state:"timeout"}, or clicks "Connect automatically" (consent) → {state:"auto", id, playbook}. `mode` only PRESELECTS the card switch — there is never auto without that click. On "skipped"/"timeout" offer an alternative, never nag. ' +
-        'AUTO: YOU then run the named playbook skill (connect-<provider>, machine-work rules: never type passwords/2FA yourself — a sign-in form is request_credentials, CAPTCHA / push approval is request_screen — ≤2 attempts, one final screenshot as evidence), narrate with report_setup({capability, line}) and finish with report_setup({capability, ok}). ' +
+        'AUTO: YOU then run the named playbook skill (connect-<provider>, machine-work rules: never type passwords/2FA yourself — a sign-in is sign_in, CAPTCHA / push approval is request_screen — ≤2 attempts, one final screenshot as evidence), narrate with report_setup({capability, line}) and finish with report_setup({capability, ok}). ' +
         'If the capability is already connected you get {state:"done", already:true} at once (one audit line is still written). why: one short clause the card shows ("read your inbox"); defaults to the capability title.',
       inputSchema: obj(
         {
@@ -911,7 +911,7 @@ export async function createArigamiServer(env = process.env) {
         'Coordinates in the image are screen pixels — exactly what desktop_pointer takes; `width`/`height` are the screen size. ' +
         'Look at the screen before every action that depends on it, and again after it: this tool never returns a cached frame. ' +
         'For anything inside a browser page prefer the browser_* tools (precise, cheap); use the desktop tools for what is outside the page — other windows, menus, installers, apps. ' +
-        'Never use them to type passwords, 2FA or other secrets: a sign-in form is request_credentials (the human fills it, you never see it).',
+        'Never use them to type passwords, 2FA or other secrets: signing in is sign_in (the host types vault values; you never see them).',
       inputSchema: obj({ ...SHARED_PROP, ...SID_PROP }),
       run: async (a) => {
         const r = await api('POST', `/__api/sessions/${sid(a)}/desktop/screenshot`, a.shared === true ? { shared: true } : {});
@@ -943,7 +943,7 @@ export async function createArigamiServer(env = process.env) {
       name: 'desktop_keyboard',
       description:
         'Type text (printable ASCII; `text`) or press a key / combo (`key`, e.g. Return, Tab, Escape, ctrl+l, ctrl+a, alt+F4) on this session\'s own desktop, into whatever has focus. ' +
-        'Click the target first. On a sign-in form the default is request_credentials (the human fills it, you never see it) — but whatever the human wrote in the chat themselves (a code, a password) and asked you to enter, type it here.',
+        'Click the target first. A sign-in field is sign_in({site, fill}) (the host types it from the vault) — but whatever the human wrote in the chat themselves (a code, a password) and asked you to enter, type it here.',
       inputSchema: obj({
         text: { type: 'string', description: 'Printable ASCII to type' },
         key: { type: 'string', description: 'A key or combo like ctrl+l' },
@@ -975,10 +975,10 @@ export async function createArigamiServer(env = process.env) {
     {
       name: 'shared_desktop_acquire',
       description:
-        "Take the SHARED desktop — the owner's own screen, with their real browser where they are signed in to Google — for one job, typically an SSO sign-in that My browser (sso_login) could not get through (a CAPTCHA, \"enter your email\"). " +
+        "Take the SHARED desktop — the owner's own screen, with their real browser where they are signed in to Google — for one job. A sign-in does NOT start here: sign_in takes the desktop itself. " +
         'One session at a time: {granted:true} = yours, act with the desktop_* tools and shared:true; {queued:true, position} = STOP and end your turn — the host messages you "[host] Your turn…" when it is yours (never poll, never xinput on it). ' +
         '`site` = the site you are signing in to: only its URLs, the sign-in providers and the owner\'s account email can be typed there; no passwords, no pasting, no closing windows. ' +
-        'It goes back after 60 s without an action; request_screen parks it (others may use the screen meanwhile, you get it back first). The owner\'s own input pauses you. Release it with shared_desktop_release as soon as you are done, then request_login the site into your own browser.',
+        'It goes back after 60 s without an action; request_screen parks it (others may use the screen meanwhile, you get it back first). The owner\'s own input pauses you. Release it with shared_desktop_release as soon as you are done.',
       inputSchema: obj({
         site: { type: 'string', description: 'The site you are signing in to, e.g. todoist.com' },
         reason: { type: 'string', description: 'One line the owner sees in the cockpit' },
@@ -997,6 +997,31 @@ export async function createArigamiServer(env = process.env) {
       description: 'Stop a program you started with desktop_launch (by pid).',
       inputSchema: obj({ pid: { type: 'number' }, ...SID_PROP }, ['pid']),
       run: (a) => api('POST', `/__api/sessions/${sid(a)}/desktop/quit`, { pid: a.pid }),
+    },
+    {
+      name: 'sign_in',
+      description:
+        'THE way to get signed in anywhere — a website, a service, or a CLI (site: "gcloud"). The host runs the order itself: a connection it already has (MCP / Composio) → ' +
+        "a saved login that is really signed in → a NEW sign-in in the owner's own Chrome on the shared desktop, with real mouse and keyboard. It waits, then answers ONE of: " +
+        '{status:"signed_in", via, next} — do what next says; {status:"blocked", reason} — stop and report that one reason; ' +
+        "{status:\"driving\", next} — the site's sign-in is open in the owner's Chrome and the shared desktop is yours: look with desktop_screenshot({shared:true}), click with desktop_pointer({shared:true}), " +
+        'and for a username / password / one-time-code field click into it and call sign_in({site, fill:"username"|"password"|"otp"}) — the HOST types it from the vault, you never see or type a secret. ' +
+        'A CAPTCHA, an SMS code or a push only the owner can do: sign_in({site, human:"<exactly what to do>"}). When the page shows you signed in: sign_in({site, done:true}). ' +
+        'The owner has more than one account (work / personal)? pass account (an email, "work.example", a Chrome profile name).',
+      inputSchema: obj({
+        site: { type: 'string', description: 'The site (a domain or url, e.g. facebook.com or https://app.todoist.com/auth/login), a service name, or "gcloud"' },
+        reason: { type: 'string', description: 'One short line the owner sees: what you need it for' },
+        account: { type: 'string', description: 'Which of the owner\'s accounts: an email, a Chrome profile name, or a domain (work.example)' },
+        browser: { type: 'boolean', description: 'You need the site in your browser even though the host has an API connection for it' },
+        fill: { type: 'string', enum: ['username', 'password', 'otp'], description: 'driving only: the host types this vault value into the field you clicked into' },
+        human: { type: 'string', description: 'driving only: the one step only the owner can do, in one line ("solve the I\'m-not-a-robot check")' },
+        done: { type: 'boolean', description: 'driving only: the page shows you signed in — the host checks the session and brings it into your browser' },
+        ...SID_PROP,
+      }),
+      run: (a) => blockingCall(`/__api/sessions/${sid(a)}/sign-in`, {
+        site: a.site, reason: a.reason, account: a.account, ...(a.browser === true ? { browser: true } : {}),
+        ...(a.fill ? { fill: a.fill } : {}), ...(a.human ? { human: a.human } : {}), ...(a.done === true ? { done: true } : {}),
+      }),
     },
     {
       name: 'browser_logins',
@@ -1125,7 +1150,7 @@ export async function createArigamiServer(env = process.env) {
       name: 'browser_snapshot',
       description:
         'Look at the current page: a screenshot card (posted in chat, deduped like capture_screen) PLUS the page\'s url, title and visible text (innerText, truncated). ' +
-        'Also reports {needsHuman, reason, hint} when the page shows a credential/OTP field or a CAPTCHA — if needsHuman is true, stop: a credential/OTP field → request_credentials; a CAPTCHA → request_screen. ' +
+        'Also reports {needsHuman, reason, hint} when the page shows a credential/OTP field or a CAPTCHA — if needsHuman is true, stop: a credential/OTP field → sign_in({site}); a CAPTCHA → request_screen. ' +
         'This is the browser_* equivalent of capture_screen — use it at the required moments (first page, before/after a hand-over, the end), not after every click.',
       inputSchema: obj({ caption: { type: 'string', description: 'What this snapshot shows (short, factual) — used as the screenshot caption.' }, ...SID_PROP }),
       run: (a) => api('POST', `/__api/sessions/${sid(a)}/browser/snapshot`, { caption: a.caption }),
@@ -1147,7 +1172,7 @@ export async function createArigamiServer(env = process.env) {
       description:
         'Type text into whatever has focus on the page (CDP Input.insertText, unicode ok), optionally pressing Enter after (`submit:true`). ' +
         'REFUSES and returns {ok:false, needsHuman:true, reason, hint} instead of typing when the focused field looks like a password/OTP/2FA input, or the page shows a CAPTCHA — ' +
-        'then call request_credentials for a password/OTP field (the human fills it from their vault — you never see it), or request_screen for a CAPTCHA. Click the field first with browser_click if it is not already focused.',
+        'then call sign_in({site}) for a password/OTP field (a sign-in runs in the owner\'s Chrome; the host types vault values — you never see them), or request_screen for a CAPTCHA.',
       inputSchema: obj({ text: { type: 'string' }, submit: { type: 'boolean', description: 'Press Enter after typing (default false)' }, ...SID_PROP }, ['text']),
       run: (a) => api('POST', `/__api/sessions/${sid(a)}/browser/type`, { text: a.text, submit: a.submit === true }),
     },
@@ -1346,7 +1371,10 @@ export async function createArigamiServer(env = process.env) {
   let hiddenTools = null; // Set<string> | null (null = unrestricted / not yet known)
   // P2-3: codex never asks for permission, so a permission_prompt card would wait 30 minutes for nobody.
   const ENGINE_HIDDEN = new Set(env.ARIGAMI_ENGINE === 'codex' ? ['permission_prompt'] : []);
-  const isHidden = (name) => ENGINE_HIDDEN.has(name) || !!hiddenTools?.has(name);
+  // sign_in runs the login ladder in the host; the steps it used to be made of are its internals now, not the model's
+  // to pick between. save_browser_logins stays for an AGENT session (its own identity, not the owner's).
+  const LOGIN_INTERNAL = new Set(['browser_logins', 'request_login', 'request_credentials', 'sso_login', 'sso_look', 'sso_click', 'sso_navigate', 'sso_done', 'save_login', ...(env.ARIGAMI_AGENT ? [] : ['save_browser_logins'])]);
+  const isHidden = (name) => ENGINE_HIDDEN.has(name) || LOGIN_INTERNAL.has(name) || !!hiddenTools?.has(name);
 
   // EXT: teach `register_listener` about the types an extension registered. One
   // call at startup (like refreshHidden's policy probe); a failure keeps the
@@ -1399,6 +1427,8 @@ export async function createArigamiServer(env = process.env) {
     const tool = TOOLS.find((t) => t.name === req.params.name);
     if (!tool) return { content: [{ type: 'text', text: `unknown tool: ${req.params.name}` }], isError: true };
     if (ENGINE_HIDDEN.has(tool.name)) return { content: [{ type: 'text', text: `error: tool "${tool.name}" does not exist on this engine` }], isError: true };
+    if (LOGIN_INTERNAL.has(tool.name))
+      return { content: [{ type: 'text', text: `error: "${tool.name}" is internal to sign_in now — call sign_in({site, reason}) and follow its answer` }], isError: true };
     if (hiddenTools?.has(tool.name))
       return { content: [{ type: 'text', text: `error: tool "${tool.name}" is not in this agent's allowlist (ask the human with request_action)` }], isError: true };
     try {

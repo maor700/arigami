@@ -18,11 +18,13 @@ test('defaults: every built-in renders on its turn, container and simple-mode on
       "firstDocker:pb.render('first-turn',{docker:true}),every:pb.render('every-turn',{}),simple:pb.render('every-turn',{simpleMode:true})});"
   );
   expect(out.ids).toEqual(['links', 'login', 'host-rules', 'container', 'identity', 'simple-mode']);
-  const order = ['Arigami links', 'Signing in to a service', 'Temporary files go under $TMPDIR', 'You are the agent inside Arigami'].map((s) => out.first.indexOf(s));
+  const order = ['Arigami links', 'Signing in anywhere', 'Temporary files go under $TMPDIR', 'You are the agent inside Arigami'].map((s) => out.first.indexOf(s));
   expect(order.every((i, k) => i >= 0 && (k === 0 || i > order[k - 1]))).toBe(true);
-  // the browser order: a saved login, then SSO in the owner's browser, then the sign-in card, then a take-over
-  const order2 = ['request_login(site)', 'sso_login(site)', 'request_credentials({site, reason})', 'request_screen with a hint'].map((x) => out.first.indexOf(x));
-  expect(order2.every((i, k) => i >= 0 && (k === 0 || i > order2[k - 1]))).toBe(true);
+  // the order is code now (lib/sign-in.ts ladder): the block only points at sign_in, in three lines
+  const login = out.first.split('<system-reminder>').find((b) => b.includes('Signing in anywhere'));
+  expect(login).toContain('sign_in({site, reason})');
+  expect(login.trim().replace(/<\/system-reminder>/, '').trim().split('\n')).toHaveLength(3);
+  for (const old of ['request_login', 'sso_login', 'request_credentials', 'browser_logins', 'save_login']) expect(out.first).not.toContain(old);
   expect(out.first).toContain('CAPS');
   expect(out.first).not.toContain('{{');
   expect(out.first).not.toContain('passwordless sudo');
@@ -82,7 +84,7 @@ test('claude.js composes the first turn from the registry: an override reaches a
       "const pv=c.firstTurnPreview({engine:'codex'});emit({first:pv.firstTurn,every:pv.everyTurn,id:c.identityReminder('HINT-LINE'),simple:c.chatModePrefix({chatMode:'simple'}),full:c.chatModePrefix({chatMode:'full'}),def:c.SIMPLE_MODE_REMINDER});"
   );
   expect(out.first).toContain('Links: the owner rewrote this.');
-  expect(out.first).toContain('Signing in to a service');
+  expect(out.first).toContain('Signing in anywhere');
   expect(out.id).toContain('HINT-LINE');
   expect(out.simple).toBe(out.def);
   expect(out.full).toBe('');

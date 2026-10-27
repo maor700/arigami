@@ -48,6 +48,12 @@ export interface SiteDef {
   loggedOut?: RegExp;
   /** Why a site is `never`, for the agent and the approval card. */
   note?: string;
+  /**
+   * The cookies that ARE a signed-in session, as alternatives of all-of groups: [['c_user', 'xs']] = both;
+   * [['SID'], ['__Secure-1PSID']] = either. A site with this list counts as signed in only when one group is all there
+   * (see sessionIndicator) — a visitor cookie like Facebook's `datr` is httpOnly+secure too and is not a login.
+   */
+  sessionCookies?: string[][];
   /** True for the built-in list; false for a site derived on the fly. */
   known: boolean;
 }
@@ -60,16 +66,17 @@ export const BUILTIN: SiteDef[] = [
   // a copy of the raw Cookies file worked in some runs and not in later ones.
   // The owner's own browser stayed signed in throughout. A copy that works
   // sometimes is not one to hand an agent — Google is a fresh sign-in.
-  B({ id: 'google.com', label: 'Google', domains: ['.google.com', '.youtube.com', '.googleusercontent.com'], patterns: [/(^|\.)google\.(com?\.)?[a-z]{2,3}$/], policy: 'never', checkUrl: 'https://myaccount.google.com/', loggedOut: /google\.[a-z.]+\/account\/about|accounts\.google\.com\/.*(signin|accountchooser)/i, note: 'Google does not reliably accept its session in a second browser. Sign in fresh in the session (request_screen).' }),
-  B({ id: 'facebook.com', label: 'Facebook', domains: ['.facebook.com'], policy: 'cookies', checkUrl: 'https://www.facebook.com/me' }),
-  B({ id: 'instagram.com', label: 'Instagram', domains: ['.instagram.com'], policy: 'cookies', checkUrl: 'https://www.instagram.com/accounts/edit/' }),
-  B({ id: 'github.com', label: 'GitHub', domains: ['.github.com', 'github.com'], policy: 'cookies', checkUrl: 'https://github.com/settings/profile' }),
-  B({ id: 'linkedin.com', label: 'LinkedIn', domains: ['.linkedin.com'], policy: 'cookies', checkUrl: 'https://www.linkedin.com/feed/' }),
-  B({ id: 'x.com', label: 'X', domains: ['.x.com', '.twitter.com'], policy: 'cookies', checkUrl: 'https://x.com/home' }),
-  B({ id: 'amazon.com', label: 'Amazon', domains: ['.amazon.com'], policy: 'cookies', checkUrl: 'https://www.amazon.com/gp/css/homepage.html' }),
-  B({ id: 'notion.so', label: 'Notion', domains: ['.notion.so', '.notion.com'], policy: 'cookies' }),
-  B({ id: 'figma.com', label: 'Figma', domains: ['.figma.com'], policy: 'cookies', checkUrl: 'https://www.figma.com/files/recents-and-sharing' }),
-  B({ id: 'slack.com', label: 'Slack', domains: ['.slack.com'], policy: 'copy', origins: ['https://app.slack.com'] }),
+  B({ id: 'google.com', label: 'Google', domains: ['.google.com', '.youtube.com', '.googleusercontent.com'], patterns: [/(^|\.)google\.(com?\.)?[a-z]{2,3}$/], policy: 'never', sessionCookies: [['SID'], ['__Secure-1PSID'], ['__Secure-3PSID']], checkUrl: 'https://myaccount.google.com/', loggedOut: /google\.[a-z.]+\/account\/about|accounts\.google\.com\/.*(signin|accountchooser)/i, note: 'Google does not reliably accept its session in a second browser. Sign in fresh in the session (request_screen).' }),
+  B({ id: 'facebook.com', label: 'Facebook', domains: ['.facebook.com'], policy: 'cookies', sessionCookies: [['c_user', 'xs']], checkUrl: 'https://www.facebook.com/me' }),
+  B({ id: 'instagram.com', label: 'Instagram', domains: ['.instagram.com'], policy: 'cookies', sessionCookies: [['sessionid']], checkUrl: 'https://www.instagram.com/accounts/edit/' }),
+  B({ id: 'github.com', label: 'GitHub', domains: ['.github.com', 'github.com'], policy: 'cookies', sessionCookies: [['user_session'], ['__Host-user_session_same_site']], checkUrl: 'https://github.com/settings/profile' }),
+  B({ id: 'linkedin.com', label: 'LinkedIn', domains: ['.linkedin.com'], policy: 'cookies', sessionCookies: [['li_at']], checkUrl: 'https://www.linkedin.com/feed/' }),
+  B({ id: 'x.com', label: 'X', domains: ['.x.com', '.twitter.com'], policy: 'cookies', sessionCookies: [['auth_token']], checkUrl: 'https://x.com/home' }),
+  B({ id: 'amazon.com', label: 'Amazon', domains: ['.amazon.com'], policy: 'cookies', sessionCookies: [['at-main'], ['sess-at-main']], checkUrl: 'https://www.amazon.com/gp/css/homepage.html' }),
+  B({ id: 'reddit.com', label: 'Reddit', domains: ['.reddit.com'], policy: 'cookies', sessionCookies: [['reddit_session']], checkUrl: 'https://www.reddit.com/settings/account' }),
+  B({ id: 'notion.so', label: 'Notion', domains: ['.notion.so', '.notion.com'], policy: 'cookies', sessionCookies: [['token_v2']] }),
+  B({ id: 'figma.com', label: 'Figma', domains: ['.figma.com'], policy: 'cookies', sessionCookies: [['figma.authn'], ['__Host-figma.authn']], checkUrl: 'https://www.figma.com/files/recents-and-sharing' }),
+  B({ id: 'slack.com', label: 'Slack', domains: ['.slack.com'], policy: 'copy', sessionCookies: [['d']], origins: ['https://app.slack.com'] }),
   B({ id: 'linear.app', label: 'Linear', domains: ['.linear.app', 'linear.app'], policy: 'copy', origins: ['https://linear.app'] }),
   B({ id: 'whatsapp.com', label: 'WhatsApp Web', domains: ['.whatsapp.com'], policy: 'never', note: 'WhatsApp Web is a linked device: two browsers holding the same keys can get both logged out. Sign in fresh by scanning the QR code.' }),
   B({ id: 'telegram.org', label: 'Telegram Web', domains: ['.telegram.org'], policy: 'never', note: 'Telegram Web is a linked session: copying it can end the original. Sign in fresh.' }),
@@ -171,7 +178,8 @@ function ownerSites(): SiteDef[] {
   for (const s of readFile().sites || []) {
     if (!s?.id || !Array.isArray(s.domains) || !s.domains.length) continue;
     const policy = s.policy === 'copy' || s.policy === 'cookies' || s.policy === 'never' ? s.policy : 'copy';
-    out.push({ ...s, id: String(s.id).toLowerCase(), label: String(s.label || s.id), domains: s.domains.map(String), policy, known: true } as SiteDef);
+    const sessionCookies = Array.isArray(s.sessionCookies) ? s.sessionCookies.filter((g) => Array.isArray(g) && g.length).map((g) => g.map(String)) : undefined;
+    out.push({ ...s, id: String(s.id).toLowerCase(), label: String(s.label || s.id), domains: s.domains.map(String), policy, ...(sessionCookies?.length ? { sessionCookies } : { sessionCookies: undefined }), known: true } as SiteDef);
   }
   return out;
 }
@@ -197,6 +205,43 @@ export function resolve(input: string): SiteDef {
   if (hit) return hit;
   const id = registrable(host);
   return { id, label: id, domains: ['.' + id], policy: 'copy', known: false };
+}
+
+// ---- is it a signed-in SESSION, or a visitor? ---------------------------------------------------------------------
+// A site sets httpOnly+secure cookies on every visitor (Facebook's datr/fr/sb, Cloudflare's __cf_bm, Google's NID), so
+// "has an auth-looking cookie" listed Facebook as signed in when only a visitor id was there — and the approved login
+// moved nothing that signs in. A site counts as signed in only with a SESSION indicator: its own list (sessionCookies),
+// or for a site without one, a cookie whose name says session/auth/token and is not a known visitor cookie.
+
+/** Cookies sites set on every visitor — never a login on their own. Lower-case names. */
+export const VISITOR_COOKIES = new Set([
+  'datr', 'sb', 'fr', 'wd', 'dpr', 'locale', 'presence', 'usida', 'ps_l', 'ps_n',
+  '_ga', '_gid', '_gat', '_gcl_au', '_fbp', '_fbc', '__utma', '__utmb', '__utmc', '__utmz', 'ajs_anonymous_id',
+  '__cf_bm', 'cf_clearance', '_cfuvid', '__cfruid', '__cflb', '__stripe_mid', '__stripe_sid',
+  'nid', 'aec', 'consent', 'socs', '1p_jar', 'otz', '__secure-enid', 'search_samesite',
+  'loid', 'session_tracker', 'edgebucket', 'csv', 'rdt', 'token_v2_anon',
+  'guest_id', 'guest_id_ads', 'guest_id_marketing', 'personalization_id', 'bcookie', 'bscookie', 'lidc', 'lang',
+  'csrftoken', 'csrf_token', '_csrf', 'xsrf-token', 'x-csrf-token', '_gh_sess_anon', 'tz', 'color_mode', 'preferred_color_mode',
+]);
+
+/** A cookie name that reads like a session (for a site with no list of its own). */
+const SESSIONY = /sess|auth|token|jwt|logged_?in|remember|^sid$|[._-]sid$|^sso/i;
+
+export interface CookieName { name: string; is_httponly?: number | bigint; is_secure?: number | bigint }
+
+export type SessionVerdict = { signedIn: true; by: string } | { signedIn: false; why: string };
+
+/** Pure: do these (non-expired) cookies of `site` hold a signed-in session? Never looks at a value. */
+export function sessionIndicator(site: Pick<SiteDef, 'sessionCookies' | 'label'>, cookies: CookieName[]): SessionVerdict {
+  const names = new Set(cookies.map((c) => String(c.name)));
+  if (site.sessionCookies?.length) {
+    const hit = site.sessionCookies.find((group) => group.length && group.every((n) => names.has(n)));
+    if (hit) return { signedIn: true, by: hit.join('+') };
+    return { signedIn: false, why: `no ${site.label} session cookie (${site.sessionCookies.map((g) => g.join('+')).join(' or ')}) — only visitor cookies` };
+  }
+  const hit = cookies.find((c) => Number(c.is_httponly) === 1 && !VISITOR_COOKIES.has(String(c.name).toLowerCase()) && SESSIONY.test(String(c.name)) && !/csrf|xsrf/i.test(String(c.name)));
+  if (hit) return { signedIn: true, by: String(hit.name) };
+  return { signedIn: false, why: cookies.length ? 'only visitor / tracking cookies, no session cookie' : 'no cookies' };
 }
 
 export interface Decision {

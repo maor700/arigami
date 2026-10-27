@@ -1,5 +1,5 @@
 ---
-description: Convention for any session that drives a browser or the shared desktop (VNC machine) on the human's behalf — narrate what you do, screenshot only at the few required moments (first page, before/after a hand-over, the end), sign-in forms through request_credentials (the human fills it, you never see it), hand over to the human at CAPTCHA / payment / push approvals via request_screen, verify after they click Done, and summarize at the end. Load this (or follow it) from every skill that opens a browser.
+description: Convention for any session that drives a browser or the shared desktop (VNC machine) on the human's behalf — narrate what you do, screenshot only at the few required moments (first page, before/after a hand-over, the end), sign-ins through sign_in (the host types vault values, you never see them), hand over to the human at CAPTCHA / payment / push approvals via request_screen, verify after they click Done, and summarize at the end. Load this (or follow it) from every skill that opens a browser.
 ---
 
 # Machine work — narrate, capture, hand over, verify
@@ -20,16 +20,12 @@ over**, complete it, click **Done**, and you continue.
 | `browser_snapshot({caption?})` | screenshot + `{url, title, text}` of the current page, plus `{needsHuman, reason, hint}` — check this before clicking/typing further |
 | `browser_click({x,y}\|{text})` | click by viewport coordinates (from a snapshot screenshot) or by visible text |
 | `browser_type({text, submit?})` | type into the focused field. Refuses (returns `needsHuman:true`) on a password/OTP field or a CAPTCHA — see §3 |
-| `sso_login({site, reason})` → `sso_look` / `sso_click` / `sso_navigate` / `sso_done` | **a site that offers SSO** ("Continue with Google", Microsoft, Apple, company SSO) — first, before any password. Runs in the human's own browser ("My browser"), the only one signed in to their account; they approve on a card, you click through it (no typing), `sso_done` brings the login into your browser |
-| `request_credentials({site, reason})` | **the way to sign in on a form without SSO** (username / password / one-time code): the human fills it from their vault, or types it once on a card — you never see it. Stop and wait for the `[host]` message — see §3 |
+| `sign_in({site, reason})` | **every sign-in** — a site, a service, `gcloud`. The host runs the order and answers `signed_in` / `blocked` / `driving` — see §3 |
 | `browser_scroll({dx?,dy?})` | scroll the page |
 | `browser_close()` | close this session's browser (safe even if not running) |
 | `capture_screen({caption?})` | **required moments only** (see §2) — a screenshot card appears in the chat timeline. Identical frames are deduped server-side |
 | `request_screen({prompt, reason?, hint?})` | when only the human's hands can proceed: CAPTCHA, payment, a push/app approval, an unexpected dialog — or a sign-in the human chose to type themselves. Blocks until Done. Sends a push. |
 | `request_action({prompt, buttons})` | when you need a *decision*, not a hand — never for things they have to do on the machine |
-| `browser_logins()` | which sites the human is signed in to in THEIR browser — names only. Check before signing in anywhere |
-| `request_login({site, reason})` | ask for the human's login to ONE site; they approve on a card and it lands in your browser. Stop and wait for the `[host]` message |
-| `save_login({site, reason})` | after a fresh sign-in, offer to save that one site to the human's browser — only on their approval |
 | `set_status_summary` / `set_progress` | running status — do NOT use request_action for status |
 
 `capture_screen` and `browser_*` are provided by the host MCP (`arigami`) under the `desktop` and
@@ -71,10 +67,9 @@ The human may be on a phone, another machine or a tailnet — a
 Each session gets its own desktop (its own `Xvfb`+VNC, not the shared one)
 and its own Chrome profile, allocated the first time you touch any of this —
 `request_screen`, `capture_screen`, or opening a browser. The profile starts
-with **no logins**. The human signs in to sites once, in their own browser
-("My browser" in the cockpit); when you need a site, `request_login` asks them
-for that one site. Never ask for a password in the chat — a fresh sign-in is
-`request_credentials` on the site's sign-in form (§3). Your browser closes itself after ~10
+with **no logins**. When you need a site, `sign_in({site})` brings that one site's
+login in — from the owner's everyday Chrome, or by a new sign-in there (§3). Never
+ask for a password in the chat. Your browser closes itself after ~10
 minutes unused and reopens, with its tabs, on your next browser step.
 
 **Opening a browser:** use the helper, never launch `google-chrome` yourself:
@@ -97,17 +92,16 @@ respawn is enough if it was allocated after your process started). If you're
 driving X directly instead of through the Chrome helper, use `$DISPLAY`, not
 a hardcoded `:99` (that's the *global* desktop, not yours).
 
-**Saving logins:** once you are signed in to a site (by `request_credentials`
-or a take-over), offer `save_login({site})` — the human approves it on a card,
-and later sessions get that site through `request_login` with no password at
-all. An agent session keeps its own identity with `save_browser_logins()`.
+**Saving logins:** nothing to do. A sign-in done through `sign_in` lives in the
+owner's Chrome profile, and later sessions get that site from there. An agent
+session keeps its own identity with `save_browser_logins()`.
 
 ## The shared desktop — one session at a time, through the lease
 
-The global desktop (`:99` on Linux) is the owner's own screen; on a host where the owner uses an everyday Chrome
-there, it is the browser Google treats as a person (an SSO sign-up that My browser could not get through — a
-CAPTCHA, "enter your email" — usually goes through there). It is ONE machine for every session and the owner,
-so it is driven only through the host's lease:
+The global desktop (`:99` on Linux) is the owner's own screen, with their everyday Chrome — the browser sites treat
+as a person. **A sign-in does not start here: `sign_in` takes the lease itself** and tells you when your hands are
+needed (§3). For other work on that screen it is ONE machine for every session and the owner, driven only through the
+host's lease:
 
 1. `shared_desktop_acquire({site, reason})`. `{granted:true}` → yours. `{queued:true, position}` → **stop and end
    your turn**; the host messages you `[host] Your turn…`. Never poll.
@@ -115,21 +109,19 @@ so it is driven only through the host's lease:
    No raw `xinput.py` / `scrot` on it: that bypasses the lease, and the host reads it as someone else's input.
 3. Screenshot first; open your own tab (`ctrl+t`), stay on the site and the sign-in provider's pages, never the
    owner's other tabs. Typing is limited by the host to the site's URLs, sign-in providers and the owner's
-   account email; a password or code is `request_screen`; text the human gave in the chat: `from_human:true`.
+   account email; a password or code is `sign_in({site, fill})`; text the human gave in the chat: `from_human:true`.
 4. `request_screen` (or any card) parks your lease: others may use the screen meanwhile and you are first in line
    when the human answers — wait for `[host] Your turn…`, and redo a step whose page expired meanwhile.
 5. The owner's own input pauses you (`paused:true` → end your turn; `[host] The owner is done…` wakes you). After
    60 s without an action the lease goes to the next session.
-6. Signed in → `shared_desktop_release` right away, then `request_login(site)`: logins in the owner's everyday
-   Chrome are visible to `browser_logins` / `request_login` (`sources: chrome`), so the site comes to your own
-   browser and the work continues there.
+6. Done → `shared_desktop_release` right away.
 
 ## The convention
 
 ### 1. Opening message
 Before touching the machine, post one line in chat:
 
-> Working on the machine: **<goal>** — <2–4 steps you expect> · at a sign-in form I'll ask you on a card (from your vault, I never see it); at a CAPTCHA/payment I'll ask you to take over.
+> Working on the machine: **<goal>** — <2–4 steps you expect> · a sign-in goes through your own Chrome, the password from your vault (I never see it); at a CAPTCHA/payment I'll ask you to take over.
 
 (Write this in the human's own language — match whatever language they've been writing to you in, English included.)
 Set `set_progress` with those steps.
@@ -155,35 +147,24 @@ screen hasn't changed since the last capture the server returns
 Captions: short and factual — "Login page loaded", "Order form filled, not
 submitted yet", "Error: card declined".
 
-### 3. Signing in: saved login → SSO → `request_credentials`; what only a human can do → `request_screen`
+### 3. Signing in: `sign_in`; what only a human can do → its `human` step
 
-The order (the `login` block in your first message says the same): a connection the host has → your
-engine's connector → the browser: `browser_logins` / `request_login` → **SSO** with `sso_login` when the
-site offers it → a password form with `request_credentials` → `request_screen` for the rest.
+One call: `sign_in({site, reason})` (`docs/LOGIN.md`). The host tries, in order, a connection it has, a saved login
+that is really signed in, and a new sign-in in the owner's own Chrome on the shared desktop. Its answer:
 
-**SSO** ("Continue with Google", "Sign in with Microsoft", Apple, Okta, company SSO) is always tried before
-a password, and only in the human's own browser: `sso_login({site, reason})`, wait for the `[host]` line,
-then `sso_look` (screenshot + text), `sso_click({text:"Continue with Google"})`, pick the account the same
-way, and `sso_done` once the site shows you signed in — the login moves into your browser and you go on
-there. You cannot type in that browser and see only the site and the sign-in pages. A password or code
-prompt there (`needsHuman`) is the human's: say so in one line and wait.
+- `signed_in` → do what `next` says (use the connection's tools, or `browser_open` the site — the login is in your
+  browser).
+- `blocked` → stop, tell the human its one `reason` in one line.
+- `driving` → the site's sign-in page is open in the owner's Chrome and the shared desktop is yours:
+  `desktop_screenshot({shared:true})`, click with `desktop_pointer({shared:true})`, Enter / Tab with
+  `desktop_keyboard({key, shared:true})`. A username / password / code field: click into it, then
+  `sign_in({site, fill:"username"|"password"|"otp"})` — the host types it from the vault; submit it yourself.
+  SSO ("Continue with Google") is just a button there: click it and pick the account. A CAPTCHA, an SMS code or a
+  push only the human can do: `sign_in({site, human:"<exactly what to do>"})`. The page shows you signed in:
+  `sign_in({site, done:true})`.
+- `account` picks which of the owner's accounts (work / personal) when the site has two.
 
-
-`browser_type` refuses on its own when the focused field looks like a password/OTP input or the page
-shows a CAPTCHA (`{ok:false, needsHuman:true, reason, hint}`), and `browser_snapshot` reports the same
-`{needsHuman, reason, hint}` proactively — don't wait to be refused, check it. Then:
-
-**A sign-in form** (username, password, or a one-time code field) → `request_credentials({site, reason})`
-on that page. It is not "typing a password yourself": the host shows the human a card, they fill it
-from their vault (or type it once and save it), and the host puts it into the page. You get
-`{pending:true}` — **stop and wait** for the `[host] …` line, then `browser_snapshot` to check. You never
-see the values; never read a password field, never ask for one in the chat.
-- `{manual:true}` → the human types this site themselves: `request_screen` (reason `login`).
-- `{ok:false, refused:true}` (Google, GitHub) → ask the human, in one line, to sign in to it in
-  "My browser", then `request_login(site)`.
-- `{ok:false, next}` (no sign-in field yet) → do what `next` says.
-- After the `[host]` line says it was filled: a code field next → `request_credentials` again; a
-  push/app approval → `request_screen` (reason `2fa`).
+`browser_type` refuses a password/OTP field in your own browser (`{needsHuman:true}`) — that is `sign_in({site})` too.
 
 **Before the first sign-in step:** look up what memory says about this site (flow, tabs, traps) and
 tell the human in one line what to expect — "a password card, then the site will probably text you a
@@ -207,11 +188,10 @@ password — and asks you to enter, enter it right away: no second confirmation,
 **If the human cancels a card:** don't just stop — ask in one line what they'd rather do (type it
 themselves, a different method, later).
 
-**Signed in:** one line with the outcome and the one useful fact (the name/balance in the header),
-then `save_login`.
+**Signed in:** one line with the outcome and the one useful fact (the name/balance in the header).
 
-**Anything else only the human can do** — CAPTCHA, payment, a push approval on their phone, an
-unexpected dialog — hand the screen over with `request_screen`:
+**Anything else only the human can do** outside a sign-in — a payment, an unexpected dialog — hand the screen over
+with `request_screen` (inside a sign-in it is `sign_in({site, human})`):
 
 1. `capture_screen` (or `browser_snapshot`) first (required moment #2 — the card shows where you are).
 2. Post one short line in chat: what you were doing and why you stopped.
@@ -231,8 +211,7 @@ unexpected dialog — hand the screen over with `request_screen`:
    tabs on the machine — the human is driving it.
 
 Never ask for passwords, codes or card numbers in chat. They reach the page
-through the card (`request_credentials`) or the human's own hands (`request_screen`);
-you never see them.
+through the vault (`sign_in({fill})`) or the human's own hands; you never see them.
 
 If a listener can do it without the human (e.g. `sms-listener` for an OTP the
 human agreed to forward), prefer that and mention it — but fall back to
@@ -253,9 +232,9 @@ one clear blocker after you tried — not with every hiccup, and not with a stri
 | Code boxes show the digits reversed | the boxes run left-to-right even on a Hebrew page — start from the leftmost |
 | Keystrokes get lost (a box stays empty, the cursor jumps) | re-click that box and type its digit again; never submit before a screenshot shows all of them |
 | "Wrong code" | look at what was actually submitted before blaming the code; ask for "send again" only once you know it was really entered right |
-| A surprise 2FA step after the password | expected on a new device: tick "remember this device", `request_credentials` for the code (or enter the one the human wrote in the chat) |
+| A surprise 2FA step after the password | expected on a new device: tick "remember this device", `sign_in({site, fill:"otp"})` for the code, or `sign_in({site, human})` for an SMS / push (or enter the one the human wrote in the chat) |
 | The human cancelled a card | don't just stop — one line: what they'd rather do (type it here, another method, later) |
-| The site blocks automated browsers outright (Google, Turnstile loop) | `sso_login` — the human signs in in their own browser, then `sso_done` |
+| `sign_in({fill})` says nothing was typed | read its reason: click into the field of the owner's Chrome first (the focus must be there), or reload the page (F5) when it is old |
 
 After a site needed one of these, save the site's quirks in memory (flow, which clicks must be real,
 code-box order), so the next session goes straight through.
@@ -301,7 +280,8 @@ a human reviews the diff before it touches the live skill.
 - Asking the human to paste a code into chat — or, once they did and asked you to enter it, refusing and sending them to a card.
 - Going back to the human at the first hiccup, or asking for approval on each step of a sign-in.
 - Handing the screen over because a button "doesn't respond" before trying a real `desktop_pointer` click.
-- Handing the screen over (`request_screen`) for an ordinary password form — that is `request_credentials`.
+- Handing the screen over (`request_screen`) for an ordinary password form — that is `sign_in({site, fill})`.
+- Refusing the owner's Chrome on the shared desktop for a sign-in — it is THE place a new sign-in happens.
 - Getting round the sign-in some other way (a published demo password, `curl` with typed credentials).
 - Continuing after Done without checking the page.
 - Screenshotting every step "for the record" — only the four required moments plus what you need to see yourself.

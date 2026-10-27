@@ -61,7 +61,8 @@ function CredentialCardView({ props: { sessionId, request } }) {
       setBusy(false);
     }
   };
-  const base = { sessionId, requestId: request.requestId, origin: request.origin, fields, remember };
+  const shared = request.target === 'shared';
+  const base = { sessionId, requestId: request.requestId, origin: request.origin, fields, remember, exact: shared };
 
   const signInAs = (m) => run(() => fillFromVault({ ...base, entryId: m.id }));
   const fillTyped = () => run(async () => {
@@ -87,6 +88,7 @@ function CredentialCardView({ props: { sessionId, request } }) {
   return (
     <CardFrame tone="accent" live data-credential-request={request.requestId} label={t('vault.card.title', { host: request.host })}>
       {request.reason && <Prose className="mt-2">{request.reason}</Prose>}
+      {shared && <Prose dim className="mt-1" data-cred-shared>{t('vault.card.shared', { account: request.account || 'Chrome' })}</Prose>}
       <Prose dim className="mt-1">{t('vault.card.private')}</Prose>
 
       {showSaved ? (
@@ -162,7 +164,7 @@ export const CredentialCardDef = defineHostComponent({
   description: 'Host: request_credentials — fill a sign-in from the owner\'s vault, or hand it to take-over',
   props: loose({
     sessionId: z.string(),
-    request: loose({ requestId: str, origin: str, host: str, fields: any, reason: any, pref: any }),
+    request: loose({ requestId: str, origin: str, host: str, fields: any, reason: any, pref: any, target: any, account: any }),
   }),
   component: CredentialCardView,
 });

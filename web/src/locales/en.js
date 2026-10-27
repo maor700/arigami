@@ -26,6 +26,7 @@ export const en = {
   'settings.advanced': 'Advanced',
   // VAULT1 — the sign-in card and Settings › Connections › Passwords
   'vault.card.title': 'Sign in to {host}',
+  'vault.card.shared': 'Typed with real keys into your own Chrome on the shared desktop ({account}), into the field the agent clicked — one field per card.',
   'vault.card.private': 'Only you see these details: they go straight to the sign-in page. The agent and the chat never get them.',
   'vault.card.signInAs': 'Sign in as {user}',
   'vault.card.other': 'Use other details',
@@ -63,7 +64,7 @@ export const en = {
   'vault.window': 'Stays unlocked for',
   'vault.minutes': '{n} min',
   'vault.prefs': 'Choices per site',
-  'vault.prefsHint': 'Set with "Remember this choice" on a sign-in card.',
+  'vault.prefsHint': 'Set with "Remember this choice" on a sign-in card. "auto" = sign_in fills that site from the vault without a card (one saved entry, vault unlocked), also in your Chrome on the shared desktop.',
   'vault.pref.auto': 'Fill automatically',
   'vault.pref.manual': 'I type it myself',
   'vault.prefReset': 'Ask again',

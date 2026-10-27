@@ -33,7 +33,7 @@ Server side: `server/remote.js` via `GET/POST /__api/remote` (exists).
 3. `connect.sh open "<login url>"`, `wait-url 'login\.tailscale\.com' 30`, `shot first`,
    `capture_screen({caption:"Tailscale login page loaded"})`.
 4. Click **Sign in with Google**. Account chooser → pick the identity email.
-   A non-Google SSO's username/password form → `request_credentials` and wait for the `[host]` line.
+   A non-Google SSO's username/password form → `sign_in({site, browser:true})` for that provider, then reload.
    A Google password/2FA screen or a push approval → boundary:
    `capture_screen`, `request_screen({prompt:"Connecting this machine to your tailnet — Tailscale asks you to sign in.", reason:"login", hint:"Sign in, click Connect on the device page, wait for 'Success', then click Done."})`.
 5. The device page ("Connect device … as <tailnet>"): click **Connect**. Then

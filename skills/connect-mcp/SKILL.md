@@ -35,9 +35,7 @@ its own. You never choose it — the host returns it as `name`.
 ## Hard rules
 1. **Never type passwords / 2FA / OTP.** The only text you ever type is a URL.
    A vendor's own username / password / code form is not typed by you either: call
-   `request_credentials({site, reason})` on it and wait for the `[host]` line (the human fills it
-   from their vault; you never see it). Google / GitHub sign-in, a push approval or a CAPTCHA →
-   take-over (`request_screen`).
+   `sign_in({site, reason, browser:true})` for it and follow its answer (the sign-in runs in the owner's own Chrome, the host types vault values — you never see them), then reload the page here. A push approval or a CAPTCHA → take-over (`request_screen`).
 2. **Allowlist**: the host returns `domains` for the service in step 1 — that
    subset of the frontmatter list, and nothing else:
    `export CONNECT_ALLOW="<those domains> localhost"`. The list already includes
@@ -55,7 +53,7 @@ its own. You never choose it — the host returns it as `name`.
   the consent runs in. Check `GET /__api/setup/capabilities` (as an agent:
   `?owner=agent:<slug>`); if absent, `request_setup({capability:"identity"})`
   first. A vendor with its own username/password is fine too — it just means
-  step 4 is a sign-in card (`request_credentials`).
+  step 4 is a `sign_in` for that vendor.
 
 ## Steps
 0. Opening line + `set_progress`.
@@ -74,7 +72,7 @@ its own. You never choose it — the host returns it as `name`.
    guess. A Google chooser: click the row whose email equals the identity email,
    never "Use another account".
 4. **Consent**: click **Authorize / Allow access / Approve**. A vendor login form instead →
-   `request_credentials` (rule 1), then continue. A Google/GitHub sign-in or a 2FA push → `capture_screen`,
+   `sign_in` (rule 1), then continue. A 2FA push → `capture_screen`,
    `request_screen({prompt:"Connecting <Service> — it asks you to sign in.", reason:"login", hint:"Sign in, click Authorize, wait for the page that says you can close the tab, then click Done."})`,
    and after Done continue from step 5.
 5. The consent redirects to the host's callback page (`…/__api/mcp-oauth/callback?code=…`),

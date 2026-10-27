@@ -110,62 +110,102 @@ export interface Detection {
   authCookies: number;
   /** Origins of the site that hold IndexedDB. */
   storageOrigins: string[];
+  /** A real SESSION is there (sessionIndicator) — never just a visitor cookie like Facebook's `datr`. */
   present: boolean;
+  /** What made it a session (cookie names), or why not. Names only. */
+  by?: string;
+  why?: string;
   /** The sources that hold it, in the order a transfer tries them (the vault first: it can be checked live). */
   sources: LoginSource[];
+  /** Which of the owner's Chrome profiles hold it (dir names) — two = two accounts of the same site. */
+  profiles?: string[];
 }
 
-function detectAt(site: sites.SiteDef, profilePath: string, readableOnly: boolean): Omit<Detection, 'site' | 'sources'> {
+type One = Omit<Detection, 'site' | 'sources' | 'profiles'>;
+
+/**
+ * Pure: one profile's share of a site → is a session there? Cookies by sessionIndicator. Storage alone counts only for
+ * a site the host knows keeps its session in storage (`copy` with no session-cookie list: Linear) — an unknown site's
+ * IndexedDB is as likely a cache as a login.
+ */
+export function judge(site: sites.SiteDef, rows: Pick<CookieRow, 'name' | 'is_httponly' | 'is_secure'>[], storageOrigins: string[]): One {
+  const authCookies = rows.filter((r) => Number(r.is_httponly) === 1 && Number(r.is_secure) === 1).length;
+  const v = sites.sessionIndicator(site, rows);
+  if (v.signedIn) return { cookies: rows.length, authCookies, storageOrigins, present: true, by: v.by };
+  if (storageOrigins.length && site.known && site.policy === 'copy' && !site.sessionCookies?.length)
+    return { cookies: rows.length, authCookies, storageOrigins, present: true, by: 'site storage' };
+  return { cookies: rows.length, authCookies, storageOrigins, present: false, why: v.why };
+}
+
+function detectAt(site: sites.SiteDef, profilePath: string, readableOnly: boolean): One {
   // A keyring-encrypted cookie (v11) cannot be read without the owner's keyring: not a login we can offer.
   const rows = profileCookies(profilePath).filter((r) => sites.cookieBelongs(r.host_key, site) && (!readableOnly || !r.tag || r.tag === 'v10'));
   const storageOrigins = profileIdbOrigins(profilePath).filter((o) => sites.cookieBelongs(new URL(o).hostname, site));
-  const authCookies = rows.filter((r) => Number(r.is_httponly) === 1 && Number(r.is_secure) === 1).length;
-  return { cookies: rows.length, authCookies, storageOrigins, present: authCookies > 0 || storageOrigins.length > 0 };
+  return judge(site, rows, storageOrigins);
 }
 
-/** Does the vault (or the owner's Chrome) hold a login for `input`? Reads disk only; never returns a value. */
-export function detect(input: string, dir = VAULT_DIR, own: owner.OwnerProfile | null = owner.ownerProfile()): Detection {
+const asList = (own: owner.OwnerProfile | owner.OwnerProfile[] | null | undefined): owner.OwnerProfile[] => (!own ? [] : Array.isArray(own) ? own : [own]);
+
+/**
+ * Does the vault (or one of the owner's Chrome profiles) hold a signed-in session for `input`? Reads disk only; never
+ * returns a value. `own` defaults to every profile of the owner's Chrome.
+ */
+export function detect(input: string, dir = VAULT_DIR, own: owner.OwnerProfile | owner.OwnerProfile[] | null = owner.ownerProfiles()): Detection {
   const site = sites.resolve(input);
   const v = detectAt(site, path.join(dir, 'Default'), false);
-  const c = own ? detectAt(site, own.profilePath, true) : null;
-  const sources: LoginSource[] = [...(v.present ? (['vault'] as const) : []), ...(c?.present ? (['chrome'] as const) : [])];
-  const first = v.present || !c?.present ? v : c;
-  return { site, ...first, sources };
+  const per = asList(own).map((p) => ({ p, d: detectAt(site, p.profilePath, true) }));
+  const hit = per.filter((x) => x.d.present);
+  const sources: LoginSource[] = [...(v.present ? (['vault'] as const) : []), ...(hit.length ? (['chrome'] as const) : [])];
+  const first = v.present || !hit.length ? v : hit[0].d;
+  return { site, ...first, sources, ...(hit.length ? { profiles: hit.map((x) => x.p.profileDir) } : {}) };
+}
+
+/** Is `input` signed in in this ONE profile of the owner's Chrome? */
+export function detectProfile(input: string, p: owner.OwnerProfile): One {
+  return detectAt(sites.resolve(input), p.profilePath, true);
 }
 
 /** One source's detection, for the transfer from it. */
-function detectIn(site: sites.SiteDef, src: LoginSource, dir: string, own: owner.OwnerProfile | null): Omit<Detection, 'site' | 'sources'> {
+function detectIn(site: sites.SiteDef, src: LoginSource, dir: string, own: owner.OwnerProfile | null): One {
   return src === 'vault' ? detectAt(site, path.join(dir, 'Default'), false) : detectAt(site, own!.profilePath, true);
 }
 
-function loginHosts(profilePath: string, readableOnly: boolean): string[] {
+/** The sites one profile holds a SESSION for (sessionIndicator per site), by site id. */
+function loginSites(profilePath: string, readableOnly: boolean): sites.SiteDef[] {
   const rows = profileCookies(profilePath).filter((r) => !readableOnly || !r.tag || r.tag === 'v10');
-  const idb = profileIdbOrigins(profilePath).map((o) => new URL(o).hostname);
-  return [...rows.filter((r) => Number(r.is_httponly) === 1 && Number(r.is_secure) === 1).map((r) => r.host_key), ...idb];
+  const idb = profileIdbOrigins(profilePath);
+  const by = new Map<string, { site: sites.SiteDef; rows: CookieRow[]; storage: string[] }>();
+  const at = (host: string) => {
+    const s = sites.resolve(host.replace(/^\./, ''));
+    if (!by.has(s.id)) by.set(s.id, { site: s, rows: [], storage: [] });
+    return by.get(s.id)!;
+  };
+  for (const r of rows) at(r.host_key).rows.push(r);
+  for (const o of idb) at(new URL(o).hostname).storage.push(o);
+  return [...by.values()].filter((x) => !(x.site.known === false && sites.TRACKERS.has(x.site.id)) && judge(x.site, x.rows, x.storage).present).map((x) => x.site);
 }
 
 /**
- * The sites the vault (and the owner's Chrome) has a login for — names only. Known sites by name; any
- * other registrable domain only when it has an httpOnly+secure cookie or its
- * own storage, so ad and analytics cookies don't show up as "logins".
+ * The sites the vault (and the owner's Chrome) is signed in to — names only. A site counts only with a SESSION
+ * indicator (sessionIndicator): ad, analytics and visitor cookies (Facebook's datr) don't make it a "login".
  */
 export function list(
   dir = VAULT_DIR,
-  own: owner.OwnerProfile | null = owner.ownerProfile()
-): { id: string; label: string; known: boolean; policy: sites.LoginPolicy; sources: LoginSource[] }[] {
-  const seen = new Map<string, { site: sites.SiteDef; sources: Set<LoginSource> }>();
-  const add = (hosts: string[], src: LoginSource) => {
-    for (const h of hosts) {
-      const s = sites.resolve(h.replace(/^\./, ''));
-      if (!s.known && sites.TRACKERS.has(s.id)) continue;
-      if (!seen.has(s.id)) seen.set(s.id, { site: s, sources: new Set() });
-      seen.get(s.id)!.sources.add(src);
+  own: owner.OwnerProfile | owner.OwnerProfile[] | null = owner.ownerProfiles()
+): { id: string; label: string; known: boolean; policy: sites.LoginPolicy; sources: LoginSource[]; profiles?: string[] }[] {
+  const seen = new Map<string, { site: sites.SiteDef; sources: Set<LoginSource>; profiles: string[] }>();
+  const add = (found: sites.SiteDef[], src: LoginSource, profile?: string) => {
+    for (const s of found) {
+      if (!seen.has(s.id)) seen.set(s.id, { site: s, sources: new Set(), profiles: [] });
+      const e = seen.get(s.id)!;
+      e.sources.add(src);
+      if (profile) e.profiles.push(profile);
     }
   };
-  add(loginHosts(path.join(dir, 'Default'), false), 'vault');
-  if (own) add(loginHosts(own.profilePath, true), 'chrome');
+  add(loginSites(path.join(dir, 'Default'), false), 'vault');
+  for (const p of asList(own)) add(loginSites(p.profilePath, true), 'chrome', p.profileDir);
   return [...seen.values()]
-    .map(({ site: s, sources }) => ({ id: s.id, label: s.label, known: s.known, policy: sites.decide(s).policy, sources: [...sources].sort() as LoginSource[] }))
+    .map(({ site: s, sources, profiles }) => ({ id: s.id, label: s.label, known: s.known, policy: sites.decide(s).policy, sources: [...sources].sort() as LoginSource[], ...(profiles.length ? { profiles } : {}) }))
     .sort((a, b) => Number(b.known) - Number(a.known) || a.id.localeCompare(b.id));
 }
 
@@ -332,6 +372,8 @@ function originsFor(site: sites.SiteDef, storageOrigins: string[]): string[] {
 
 export interface TransferResult {
   ok: boolean;
+  /** The owner's Chrome profile it came from (source 'chrome'). */
+  profile?: string;
   site: string;
   policy: sites.LoginPolicy;
   moved?: { cookies: number; dbs: number; rows: number; local: number };
@@ -343,8 +385,10 @@ export interface TransferResult {
 }
 
 /** Carry ONE site's login from the vault — or, failing that, the owner's Chrome — into a session's browser. */
-export async function transfer(sessionId: string, input: string, dir = VAULT_DIR, own: owner.OwnerProfile | null = owner.ownerProfile()): Promise<TransferResult> {
-  const d = detect(input, dir, own);
+export async function transfer(sessionId: string, input: string, dir = VAULT_DIR, ownIn: owner.OwnerProfile | owner.OwnerProfile[] | null = owner.ownerProfiles()): Promise<TransferResult> {
+  const d = detect(input, dir, ownIn);
+  // ONE profile is the source — the first that holds a session (sign_in passes the one the owner's account is in).
+  const own = asList(ownIn).find((p) => d.profiles?.includes(p.profileDir)) || null;
   const site = d.site;
   const decision0 = sites.decide(site, d.storageOrigins.length ? ['(unread)'] : []);
   if (decision0.policy === 'never') return { ok: false, site: site.id, policy: 'never', error: decision0.reason || 'this site must not be copied — sign in fresh' };
@@ -412,6 +456,7 @@ async function transferFrom(
       site: site.id,
       policy: decision.policy,
       source: src,
+      ...(src === 'chrome' && own ? { profile: own.profileDir } : {}),
       moved,
       check,
       ...(check && !check.loggedIn ? { error: 'the site did not accept the copied login — sign in fresh' } : {}),
@@ -438,7 +483,8 @@ async function dbNames(cdp: Cdp, origins: string[]): Promise<string[]> {
  * transfer, look at the vault again; if the owner lost the login, stop offering
  * this site. Returns null when there is nothing to check against.
  */
-export async function vaultStillLoggedIn(input: string, dir = VAULT_DIR, source: LoginSource = 'vault', own: owner.OwnerProfile | null = owner.ownerProfile()): Promise<boolean | null> {
+export async function vaultStillLoggedIn(input: string, dir = VAULT_DIR, source: LoginSource = 'vault', ownIn: owner.OwnerProfile | owner.OwnerProfile[] | null = owner.ownerProfiles()): Promise<boolean | null> {
+  const own = asList(ownIn).find((p) => detectProfile(input, p).present) || asList(ownIn)[0] || null;
   const site = sites.resolve(input);
   if (!site.checkUrl) return null;
   const look = (cdp: Cdp) => landing(cdp, site.checkUrl!, site.loggedOut);

@@ -130,7 +130,8 @@ test('the arigami tools work over the gateway, as the calling session', async ()
   try {
     const names = ((await c.listTools()) as any).tools.map((t: any) => t.name);
     expect(names).toContain('set_title');
-    expect(names).toContain('request_login');
+    expect(names).toContain('sign_in');
+    expect(names).not.toContain('request_login'); // internal to sign_in now
     await c.callTool({ name: 'set_title', arguments: { title: 'renamed over http' } });
   } finally {
     await c.close();

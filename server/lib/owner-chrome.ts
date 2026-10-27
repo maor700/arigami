@@ -24,6 +24,9 @@ export interface OwnerProfile {
   profileDir: string;
   /** Its path. */
   profilePath: string;
+  /** Chrome's name for it ("Your Chrome", "work.example") and the Google account signed in to Chrome there, if any. */
+  name?: string;
+  email?: string;
 }
 
 export interface OwnerChromeConfig {
@@ -63,11 +66,63 @@ export function resolveOwnerProfile(o: {
   return { userDataDir, profileDir, profilePath };
 }
 
+/**
+ * Every profile of the user-data dir that `base` (resolveOwnerProfile's answer) lives in — the owner may keep a work
+ * and a personal account of the same site in two profiles, and a login is read from (and a sign-in done in) ONE of
+ * them, never merged. `base`'s own profile first. Pure apart from reading Local State.
+ */
+export function listProfiles(base: OwnerProfile): OwnerProfile[] {
+  let cache: Record<string, any> = {};
+  try {
+    cache = JSON.parse(fs.readFileSync(path.join(base.userDataDir, 'Local State'), 'utf8'))?.profile?.info_cache || {};
+  } catch {
+    /* no Local State: the base profile alone */
+  }
+  const dirs = [base.profileDir, ...Object.keys(cache).filter((d) => d !== base.profileDir).sort()];
+  const out: OwnerProfile[] = [];
+  for (const d of dirs) {
+    if (/[\\/]|^\.\.?$/.test(d)) continue;
+    const profilePath = path.join(base.userDataDir, d);
+    if (!fs.existsSync(path.join(profilePath, 'Cookies'))) continue;
+    const info = cache[d] || {};
+    out.push({ userDataDir: base.userDataDir, profileDir: d, profilePath, ...(info.name ? { name: String(info.name) } : {}), ...(info.user_name ? { email: String(info.user_name) } : {}) });
+  }
+  return out;
+}
+
+/**
+ * Pure: which profile an `account` hint names — a profile dir ("Profile 1"), its name ("work.example"), the email signed in
+ * to Chrome there, or the email's domain. Null when nothing matches (or the hint is empty).
+ */
+export function matchProfile(profiles: OwnerProfile[], account: string | null | undefined): OwnerProfile | null {
+  const a = String(account || '').trim().toLowerCase();
+  if (!a) return null;
+  return (
+    profiles.find((p) => p.profileDir.toLowerCase() === a) ||
+    profiles.find((p) => (p.email || '').toLowerCase() === a) ||
+    profiles.find((p) => (p.name || '').toLowerCase() === a) ||
+    profiles.find((p) => !!p.email && (p.email.toLowerCase().endsWith('@' + a.replace(/^@/, '')) || a.endsWith('@' + p.email.split('@')[1].toLowerCase()))) ||
+    null
+  );
+}
+
+/** A profile's label for a card or a tool result: "work.example (me@work.example)" / "Your Chrome". */
+export const profileLabel = (p: OwnerProfile): string => (p.name || p.profileDir) + (p.email ? ` (${p.email})` : '');
+
 const inContainer = (): boolean => fs.existsSync('/.dockerenv') || !!process.env.KUBERNETES_SERVICE_HOST;
 
 /** The owner's everyday Chrome profile on this host, or null. Read fresh: the owner may switch profiles. */
 export function ownerProfile(): OwnerProfile | null {
   return resolveOwnerProfile({ config: cfg.ownerChrome ?? null, env: process.env, inContainer: inContainer(), exclude: [CHROME_BASE_DIR] });
+}
+
+/** Every profile of the owner's everyday Chrome (the configured / last-used one first), or [] when there is none. */
+export function ownerProfiles(): OwnerProfile[] {
+  const base = ownerProfile();
+  if (!base) return [];
+  // A profile pinned by config/env is the only one offered: the owner chose it.
+  if (process.env.ARIGAMI_OWNER_CHROME_PROFILE || (cfg.ownerChrome && (cfg.ownerChrome as OwnerChromeConfig).profile)) return [base];
+  return listProfiles(base);
 }
 
 const copyIf = (src: string, dst: string): void => {

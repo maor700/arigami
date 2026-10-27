@@ -77,7 +77,7 @@ Follow `skills/machine-work/SKILL.md`. Helpers: `skills/_lib/connect.sh`.
 | Consent page lists a different app/toolkit than asked | do not Allow; `report_setup({ok:false, detail:"unexpected consent target"})` |
 | Redirect leaves the allowlist | stop, `request_screen` (reason `other`) with the URL host in the hint |
 | "Access blocked: this app's request is invalid" (Google) | fail with the message — the Composio auth config needs a fix, not a retry |
-| Provider login page (Slack/Notion/Linear) | `request_credentials` on its form (they are not covered by the Google identity); take-over only for a CAPTCHA / push approval |
+| Provider login page (Slack/Notion/Linear) | `sign_in({site, browser:true})` for that provider, then reload (they are not covered by the Google identity); take-over only for a CAPTCHA / push approval |
 | `connections` never ACTIVE | fail after attempt 2, include the last status |
 
 ## Retro

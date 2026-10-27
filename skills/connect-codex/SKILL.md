@@ -15,9 +15,7 @@ Server side: `server/codex-account.ts` via `POST /__api/accounts/login/start|cod
 ## Hard rules
 1. **Never type passwords / 2FA / OTP / email codes.** "Continue with Google" is fine to click when `identity` is connected.
    A vendor's own username / password / code form is not typed by you either: call
-   `request_credentials({site, reason})` on it and wait for the `[host]` line (the human fills it
-   from their vault; you never see it). Google / GitHub sign-in, a push approval or a CAPTCHA →
-   take-over (`request_screen`).
+   `sign_in({site, reason, browser:true})` for it and follow its answer (the sign-in runs in the owner's own Chrome, the host types vault values — you never see them), then reload the page here. A push approval or a CAPTCHA → take-over (`request_screen`).
 2. `export CONNECT_ALLOW="localhost auth.openai.com openai.com chatgpt.com accounts.google.com google.com"`.
 3. Consent first; ≤ 2 attempts; nothing written to disk by you — codex writes its own `auth.json`.
 4. Never paste the callback address into chat, an artifact or memory.
@@ -33,7 +31,7 @@ Server side: `server/codex-account.ts` via `POST /__api/accounts/login/start|cod
    - **Consent / "Continue" screen** (already signed in): click it.
    - **Login screen** (email box / "Continue with Google"): with `identity` connected click
      *Continue with Google* and pick the identity email; an OpenAI email/password or code form →
-     `request_credentials` (rule 1); a Google password/2FA screen, or anything else only the human can do: `capture_screen`,
+     `sign_in` (rule 1); anything else only the human can do: `capture_screen`,
      `request_screen({prompt:"Connecting your Codex account — OpenAI asks you to sign in.", reason:"login", hint:"Sign in and approve; the page ends on a 'signed in' screen. Then click Done."})`.
 4. The redirect goes to codex's loopback on this host, and the session Chrome IS on this host,
    so it completes by itself — nothing to paste. Poll the status every ~3 s (≤ 90 s) until `state:"done"`.

@@ -6,6 +6,7 @@
 // (1 hour from last use by default) and when the tab closes (the worker dies with it).
 import * as kdbxweb from 'kdbxweb';
 import { argon2id, argon2d } from 'hash-wasm';
+import { totpSpec, totp } from './totp.js';
 
 kdbxweb.CryptoEngine.setArgon2Impl((password, salt, memory, iterations, length, parallelism, type) =>
   (type === kdbxweb.CryptoEngine.Argon2TypeArgon2id ? argon2id : argon2d)({
@@ -185,7 +186,7 @@ const ops = {
    * go from here to the host's fill route and nowhere else; with `save`, typed details become (or update) the entry
    * for the request's origin. A one-time code is never saved.
    */
-  async fill({ sessionId, requestId, origin, fields, entryId, values, save: keep, remember, auto }) {
+  async fill({ sessionId, requestId, origin, fields, entryId, values, save: keep, remember, auto, exact }) {
     let v = {};
     if (entryId) {
       if (!db) throw new Error('the vault is locked');
@@ -194,11 +195,17 @@ const ops = {
       const o = entryOrigin(e);
       if (o !== origin && registrable(new URL(o).hostname) !== registrable(new URL(origin).hostname)) throw new Error('that entry is for another site');
       v = { username: text(e.fields.get('UserName')), password: text(e.fields.get('Password')) };
+      if (fields?.includes('otp')) {
+        const spec = totpSpec(Object.fromEntries([...e.fields.keys()].filter((k) => /^(otp|TOTP Seed|TOTP Settings)$/i.test(k)).map((k) => [k, text(e.fields.get(k))])));
+        if (!spec) throw new Error('this entry holds no one-time-code secret — type the code on the card');
+        v.otp = await totp(spec);
+      }
     } else {
       for (const k of ['username', 'password', 'otp']) if (typeof values?.[k] === 'string' && values[k]) v[k] = values[k];
     }
-    // only the fields the card announced — plus a password for a username-first form's next screen
-    const allowed = new Set([...(fields || []), ...(fields?.includes('username') ? ['password'] : [])]);
+    // only the fields the card announced — plus a password for a username-first form's next screen, except on the
+    // shared desktop (`exact`), where one card is one field the agent clicked into
+    const allowed = new Set([...(fields || []), ...(!exact && fields?.includes('username') ? ['password'] : [])]);
     const body = {};
     for (const k of Object.keys(v)) if (allowed.has(k)) body[k] = v[k];
     const r = await fetch(`/__api/sessions/${encodeURIComponent(sessionId)}/credentials/fill`, {

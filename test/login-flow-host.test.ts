@@ -167,7 +167,7 @@ test('a linked-device site is refused outright, with what to do instead', async 
   const r = await call('POST', `/__api/sessions/${sid}/login-request`, 'session', { site: 'web.whatsapp.com' });
   expect(r.json.available).toBe(false);
   expect(r.json.policy).toBe('never');
-  expect(r.json.next).toMatch(/request_credentials/); // a password form: the card
+  expect(r.json.next).toMatch(/sign_in\(\{site\}\)/); // a fresh sign-in: sign_in, in the owner's Chrome
   expect(r.json.next).toMatch(/QR code.*request_screen/); // a device link: the human's phone
 });
 
@@ -327,4 +327,37 @@ test('verified on a generic card is not review approval; review cards require a 
   expect(current.reviewCommit.sha).not.toBe(review.reviewCommit.sha);
   expect((await call('POST', `${url}/answer`, 'person', { actionId: current.id, value: 'verified' })).status).toBe(200);
   expect((await call('GET', `/__api/sessions/${sid}`, 'person')).json.metadata.review.sha).toBe(git('rev-parse', 'HEAD'));
+});
+
+// ---- sign_in: the same ladder, run by the host, one outcome back -------------------------------------------------------
+
+test('sign_in: a saved login waits on the owner card itself; "No" comes back as one blocked reason, not a [host] line', async () => {
+  const pending = call('POST', `/__api/sessions/${sid}/sign-in`, 'session', { site: 'github.com', reason: 'read a PR', browser: true });
+  const card = await until(async () => {
+    const s = await call('GET', `/__api/sessions/${sid}`, 'person');
+    return s.json.action?.kind === 'login' && s.json.action.signIn ? s.json.action : null;
+  });
+  expect(card.login.site).toBe('github.com');
+  // the session cannot answer its own card
+  expect((await call('POST', `/__api/sessions/${sid}/action/answer`, 'session', { actionId: card.id, value: 'use' })).status).toBe(403);
+  expect((await call('POST', `/__api/sessions/${sid}/action/answer`, 'person', { actionId: card.id, value: 'deny' })).status).toBe(200);
+  const r = await pending;
+  expect(r.json).toMatchObject({ status: 'blocked', site: 'github.com' });
+  expect(r.json.reason).toMatch(/refused/);
+  expect(JSON.stringify(r.json)).not.toMatch(/user_session|_octo/);
+});
+
+test('sign_in: no saved login and no shared desktop here = blocked with that one reason', async () => {
+  const r = await call('POST', `/__api/sessions/${sid}/sign-in`, 'session', { site: 'facebook.com', reason: 'comment' });
+  expect(r.status).toBe(200);
+  expect(r.json.status).toBe('blocked');
+  expect(r.json.reason).toMatch(/no shared desktop/);
+});
+
+test('sign_in: fill / done without a running sign-in say so, and type nothing', async () => {
+  const f = await call('POST', `/__api/sessions/${sid}/sign-in`, 'session', { site: 'facebook.com', fill: 'password' });
+  expect(f.json).toMatchObject({ status: 'blocked' });
+  expect(f.json.reason).toMatch(/no sign-in is running/);
+  const d = await call('POST', `/__api/sessions/${sid}/sign-in`, 'session', { site: 'facebook.com', done: true });
+  expect(d.json.reason).toMatch(/no sign-in is running/);
 });

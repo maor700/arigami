@@ -69,13 +69,15 @@ test("a session's Chrome never offers to save a password, and the rest of its Pr
   expect(src).toMatch(/disablePasswordSaving\(profileDir\);\n\s*const args = sessionChromeArgs\(profileDir, url\)/);
 });
 
-test('the agent gets the tool with the browser, the login block and the password-field refusal point to it', () => {
+test('the agent gets sign_in with the browser, the login block and the password-field refusal point to it', () => {
   const root = path.resolve(import.meta.dir, '..');
   const read = (f) => fs.readFileSync(path.join(root, f), 'utf8');
-  expect(read('server/agent-policy.ts')).toMatch(/BROWSER_TOOLS = \[[^\]]*'request_credentials'/);
-  expect(read('mcp/host-mcp.js')).toContain("name: 'request_credentials'");
-  expect(read('server/prompt-blocks.ts')).toContain('request_credentials({site, reason})');
-  expect(read('server/lib/browser-actions.ts')).toMatch(/Call request_credentials/);
+  expect(read('server/agent-policy.ts')).toMatch(/BROWSER_TOOLS = \[[^\]]*'sign_in'/);
+  expect(read('mcp/host-mcp.js')).toContain("name: 'sign_in'");
+  // request_credentials is sign_in's internal now: defined, but not listed to the model
+  expect(read('mcp/host-mcp.js')).toMatch(/LOGIN_INTERNAL = new Set\(\[[^\]]*'request_credentials'/);
+  expect(read('server/prompt-blocks.ts')).toContain('sign_in({site, reason})');
+  expect(read('server/lib/browser-actions.ts')).toMatch(/Call sign_in/);
   // the fill route: the owner's cookie only, the host's own record of the card, values never in the chat line
   const api = read('server/api.ts');
   const fill = api.slice(api.indexOf("sub === 'credentials/fill'"), api.indexOf("sub === 'credentials/fill'") + 4000);
@@ -98,7 +100,7 @@ test("the cockpit's secret inputs are never type=password, so the owner's own br
   expect(w).not.toMatch(/console\.|postMessage\([^)]*password/);
 });
 
-// Every text a session reads about signing in agrees: a sign-in form is request_credentials; request_screen is for
+// Every text a session reads about signing in agrees: a sign-in is sign_in; request_screen is for
 // what only the human's hands can do. One leftover "password → request_screen" line was enough for sessions to send
 // the owner to a take-over instead of the card.
 test('no agent-facing text still sends a password form to a take-over', () => {
@@ -118,17 +120,20 @@ test('no agent-facing text still sends a password form to a take-over', () => {
     /credential\/OTP field or a CAPTCHA — if needsHuman is true, stop and call request_screen/,
   ];
   for (const f of files) for (const re of stale) expect(`${f}: ${re.test(read(f)) ? re : 'ok'}`).toBe(`${f}: ok`);
-  // the places a session meets at the moment it signs in all name the card
-  for (const f of ['mcp/host-mcp.js', 'skills/machine-work/SKILL.md', 'docs/LOGIN.md', 'server/lib/browser-actions.ts']) expect(read(f)).toContain('request_credentials');
-  expect(read('skills/machine-work/SKILL.md').split('\n')[1]).toContain('request_credentials'); // the description every session lists
-  expect(read('server/api.ts')).toMatch(/const SIGN_IN_FRESH = "[^"]*request_credentials/);
+  // the places a session meets at the moment it signs in all name sign_in
+  for (const f of ['mcp/host-mcp.js', 'skills/machine-work/SKILL.md', 'docs/LOGIN.md', 'server/lib/browser-actions.ts']) expect(read(f)).toContain('sign_in');
+  expect(read('skills/machine-work/SKILL.md').split('\n')[1]).toContain('sign_in'); // the description every session lists
+  expect(read('server/api.ts')).toMatch(/const SIGN_IN_FRESH = "[^"]*sign_in/);
+  // and none of them sends the model to a tool it cannot see any more
+  const visible = [...skills, 'server/prompt-blocks.ts', 'server/lib/browser-actions.ts'];
+  for (const f of visible) for (const re of [/request_credentials/, /request_login/, /sso_login/, /(^|[^_])browser_logins/, /save_login\(/]) expect(`${f}: ${re.test(read(f)) ? re : 'ok'}`).toBe(`${f}: ok`);
 });
 
-test('the first turn of a new session tells it about the card, in the login and the identity blocks', () => {
+test('the first turn of a new session tells it about sign_in, in the login and the identity blocks', () => {
   const r = runInChild("const c=await import('./server/claude.js');emit(c.firstTurnPreview({engine:'claude'}).firstTurn);", { ARIGAMI_DIR: tmpDir('arigami-cred-ft-'), ARIGAMI_PORT: '' });
   if (!r.ok) throw new Error(r.error);
   const first = r.out[0];
-  const login = first.slice(first.indexOf('Signing in to a service'));
-  expect(login).toContain('request_credentials({site, reason})');
-  expect(first.slice(first.indexOf('You are the agent inside Arigami'))).toContain('request_credentials');
+  const login = first.slice(first.indexOf('Signing in anywhere'));
+  expect(login).toContain('sign_in({site, reason})');
+  expect(first.slice(first.indexOf('You are the agent inside Arigami'))).toContain('sign_in');
 });

@@ -15,6 +15,9 @@
 #   xinput.py type TEXT               # printable ASCII only (URLs, one-time device
 #                                     # codes). NEVER passwords / 2FA / OTP — those are
 #                                     # the human's (request_screen). Non-ASCII → error 3.
+#   xinput.py type-secret             # HOST ONLY (sign_in's vault fill): the value comes on stdin, never argv
+#                                     # (argv shows in `ps`), is checked whole before a key goes out, and no error
+#                                     # ever names a character of it.
 #   xinput.py size                    # prints "W H" of the root window
 #
 # Exit codes: 0 ok · 2 usage · 3 unsupported text · 4 cannot open DISPLAY.
@@ -184,6 +187,27 @@ class Driver:
             time.sleep(0.015)
 
 
+    def type_secret(self, value):
+        # every character first: nothing is typed when one of them cannot be, and the error names none
+        if not value or any(not (0x20 <= ord(ch) <= 0x7e) for ch in value):
+            die('the value has a character that cannot be typed here (printable ASCII only)', 3)
+        codes = []
+        for ch in value:
+            kc, need_shift = self._keycode(ord(ch))
+            if not kc:
+                die('the value has a character that is not on the keymap', 3)
+            codes.append((kc, need_shift))
+        skc = self.X.XKeysymToKeycode(self.d, self.X.XStringToKeysym(b'Shift_L'))
+        for kc, need_shift in codes:
+            if need_shift:
+                self._press(skc, True)
+            self._press(kc, True)
+            self._press(kc, False)
+            if need_shift:
+                self._press(skc, False)
+            time.sleep(0.015)
+
+
 def main(argv):
     if len(argv) < 2:
         die(__doc__ or 'usage: xinput.py <move|click|dblclick|drag|scroll|key|type|size> ...')
@@ -206,6 +230,8 @@ def main(argv):
             drv.key(args[0])
         elif cmd == 'type' and len(args) == 1:
             drv.type(args[0])
+        elif cmd == 'type-secret' and not args:
+            drv.type_secret(sys.stdin.read())
         else:
             die(f'bad usage: {cmd} {args}')
     finally:
