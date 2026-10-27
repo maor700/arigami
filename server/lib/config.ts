@@ -254,6 +254,9 @@ export interface Config {
   devServerPorts: number[];
   dispatcher: DispatcherConfig;
   screen: ScreenConfig;
+  // The owner's everyday Chrome as a second source of logins (lib/owner-chrome.ts): unset = auto (Linux, not in a
+  // container, ~/.config/google-chrome present), false = off, or where it is.
+  ownerChrome?: { userDataDir?: string; profile?: string } | false;
   brain: BrainConfig;
   artifacts: ArtifactsConfig;
   share: ShareConfig;

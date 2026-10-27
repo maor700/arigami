@@ -93,7 +93,8 @@ function ScreenRequestCardView({ props: { sessionId, event } }) {
       ) : (
         <>
           {/* the live desktop stays a native component (noVNC) wrapped by this library card */}
-          <ScreenView priority={SCREEN_PRIORITY.card} viewOnly sessionId={sessionId} className="mt-2.5 h-[240px] w-full rounded-lg" />
+          {/* a request on the shared desktop (the session held its lease) shows that screen */}
+          <ScreenView priority={SCREEN_PRIORITY.card} viewOnly sessionId={event.shared ? undefined : sessionId} className="mt-2.5 h-[240px] w-full rounded-lg" />
           <div className="mt-2.5 flex items-center justify-end gap-2">
             <Btn variant="quiet" disabled={busy} onClick={cancel} title={t('screen.cancelRequestHint')}>
               {t('screen.cancelRequest')}
@@ -118,7 +119,7 @@ export const ScreenRequestCardDef = defineHostComponent({
   description: 'Host: request_screen — watch the shared desktop, then done, take over or cancel',
   props: loose({
     sessionId: z.string(),
-    event: loose({ requestId: str, prompt: any, reason: str, hint: any, answered: any, takenOver: bool, note: any }),
+    event: loose({ requestId: str, prompt: any, reason: str, hint: any, answered: any, takenOver: bool, note: any, shared: bool }),
   }),
   component: ScreenRequestCardView,
 });

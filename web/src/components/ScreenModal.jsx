@@ -25,7 +25,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import ScreenView from './ScreenView.jsx';
 import { SCREEN_PRIORITY } from '../lib/useScreenConnection.js';
-import { answerScreenRequest, cancelScreenRequest, openScreenRequest, setScreenModal, useStore } from '../lib/store.js';
+import { answerScreenRequest, cancelScreenRequest, loadSharedDesktop, openScreenRequest, releaseSharedDesktop, setScreenModal, useStore } from '../lib/store.js';
 import * as setupApi from '../lib/setup-api.js';
 import { api } from '../lib/api.js';
 import { useT } from '../lib/i18n.js';
@@ -75,6 +75,23 @@ export default function ScreenModal({ context, onClose }) {
   // The note goes back to whichever engine drives THIS session, not to "Claude".
   const engine = engineLabel(s.sessions.find((x) => x.id === context?.sessionId)?.engine);
   const req = openReq && openReq.requestId === context.requestId ? openReq : null;
+  // A request on the shared desktop (the session held its lease) shows THAT screen, not the session's own machine.
+  const screenSessionId = req?.shared ? undefined : context?.sessionId;
+  const globalView = !screenSessionId;
+  const lease = s.sharedDesktop;
+  const leaseHolder = lease?.holder ? s.sessions.find((x) => x.id === lease.holder.sessionId) : null;
+  useEffect(() => {
+    if (globalView) loadSharedDesktop();
+  }, [globalView]);
+  const [releasing, setReleasing] = useState(false);
+  const releaseLease = async () => {
+    setReleasing(true);
+    try {
+      await releaseSharedDesktop();
+    } finally {
+      setReleasing(false);
+    }
+  };
 
   // Watch vs control. A take-over (request) or a setup sign-in is control by
   // definition — the human clicked to drive. A plain view starts in Watch.
@@ -82,7 +99,7 @@ export default function ScreenModal({ context, onClose }) {
   const interactive = !!req || !!setupCtx || control;
   const plain = !req && !setupCtx;
   const ownerSession = context?.sessionId ? s.sessions.find((x) => x.id === context.sessionId) : null;
-  const owner = context?.sessionId
+  const owner = context?.sessionId && !openReq?.shared
     ? t('screen.ownerSession', { title: ownerSession?.title || context.sessionId })
     : t('screen.ownerShared');
 
@@ -222,6 +239,24 @@ export default function ScreenModal({ context, onClose }) {
           </Button>
         </div>
 
+        {globalView && lease && (lease.holder || lease.queue?.length || lease.parked?.length || lease.humanActive) ? (
+          <div className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-2 text-sm" data-shared-desktop-lease="">
+            <span dir="auto" className="min-w-0 flex-1 text-muted-foreground">
+              {lease.holder
+                ? t('screen.leaseHeld', { title: leaseHolder?.title || lease.holder.sessionId, site: lease.holder.site || '—' })
+                : t('screen.leaseFree')}
+              {lease.queue?.length ? ` · ${t('screen.leaseQueue', { n: lease.queue.length })}` : ''}
+              {lease.parked?.length ? ` · ${t('screen.leaseParked', { n: lease.parked.length })}` : ''}
+              {lease.humanActive ? ` · ${t('screen.leaseYou')}` : ''}
+            </span>
+            {lease.holder && (
+              <Button variant="outline" size="sm" disabled={releasing} onClick={releaseLease} title={t('screen.leaseReleaseHint')} data-shared-desktop-release="">
+                {t('screen.leaseRelease')}
+              </Button>
+            )}
+          </div>
+        ) : null}
+
         {req && (
           <div className="flex items-start gap-2.5 border-b border-[var(--hb-warn-line)] bg-[var(--hb-warn-bg)] px-4 py-2.5 text-sm leading-snug" data-screen-control-banner="">
             <div className="min-w-0">
@@ -236,9 +271,9 @@ export default function ScreenModal({ context, onClose }) {
           </div>
         )}
 
-        <ScreenView priority={SCREEN_PRIORITY.modal} viewOnly={!interactive} sessionId={context?.sessionId} className="min-h-0 flex-1" onStatusChange={onStatusChange} />
+        <ScreenView priority={SCREEN_PRIORITY.modal} viewOnly={!interactive} sessionId={screenSessionId} className="min-h-0 flex-1" onStatusChange={onStatusChange} />
 
-        {context?.sessionId && interactive && (
+        {screenSessionId && interactive && (
           <div className="flex items-center gap-2 border-t border-border px-4 py-2" title={t('screen.typeIntoHint')}>
             <Input
               value={typed}

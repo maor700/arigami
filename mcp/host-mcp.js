@@ -99,6 +99,12 @@ export async function createArigamiServer(env = process.env) {
   const OPENUI_SIGNATURES = (OPENUI_HELP.match(/## Components\n\n([\s\S]*?)\n\n## /) || [])[1] || '';
 
   const SID_PROP = { session_id: { type: 'string', description: 'Host session id (defaults to ARIGAMI_SESSION_ID env)' } };
+  const SHARED_PROP = {
+    shared: {
+      type: 'boolean',
+      description: "true = the SHARED desktop (the owner's own screen, with their real browser) instead of this session's own. Needs the lease: shared_desktop_acquire first.",
+    },
+  };
   const obj = (properties, required = []) => ({ type: 'object', properties, required, additionalProperties: false });
 
   const TOOLS = [
@@ -790,6 +796,7 @@ export async function createArigamiServer(env = process.env) {
           prompt: { type: 'string', description: 'What you were doing and why you need the human (shown in the card and the push).' },
           reason: { type: 'string', enum: ['login', '2fa', 'captcha', 'payment', 'other'], description: 'Why the human is needed. Drives the card label and push title.' },
           hint: { type: 'string', description: 'Exactly what to do and what "done" looks like.' },
+          shared: { type: 'boolean', description: 'The step is on the SHARED desktop (the owner\'s screen). Automatic while you hold it: your lease is parked until the human answers, then you get it back first.' },
           ...SID_PROP,
         },
         ['prompt']
@@ -800,6 +807,7 @@ export async function createArigamiServer(env = process.env) {
           prompt: a.prompt,
           ...(a.reason ? { reason: a.reason } : {}),
           ...(a.hint ? { hint: a.hint } : {}),
+          ...(a.shared === true ? { shared: true } : {}),
         }),
     },
     {
@@ -904,12 +912,14 @@ export async function createArigamiServer(env = process.env) {
         'Look at the screen before every action that depends on it, and again after it: this tool never returns a cached frame. ' +
         'For anything inside a browser page prefer the browser_* tools (precise, cheap); use the desktop tools for what is outside the page — other windows, menus, installers, apps. ' +
         'Never use them to type passwords, 2FA or other secrets: a sign-in form is request_credentials (the human fills it, you never see it).',
-      inputSchema: obj({ ...SID_PROP }),
+      inputSchema: obj({ ...SHARED_PROP, ...SID_PROP }),
       run: async (a) => {
-        const r = await api('POST', `/__api/sessions/${sid(a)}/desktop/screenshot`, {});
+        const r = await api('POST', `/__api/sessions/${sid(a)}/desktop/screenshot`, a.shared === true ? { shared: true } : {});
+        if (r && r.ok === false) return r;
         return {
           __image: { data: r.png_base64, mimeType: 'image/png' },
           ok: true, width: r.width, height: r.height, ts: r.ts, file: r.file,
+          ...(r.shared ? { shared: true } : {}),
           coordinates: 'screen pixels, origin top-left',
         };
       },
@@ -924,9 +934,10 @@ export async function createArigamiServer(env = process.env) {
         x: { type: 'number' }, y: { type: 'number' },
         x2: { type: 'number', description: 'drag: end x' }, y2: { type: 'number', description: 'drag: end y' },
         dy: { type: 'number', description: 'scroll: wheel ticks, >0 down, <0 up' },
+        ...SHARED_PROP,
         ...SID_PROP,
       }, ['action', 'x', 'y']),
-      run: (a) => api('POST', `/__api/sessions/${sid(a)}/desktop/act`, { action: a.action, x: a.x, y: a.y, x2: a.x2, y2: a.y2, dy: a.dy }),
+      run: (a) => api('POST', `/__api/sessions/${sid(a)}/desktop/act`, { action: a.action, x: a.x, y: a.y, x2: a.x2, y2: a.y2, dy: a.dy, ...(a.shared === true ? { shared: true } : {}) }),
     },
     {
       name: 'desktop_keyboard',
@@ -936,12 +947,15 @@ export async function createArigamiServer(env = process.env) {
       inputSchema: obj({
         text: { type: 'string', description: 'Printable ASCII to type' },
         key: { type: 'string', description: 'A key or combo like ctrl+l' },
+        from_human: { type: 'boolean', description: 'shared desktop only: this text is what the human wrote in the chat themselves and asked you to enter' },
+        ...SHARED_PROP,
         ...SID_PROP,
       }),
       run: (a) => {
         if (a.text !== undefined && a.key !== undefined) throw new Error('pass either text or key, not both');
         if (a.text === undefined && a.key === undefined) throw new Error('pass text or key');
-        return api('POST', `/__api/sessions/${sid(a)}/desktop/act`, a.text !== undefined ? { action: 'type', text: a.text } : { action: 'key', key: a.key });
+        const extra = a.shared === true ? { shared: true, ...(a.from_human === true ? { from_human: true } : {}) } : {};
+        return api('POST', `/__api/sessions/${sid(a)}/desktop/act`, a.text !== undefined ? { action: 'type', text: a.text, ...extra } : { action: 'key', key: a.key, ...extra });
       },
     },
     {
@@ -953,9 +967,30 @@ export async function createArigamiServer(env = process.env) {
       inputSchema: obj({
         command: { type: 'string' },
         args: { type: 'array', items: { type: 'string' } },
+        ...SHARED_PROP,
         ...SID_PROP,
       }, ['command']),
-      run: (a) => api('POST', `/__api/sessions/${sid(a)}/desktop/launch`, { command: a.command, args: a.args || [] }),
+      run: (a) => api('POST', `/__api/sessions/${sid(a)}/desktop/launch`, { command: a.command, args: a.args || [], ...(a.shared === true ? { shared: true } : {}) }),
+    },
+    {
+      name: 'shared_desktop_acquire',
+      description:
+        "Take the SHARED desktop — the owner's own screen, with their real browser where they are signed in to Google — for one job, typically an SSO sign-in that My browser (sso_login) could not get through (a CAPTCHA, \"enter your email\"). " +
+        'One session at a time: {granted:true} = yours, act with the desktop_* tools and shared:true; {queued:true, position} = STOP and end your turn — the host messages you "[host] Your turn…" when it is yours (never poll, never xinput on it). ' +
+        '`site` = the site you are signing in to: only its URLs, the sign-in providers and the owner\'s account email can be typed there; no passwords, no pasting, no closing windows. ' +
+        'It goes back after 60 s without an action; request_screen parks it (others may use the screen meanwhile, you get it back first). The owner\'s own input pauses you. Release it with shared_desktop_release as soon as you are done, then request_login the site into your own browser.',
+      inputSchema: obj({
+        site: { type: 'string', description: 'The site you are signing in to, e.g. todoist.com' },
+        reason: { type: 'string', description: 'One line the owner sees in the cockpit' },
+        ...SID_PROP,
+      }, ['site']),
+      run: (a) => api('POST', `/__api/sessions/${sid(a)}/shared-desktop/acquire`, { site: a.site, reason: a.reason || '' }),
+    },
+    {
+      name: 'shared_desktop_release',
+      description: 'Give the shared desktop back (or leave its queue). Call it as soon as you are done on it — the next session is waiting.',
+      inputSchema: obj({ ...SID_PROP }),
+      run: (a) => api('POST', `/__api/sessions/${sid(a)}/shared-desktop/release`, {}),
     },
     {
       name: 'desktop_quit',
@@ -966,7 +1001,7 @@ export async function createArigamiServer(env = process.env) {
     {
       name: 'browser_logins',
       description:
-        "Which sites the owner is signed in to in their OWN browser (\"my browser\") — site names only, never a cookie or token. " +
+        "Which sites the owner is signed in to in their OWN browsers — \"my browser\" (sources: vault) and, on a host that has one, their everyday Chrome on the shared desktop (sources: chrome) — site names only, never a cookie or token. " +
         'Check this before signing in anywhere: if the site is listed, call request_login for it instead of asking for credentials.',
       inputSchema: obj({ ...SID_PROP }),
       run: (a) => api('GET', `/__api/sessions/${sid(a)}/logins`),

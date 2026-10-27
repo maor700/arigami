@@ -30,6 +30,7 @@ import * as chrome from './lib/chrome.js';
 import * as reap from './reap.js';
 import * as ticketProvision from './ticket-provision.js';
 import * as browserActions from './lib/browser-actions.js';
+import * as sharedDesktop from './lib/shared-desktop.js';
 import * as caps from './capabilities.js';
 import * as agents from './agents.js';
 import * as policy from './agent-policy.js';
@@ -806,6 +807,49 @@ function pushIntervention(
     .catch(() => {});
 }
 
+/** desktop/* with {shared:true}: the same ops on the shared desktop — behind the lease and the input guards. */
+async function sharedDesktopOp(res: ServerResponse, id: string, op: string, body: any, dc: typeof import('./lib/desktop-control.js')): Promise<void> {
+  if (op === 'quit') return json(res, { ok: false, error: "nothing is quit on the shared desktop — the owner's windows are theirs" }, 400);
+  const L = sharedDesktop.get();
+  const gate = L.check(id, op === 'screenshot' ? 'look' : 'input');
+  if (!gate.ok) return json(res, gate, 409);
+  try {
+    if (op === 'screenshot') {
+      const r = await dc.sharedScreenshot(id);
+      L.touch(id);
+      return json(res, { ok: true, shared: true, png_base64: r.png.toString('base64'), width: r.width, height: r.height, ts: r.ts, file: r.file });
+    }
+    const site = L.holder?.sessionId === id ? L.holder.site : null;
+    if (op === 'launch') {
+      const command = String(body?.command || '');
+      const args = Array.isArray(body?.args) ? body.args.map(String) : [];
+      const refused = sharedDesktop.checkLaunch(command, args);
+      if (refused) return json(res, { ok: false, refused: true, error: refused }, 403);
+      const r = dc.sharedLaunch(command, args);
+      L.touch(id);
+      console.log(`[shared-desktop] ${id} launch ${command}`);
+      return json(res, { ok: true, ...r });
+    }
+    const action = String(body?.action || '');
+    let refused: string | null = null;
+    if (action === 'type') {
+      const owner = ownerOfSession(id, 'identity');
+      const email = (caps.readIdentity(owner) || caps.readIdentity(caps.GLOBAL_OWNER))?.email ?? null;
+      refused = sharedDesktop.checkType(String(body?.text ?? ''), { site, identityEmail: email, fromHuman: body?.from_human === true });
+    } else if (action === 'key') refused = sharedDesktop.checkKey(String(body?.key ?? ''));
+    if (refused) {
+      console.log(`[shared-desktop] ${id} ${action} refused: ${refused.slice(0, 80)}`);
+      return json(res, { ok: false, refused: true, error: refused }, 403);
+    }
+    const r = await dc.sharedAct(body);
+    L.touch(id);
+    console.log(`[shared-desktop] ${id} ${action}${action === 'type' && body?.from_human === true ? ' (from the human)' : ''} ${r.ok ? 'ok' : 'failed: ' + (r as any).error}`);
+    return json(res, r, r.ok ? 200 : 400);
+  } catch (e) {
+    return json(res, { ok: false, error: (e as Error).message }, 400);
+  }
+}
+
 // request_screen: the agent asks the human to look at / drive the shared
 // desktop (manual login, CAPTCHA, interactive installer…), shown as a live
 // embedded view in the chat. Blocking, same shape as handlePermissionRequest.
@@ -827,11 +871,16 @@ async function handleScreenRequest(
       : 'other'
     : undefined;
   const hint = body.hint ? String(body.hint) : undefined;
+  // A session working on the SHARED desktop hands THAT screen over (the card shows it), and its lease is parked
+  // meanwhile: others may use the machine; it gets it back first when the human answers (lib/shared-desktop.ts).
+  const lease = sharedDesktop.get();
+  const shared = body.shared === true || lease.holder?.sessionId === sessionId || lease.parked.has(sessionId!);
+  if (shared) lease.park(sessionId!, 'request_screen');
   // Lazy per-session desktop (T8): by the time the card/panel mount and
   // connect, metadata.screen should already point at this session's own
   // machine, not the global one. A failed allocation (binary missing, ports
   // exhausted) isn't fatal — screenTarget() falls back to the global desktop.
-  try { await pickDriver().ensure(sessionId!); } catch (e) { console.error('[screen] desktop alloc failed for', sessionId, (e as Error).message); }
+  if (!shared) try { await pickDriver().ensure(sessionId!); } catch (e) { console.error('[screen] desktop alloc failed for', sessionId, (e as Error).message); }
   const promise = new Promise<ScreenRequestResult>((resolve) => {
     const timer = setTimeout(() => {
       pendingScreenRequests.delete(requestId);
@@ -839,12 +888,13 @@ async function handleScreenRequest(
       state.setClaude(sessionId, { state: 'working', screenRequest: null });
       const note = '(timed out — the human did not respond)';
       claude.appendChat(sessionId, { kind: 'screen-request-answer', requestId, note });
+      if (shared) lease.unpark(sessionId);
       resolve({ ok: true, takenOver: false, note });
     }, SCREEN_REQUEST_TIMEOUT_MS);
     pendingScreenRequests.set(requestId, { resolve, timer, sessionId });
     state.setClaude(sessionId, {
       state: 'awaiting-input',
-      screenRequest: { requestId, ...(reason ? { reason } : {}) },
+      screenRequest: { requestId, ...(reason ? { reason } : {}), ...(shared ? { shared: true } : {}) },
     });
     claude.appendChat(sessionId, {
       kind: 'screen-request',
@@ -852,10 +902,11 @@ async function handleScreenRequest(
       prompt,
       ...(reason ? { reason } : {}),
       ...(hint ? { hint } : {}),
+      ...(shared ? { shared: true } : {}),
     });
     // Watch-mode timeline: periodic snapshots grouped under this card until
-    // the human takes over (mode → control) or answers.
-    screens.startAutoSnapshots(sessionId, requestId);
+    // the human takes over (mode → control) or answers. Not of the owner's own screen.
+    if (!shared) screens.startAutoSnapshots(sessionId, requestId);
     pushIntervention(
       sessionId,
       'screen',
@@ -881,6 +932,7 @@ export function expirePendingScreenRequests(
     screens.stopAutoSnapshots(requestId);
     state.setClaude(sessionId, { screenRequest: null });
     claude.appendChat(sessionId, { kind: 'screen-request-answer', requestId, note: message });
+    sharedDesktop.get().unpark(sessionId);
     entry.resolve({ ok: true, takenOver: false, note: message });
   }
 }
@@ -916,6 +968,7 @@ function answerScreenRequest(
     takenOver,
     ...(data.note ? { note: data.note } : {}),
   });
+  sharedDesktop.get().unpark(sessionId); // back at the head of the shared desktop's queue, if it was parked
   entry.resolve({ ok: true, takenOver, ...(data.note ? { note: data.note } : {}) });
   return { ok: true };
 }
@@ -2505,6 +2558,25 @@ export function deliverToSession(id: string, text: string): { delivered: 'now' |
   return { delivered: 'queued' };
 }
 
+// The shared desktop's lease (lib/shared-desktop.ts): a turn is announced like any host line, "waiting on the
+// human" is an open request_screen or a card, and the cockpit sees the holder and the queue live.
+sharedDesktop.wire({
+  notify: (id, text) => {
+    try {
+      deliverToSession(id, text);
+    } catch {
+      /* the session is gone; forget() follows */
+    }
+  },
+  waitingOnHuman: (id) => {
+    if (hasOpenScreenRequest(id)) return true;
+    const s = state.getSession(id);
+    return !!(s && (s.action || s.claude?.state === 'awaiting-input'));
+  },
+  changed: (st) => broadcast({ type: 'shared-desktop', lease: st }),
+});
+if (process.platform === 'linux') sharedDesktop.setDisplay(String(cfg.screen?.display || ':99'));
+
 const shq = (v: string | number): string =>
   `'${String(v).replace(/'/g, `'\\''`)}'`;
 
@@ -2599,6 +2671,7 @@ export async function destroySession(id: string): Promise<reap.ReapReport | null
   if (!cfg.screen?.keepProfiles) chrome.removeSessionProfile(id); // T8 §6
   pickDriver().release(id);
   import('./lib/desktop-control.js').then((m) => m.desktopRelease(id)).catch(() => {});
+  sharedDesktop.get().forget(id); // nothing held or waited for on the shared desktop
   // Processes (incl. detached dev servers), the owned worktree, scratch dir and
   // transcript — in that order, see reap.ts.
   const report = await reap.reapSession(s, reap.ALL);
@@ -4004,6 +4077,17 @@ export async function handle(
       } catch (e) {
         return json(res, { ok: false, error: (e as Error).message }, 503);
       }
+    }
+    // The shared desktop's lease, for the cockpit: who holds it, who waits; the owner can take it back.
+    if (p === '/__api/shared-desktop' && m === 'GET') {
+      return json(res, { lease: sharedDesktop.get().status() });
+    }
+    if (p === '/__api/shared-desktop/release' && m === 'POST') {
+      const me = (req as any).auth as import('./auth.js').Principal | null;
+      if (!auth.isAdmin(me)) return json(res, { error: 'admin only' }, 403);
+      const was = sharedDesktop.get().forceRelease();
+      console.log(`[shared-desktop] owner released ${was || '(nobody held it)'}`);
+      return json(res, { ok: true, released: was });
     }
     // Copy/paste for the shared screen ("my browser"): the same two halves as a
     // session's desktop/type + desktop/selection, aimed at the vault Chrome.
@@ -6082,6 +6166,7 @@ export async function handle(
           chrome.closeChrome(id);
           pickDriver().release(id);
           import('./lib/desktop-control.js').then((m) => m.desktopRelease(id)).catch(() => {});
+          sharedDesktop.get().forget(id);
           triggerMemoryEpisode(id, 'archive');
 
           // The session's processes stop with it — including dev servers the
@@ -6851,7 +6936,7 @@ export async function handle(
           // Some sites allow one session only: check the owner kept theirs.
           if (r.ok)
             setTimeout(() => {
-              lv.vaultStillLoggedIn(site)
+              lv.vaultStillLoggedIn(site, undefined, r.source || 'vault')
                 .then((kept) => {
                   if (kept === false)
                     claude.appendChat(id, { kind: 'system', text: `⚠ Copying the ${label} login logged YOUR browser out — ${label} allows one session. Arigami will not offer to copy it again; sign in again in your own browser.` });
@@ -6968,11 +7053,33 @@ export async function handle(
     // and pointer/keyboard actions on the session's OWN desktop. Linux/x11 today.
     // Only the ops handled here: desktop/type, /clipboard and /selection (the paste/copy path) have their own routes
     // further down — a catch-all here answered them "unknown desktop op" and broke paste into the session screen.
+    // The shared desktop's lease (lib/shared-desktop.ts): one session at a time, the rest queued and woken.
+    if ((sub === 'shared-desktop/acquire' || sub === 'shared-desktop/release') && m === 'POST') {
+      if (!cfg.screen?.enabled) return json(res, { ok: false, error: 'screen share disabled', ...caps.needsSetup('desktop', 'use the shared desktop') });
+      try {
+        (await import('./lib/desktop-control.js')).sharedDisplay();
+      } catch (e) {
+        return json(res, { ok: false, error: (e as Error).message }, 409);
+      }
+      const body = ((await readBody(req).catch(() => ({}))) || {}) as any;
+      const L = sharedDesktop.get();
+      if (sub === 'shared-desktop/release') {
+        const did = L.release(id);
+        console.log(`[shared-desktop] ${id} release${did ? '' : ' (held nothing)'}`);
+        return json(res, { ok: true, released: did });
+      }
+      const site = sharedDesktop.leaseSite(body?.site);
+      if (body?.site && !site) return badRequest(res, `not a site: ${body.site}`);
+      const r = L.acquire(id, site, String(body?.reason || '').slice(0, 200));
+      console.log(`[shared-desktop] ${id} acquire ${site || '-'} → ${'granted' in r ? 'granted' : `queued #${r.position}`}`);
+      return json(res, { ok: true, ...r }, 'granted' in r ? 200 : 202);
+    }
     if (/^desktop\/(screenshot|act|launch|quit)$/.test(sub) && m === 'POST') {
       if (!cfg.screen?.enabled) return json(res, { ok: false, error: 'screen share disabled', ...caps.needsSetup('desktop', 'control the desktop') });
       const op = sub.slice('desktop/'.length);
       const body = ((await readBody(req).catch(() => ({}))) || {}) as any;
       const dc = await import('./lib/desktop-control.js');
+      if (body?.shared === true) return sharedDesktopOp(res, id, op, body, dc);
       try {
         if (op === 'screenshot') {
           const r = await dc.desktopScreenshot(id);

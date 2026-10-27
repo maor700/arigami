@@ -22,6 +22,10 @@ process.env.ARIGAMI_SHIPPED_BUNDLES_DIR = new URL('./fixtures/bundles', import.m
 // signed in to claude / codex must not decide which engine a new session gets (see registerEngineReadiness).
 process.env.ARIGAMI_ENGINE_AUTOPICK = '0';
 
+// A login list must not depend on the everyday Chrome of the machine running the tests (lib/owner-chrome.ts):
+// tests that exercise it point ARIGAMI_OWNER_CHROME at a fixture profile themselves.
+process.env.ARIGAMI_OWNER_CHROME = '0';
+
 // Web tests compare rendered Hebrew against exact literals. The UI wraps Latin runs inside Hebrew in invisible
 // bidi isolates (web/src/lib/i18n.js isolateLatin); tests that exercise it call isolateLatin() directly.
 (globalThis as any).__ARIGAMI_PLAIN_T = true;
