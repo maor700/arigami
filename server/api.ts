@@ -1521,11 +1521,13 @@ async function signInDone(id: string, o: { already?: boolean } = {}): Promise<Si
   }
   const site = ls.resolve(job.input);
   // Chrome writes cookies to disk in batches (about every 30 s): look for the session for up to 45 s.
-  let det = lv.detectProfile(job.input, job.profile);
+  // after a sign-in the agent saw land, a plain session cookie counts too (weak); "already signed in" needs a strong one
+  const weak = !o.already;
+  let det = lv.detectProfile(job.input, job.profile, { weak });
   for (let i = 0; !det.present && i < (o.already ? 0 : 15); i++) {
     L.touch(id);
     await new Promise((r2) => setTimeout(r2, 3000));
-    det = lv.detectProfile(job.input, job.profile);
+    det = lv.detectProfile(job.input, job.profile, { weak });
   }
   if (!det.present) {
     job.doneTries++;
@@ -1537,7 +1539,7 @@ async function signInDone(id: string, o: { already?: boolean } = {}): Promise<Si
   const policy = ls.decide(site, det.storageOrigins.length ? ['(unread)'] : []).policy;
   if (policy === 'never')
     return { status: 'signed_in', site: job.site, via: 'shared-chrome', account: job.label, next: `${site.label} is signed in in the owner's Chrome (${job.label}); it does not accept a copied session, so work there: shared_desktop_acquire({site:"${job.site}"}) and desktop_*({shared:true}).` };
-  const r = await lv.transfer(id, job.input, undefined, [job.profile]).catch((e) => ({ ok: false, error: (e as Error).message }) as any);
+  const r = await lv.transfer(id, job.input, undefined, [job.profile], { weak }).catch((e) => ({ ok: false, error: (e as Error).message }) as any);
   if (!r.ok) return si.blocked(job.site, `signed in in the owner's Chrome (${job.label}), but the copy into your browser failed: ${r.error}`);
   return { status: 'signed_in', site: job.site, via: o.already ? 'saved' : 'shared-chrome', account: job.label, next: `${o.already ? 'the owner was already signed in there; ' : ''}the ${site.label} login is in your browser now${r.check ? ` (checked: ${r.check.url})` : ''} — browser_open the site and continue. The shared desktop is released.` };
 }

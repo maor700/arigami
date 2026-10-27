@@ -128,20 +128,20 @@ type One = Omit<Detection, 'site' | 'sources' | 'profiles'>;
  * a site the host knows keeps its session in storage (`copy` with no session-cookie list: Linear) — an unknown site's
  * IndexedDB is as likely a cache as a login.
  */
-export function judge(site: sites.SiteDef, rows: Pick<CookieRow, 'name' | 'is_httponly' | 'is_secure'>[], storageOrigins: string[]): One {
+export function judge(site: sites.SiteDef, rows: Pick<CookieRow, 'name' | 'is_httponly' | 'is_secure'>[], storageOrigins: string[], o: { weak?: boolean } = {}): One {
   const authCookies = rows.filter((r) => Number(r.is_httponly) === 1 && Number(r.is_secure) === 1).length;
-  const v = sites.sessionIndicator(site, rows);
+  const v = sites.sessionIndicator(site, rows, o);
   if (v.signedIn) return { cookies: rows.length, authCookies, storageOrigins, present: true, by: v.by };
   if (storageOrigins.length && site.known && site.policy === 'copy' && !site.sessionCookies?.length)
     return { cookies: rows.length, authCookies, storageOrigins, present: true, by: 'site storage' };
   return { cookies: rows.length, authCookies, storageOrigins, present: false, why: v.why };
 }
 
-function detectAt(site: sites.SiteDef, profilePath: string, readableOnly: boolean): One {
+function detectAt(site: sites.SiteDef, profilePath: string, readableOnly: boolean, o: { weak?: boolean } = {}): One {
   // A keyring-encrypted cookie (v11) cannot be read without the owner's keyring: not a login we can offer.
   const rows = profileCookies(profilePath).filter((r) => sites.cookieBelongs(r.host_key, site) && (!readableOnly || !r.tag || r.tag === 'v10'));
   const storageOrigins = profileIdbOrigins(profilePath).filter((o) => sites.cookieBelongs(new URL(o).hostname, site));
-  return judge(site, rows, storageOrigins);
+  return judge(site, rows, storageOrigins, o);
 }
 
 const asList = (own: owner.OwnerProfile | owner.OwnerProfile[] | null | undefined): owner.OwnerProfile[] => (!own ? [] : Array.isArray(own) ? own : [own]);
@@ -150,10 +150,10 @@ const asList = (own: owner.OwnerProfile | owner.OwnerProfile[] | null | undefine
  * Does the vault (or one of the owner's Chrome profiles) hold a signed-in session for `input`? Reads disk only; never
  * returns a value. `own` defaults to every profile of the owner's Chrome.
  */
-export function detect(input: string, dir = VAULT_DIR, own: owner.OwnerProfile | owner.OwnerProfile[] | null = owner.ownerProfiles()): Detection {
+export function detect(input: string, dir = VAULT_DIR, own: owner.OwnerProfile | owner.OwnerProfile[] | null = owner.ownerProfiles(), o: { weak?: boolean } = {}): Detection {
   const site = sites.resolve(input);
-  const v = detectAt(site, path.join(dir, 'Default'), false);
-  const per = asList(own).map((p) => ({ p, d: detectAt(site, p.profilePath, true) }));
+  const v = detectAt(site, path.join(dir, 'Default'), false, o);
+  const per = asList(own).map((p) => ({ p, d: detectAt(site, p.profilePath, true, o) }));
   const hit = per.filter((x) => x.d.present);
   const sources: LoginSource[] = [...(v.present ? (['vault'] as const) : []), ...(hit.length ? (['chrome'] as const) : [])];
   const first = v.present || !hit.length ? v : hit[0].d;
@@ -161,8 +161,8 @@ export function detect(input: string, dir = VAULT_DIR, own: owner.OwnerProfile |
 }
 
 /** Is `input` signed in in this ONE profile of the owner's Chrome? */
-export function detectProfile(input: string, p: owner.OwnerProfile): One {
-  return detectAt(sites.resolve(input), p.profilePath, true);
+export function detectProfile(input: string, p: owner.OwnerProfile, o: { weak?: boolean } = {}): One {
+  return detectAt(sites.resolve(input), p.profilePath, true, o);
 }
 
 /** One source's detection, for the transfer from it. */
@@ -385,8 +385,8 @@ export interface TransferResult {
 }
 
 /** Carry ONE site's login from the vault — or, failing that, the owner's Chrome — into a session's browser. */
-export async function transfer(sessionId: string, input: string, dir = VAULT_DIR, ownIn: owner.OwnerProfile | owner.OwnerProfile[] | null = owner.ownerProfiles()): Promise<TransferResult> {
-  const d = detect(input, dir, ownIn);
+export async function transfer(sessionId: string, input: string, dir = VAULT_DIR, ownIn: owner.OwnerProfile | owner.OwnerProfile[] | null = owner.ownerProfiles(), o: { weak?: boolean } = {}): Promise<TransferResult> {
+  const d = detect(input, dir, ownIn, o);
   // ONE profile is the source — the first that holds a session (sign_in passes the one the owner's account is in).
   const own = asList(ownIn).find((p) => d.profiles?.includes(p.profileDir)) || null;
   const site = d.site;

@@ -85,15 +85,19 @@ test('sessionIndicator: Facebook visitor cookies are not a login; c_user + xs is
   expect(ls.sessionIndicator(ls.resolve('reddit.com'), [row('loid'), row('token_v2'), row('session_tracker')]).signedIn).toBe(false);
 });
 
-test('sessionIndicator: a site without a list — a session-named httpOnly cookie, never a visitor / CSRF one', () => {
+test('sessionIndicator: a site without a list — an auth-named httpOnly cookie; a plain framework session only after a seen sign-in', () => {
   const s = ls.resolve('todoist.com');
-  expect(ls.sessionIndicator(s, [row('session')]).signedIn).toBe(true);
-  expect(ls.sessionIndicator(s, [row('sid')]).signedIn).toBe(true);
   expect(ls.sessionIndicator(s, [row('__Secure-next-auth.session-token')]).signedIn).toBe(true);
-  expect(ls.sessionIndicator(s, [row('PHPSESSID')]).signedIn).toBe(true);
-  for (const n of ['__cf_bm', 'cf_clearance', '_ga', 'csrftoken', 'XSRF-TOKEN', 'datr', '_cfuvid'])
+  expect(ls.sessionIndicator(s, [row('auth_token')]).signedIn).toBe(true);
+  expect(ls.sessionIndicator(s, [row('remember_user_token')]).signedIn).toBe(true);
+  // bench S3: one visit to a login page sets rack.session for an anonymous visitor — not "already signed in"
+  for (const n of ['rack.session', 'PHPSESSID', 'JSESSIONID', 'connect.sid', 'session', 'sid', 'laravel_session']) {
     expect(`${n}:${ls.sessionIndicator(s, [row(n)]).signedIn}`).toBe(`${n}:false`);
-  expect(ls.sessionIndicator(s, [row('session', 0)]).signedIn).toBe(false); // readable by page script = not the session
+    expect(`${n}:${ls.sessionIndicator(s, [row(n)], { weak: true }).signedIn}`).toBe(`${n}:true`);
+  }
+  for (const n of ['__cf_bm', 'cf_clearance', '_ga', 'csrftoken', 'XSRF-TOKEN', 'datr', '_cfuvid'])
+    expect(`${n}:${ls.sessionIndicator(s, [row(n)], { weak: true }).signedIn}`).toBe(`${n}:false`);
+  expect(ls.sessionIndicator(s, [row('auth_token', 0)]).signedIn).toBe(false); // readable by page script = not the session
 });
 
 function fakeChrome(ud: string, profiles: Record<string, { name?: string; email?: string; cookies: [string, string, number, number][] }>, lastUsed: string): void {

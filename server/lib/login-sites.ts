@@ -224,23 +224,37 @@ export const VISITOR_COOKIES = new Set([
   'csrftoken', 'csrf_token', '_csrf', 'xsrf-token', 'x-csrf-token', '_gh_sess_anon', 'tz', 'color_mode', 'preferred_color_mode',
 ]);
 
-/** A cookie name that reads like a session (for a site with no list of its own). */
-const SESSIONY = /sess|auth|token|jwt|logged_?in|remember|^sid$|[._-]sid$|^sso/i;
+/**
+ * For a site with no list of its own. AUTH-named cookies (auth, token, jwt, logged-in, remember-me, user id) are a
+ * sign-in. A framework's plain session cookie (rack.session, PHPSESSID, JSESSIONID, connect.sid, `session`) is set for
+ * ANONYMOUS visitors too — measured: one visit to a login page made the next session's sign_in think the owner was
+ * signed in — so it is only WEAK evidence: enough after a sign-in the agent just finished and saw land (sign_in done),
+ * never for "already signed in".
+ */
+const AUTHY = /auth|token|jwt|logged_?in|remember|(^|[._-])user[._-]?(id|session|token)?$|^sso|identity/i;
+const SESSIONY = /sess|^sid$|[._-]sid$/i;
 
 export interface CookieName { name: string; is_httponly?: number | bigint; is_secure?: number | bigint }
 
 export type SessionVerdict = { signedIn: true; by: string } | { signedIn: false; why: string };
 
-/** Pure: do these (non-expired) cookies of `site` hold a signed-in session? Never looks at a value. */
-export function sessionIndicator(site: Pick<SiteDef, 'sessionCookies' | 'label'>, cookies: CookieName[]): SessionVerdict {
+/**
+ * Pure: do these (non-expired) cookies of `site` hold a signed-in session? Never looks at a value. `weak` accepts a
+ * plain framework session cookie (see AUTHY / SESSIONY) — only right after a sign-in was seen to land.
+ */
+export function sessionIndicator(site: Pick<SiteDef, 'sessionCookies' | 'label'>, cookies: CookieName[], o: { weak?: boolean } = {}): SessionVerdict {
   const names = new Set(cookies.map((c) => String(c.name)));
   if (site.sessionCookies?.length) {
     const hit = site.sessionCookies.find((group) => group.length && group.every((n) => names.has(n)));
     if (hit) return { signedIn: true, by: hit.join('+') };
     return { signedIn: false, why: `no ${site.label} session cookie (${site.sessionCookies.map((g) => g.join('+')).join(' or ')}) — only visitor cookies` };
   }
-  const hit = cookies.find((c) => Number(c.is_httponly) === 1 && !VISITOR_COOKIES.has(String(c.name).toLowerCase()) && SESSIONY.test(String(c.name)) && !/csrf|xsrf/i.test(String(c.name)));
-  if (hit) return { signedIn: true, by: String(hit.name) };
+  const usable = cookies.filter((c) => Number(c.is_httponly) === 1 && !VISITOR_COOKIES.has(String(c.name).toLowerCase()) && !/csrf|xsrf/i.test(String(c.name)));
+  const strong = usable.find((c) => AUTHY.test(String(c.name)));
+  if (strong) return { signedIn: true, by: String(strong.name) };
+  const weak = usable.find((c) => SESSIONY.test(String(c.name)));
+  if (weak && o.weak) return { signedIn: true, by: `${weak.name} (a session cookie; the sign-in was seen to land)` };
+  if (weak) return { signedIn: false, why: `only a plain session cookie (${weak.name}), which anonymous visitors get too` };
   return { signedIn: false, why: cookies.length ? 'only visitor / tracking cookies, no session cookie' : 'no cookies' };
 }
 

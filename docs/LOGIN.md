@@ -24,7 +24,8 @@ pinned by `test/sign-in.test.ts`), not in a prompt the model has to run in its h
 2. **A saved login that is really signed in**, in the owner's everyday Chrome (any of its profiles) or in My browser.
    "Signed in" means a **session cookie** (`sessionIndicator` in `server/lib/login-sites.ts`: per site — Facebook
    `c_user`+`xs`, Google `SID`, GitHub `user_session`, Reddit `reddit_session`…; for other sites a cookie whose name
-   reads like a session and is not a known visitor cookie). A visitor cookie (Facebook's `datr`, `fr`, `sb`, Cloudflare's
+   reads like a sign-in — auth, token, remember-me — and is not a known visitor cookie; a plain framework session
+   cookie like `rack.session` / `PHPSESSID`, which anonymous visitors get too, counts only at `done`). A visitor cookie (Facebook's `datr`, `fr`, `sb`, Cloudflare's
    `__cf_bm`, Google's `NID`) is httpOnly+secure too and is **not** a login — that was the false positive that sent an
    approved "Facebook login" with nothing in it. The login moves into the session's browser on the owner's standing
    "Always for <site>" or after their answer on a card. Google does not accept a copied session: signed in there means
