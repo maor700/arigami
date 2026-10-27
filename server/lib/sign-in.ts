@@ -217,7 +217,7 @@ export function newSessionCookies(before: string[], after: string[], visitor: Se
  * port, and its user-data dir is the owner's (or unset = the default, which is the owner's).
  */
 export function isOwnerChromeCmd(argv: string[], userDataDir: string, defaultDir: string): boolean {
-  if (!argv.length || !/(?:^|\/)(google-chrome(?:-stable|-beta|-unstable)?|chrome|chromium(?:-browser)?)$/.test(argv[0])) return false;
+  if (!argv.length || !/(?:^|\/)(google-chrome(?:-stable|-beta|-unstable)?|chrome|chromium(?:-browser)?|arigami-chrome)$/.test(argv[0])) return false;
   if (argv.some((a) => a.startsWith('--type=') || a.startsWith('--remote-debugging') || a === '--headless' || a.startsWith('--headless='))) return false;
   const ud = argv.find((a) => a.startsWith('--user-data-dir='))?.slice('--user-data-dir='.length);
   return path.resolve(ud || defaultDir) === path.resolve(userDataDir);

@@ -219,6 +219,8 @@ test("isOwnerChromeCmd: the owner's everyday Chrome, not a CDP / headless / sess
   const def = '/home/o/.config/google-chrome';
   expect(si.isOwnerChromeCmd(['/usr/bin/google-chrome-stable', '--no-sandbox'], def, def)).toBe(true);
   expect(si.isOwnerChromeCmd(['/opt/google/chrome/chrome', `--user-data-dir=${def}`], def, def)).toBe(true);
+  // the shared desktop launches it through the arigami-chrome symlink, and google-chrome's wrapper keeps that argv[0] (exec -a)
+  expect(si.isOwnerChromeCmd(['/usr/local/bin/arigami-chrome', '--profile-directory=Profile 1'], def, def)).toBe(true);
   expect(si.isOwnerChromeCmd(['/usr/bin/google-chrome', '--remote-debugging-port=0'], def, def)).toBe(false);
   expect(si.isOwnerChromeCmd(['/usr/bin/google-chrome', '--user-data-dir=/x/chrome-sessions/s1'], def, def)).toBe(false);
   expect(si.isOwnerChromeCmd(['/opt/google/chrome/chrome', '--type=renderer'], def, def)).toBe(false);
