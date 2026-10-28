@@ -42,23 +42,19 @@ const wrap = (el) => render(React.createElement(TooltipProvider, null, el));
 const picker = (props) => wrap(React.createElement(L.PermissionPicker, { value: 'acceptEdits', onChange() {}, engine: '', label: 'Permissions', ...props }));
 const visibleText = (html) => html.replace(/<[^>]*>/g, ' ');
 
-test('perm: the default is the owner\'s last pick, else acceptEdits — never bypass', () => {
-  expect(L.LAUNCH_PERMISSION_FALLBACK).toBe('acceptEdits');
-  expect(L.initialPermissionMode({})).toBe('acceptEdits');
-  expect(L.initialPermissionMode({ launcherPermissionMode: '' })).toBe('acceptEdits');
+test('perm: the default is the owner\'s last pick, else bypass', () => {
+  expect(L.LAUNCH_PERMISSION_FALLBACK).toBe('bypassPermissions');
+  expect(L.initialPermissionMode({})).toBe('bypassPermissions');
+  expect(L.initialPermissionMode({ launcherPermissionMode: '' })).toBe('bypassPermissions');
   expect(L.initialPermissionMode({ launcherPermissionMode: 'plan' })).toBe('plan');
-  expect(L.initialPermissionMode({ launcherPermissionMode: 'bypassPermissions' })).toBe('bypassPermissions'); // only when picked
-  expect(L.initialPermissionMode({ launcherPermissionMode: 'yolo' })).toBe('acceptEdits');
+  expect(L.initialPermissionMode({ launcherPermissionMode: 'default' })).toBe('default');
+  expect(L.initialPermissionMode({ launcherPermissionMode: 'yolo' })).toBe('bypassPermissions');
   // the pick is stored as a pref; an invalid stored value is dropped
   prefs.setPrefs({ launcherPermissionMode: 'plan' });
   expect(L.initialPermissionMode(prefs.getPrefs())).toBe('plan');
   prefs.setPrefs({ launcherPermissionMode: 'nonsense' });
   expect(prefs.getPrefs().launcherPermissionMode).toBe('');
-  expect(L.initialPermissionMode(prefs.getPrefs())).toBe('acceptEdits');
-  // no hard-coded bypass default left in the launcher
-  const src = fs.readFileSync(web('components/Launcher.jsx'), 'utf8');
-  expect(src).not.toContain("useState('bypassPermissions')");
-  expect(src).not.toContain("permissionMode: 'bypassPermissions'");
+  expect(L.initialPermissionMode(prefs.getPrefs())).toBe('bypassPermissions');
 });
 
 test('perm (en): labelled options with one-line descriptions, Bypass marked dangerous, no raw enum text', () => {
@@ -88,24 +84,24 @@ test('perm (he): the same options in Hebrew', () => {
   prefs.setPrefs({ language: 'en' });
 });
 
-test('perm: an engine only offers its own modes, and an unavailable pick falls back to ask', () => {
+test('perm: an engine only offers its own modes, and an unavailable pick falls back to bypass', () => {
   const codexModes = engines.permissionModesFor('codex');
   expect(L.permissionModeForEngine('acceptEdits', '')).toBe('acceptEdits');
   if (codexModes.length) {
-    expect(L.permissionModeForEngine('acceptEdits', 'codex')).toBe('default');
+    expect(L.permissionModeForEngine('acceptEdits', 'codex')).toBe('bypassPermissions');
     const html = picker({ engine: 'codex' });
     expect(html).not.toContain('data-perm="acceptEdits"');
-    expect(html).toMatch(/checked="" value="default"/);
+    expect(html).toMatch(/checked="" value="bypassPermissions"/);
   } else {
     expect(picker({ engine: 'codex' })).toBe('');
   }
 });
 
-test('perm: a fresh launcher (empty form) renders the picker on acceptEdits', () => {
+test('perm: a fresh launcher (empty form) renders the picker on bypass', () => {
   prefs.setPrefs({ language: 'en', launcherPermissionMode: '' });
   const html = wrap(React.createElement(L.default, { config: { defaultCwd: '/tmp/ws' }, sessions: [], onCreated() {}, initialMode: 'empty' }));
-  expect(html).toContain('data-perm="acceptEdits"');
-  expect(html).toMatch(/checked="" value="acceptEdits"/);
+  expect(html).toContain('data-perm="bypassPermissions"');
+  expect(html).toMatch(/checked="" value="bypassPermissions"/);
   expect(visibleText(html)).not.toContain('bypassPermissions');
 });
 

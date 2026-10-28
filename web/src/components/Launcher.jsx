@@ -1015,26 +1015,29 @@ function ProvisionRow({ label, children }) {
 
 // Permission modes in human words, one line each — the same labels the
 // composer pill uses. Bypass runs everything without asking, so it carries the
-// danger styling; it is never a silent default.
+// danger styling — and it is the default: the host starts every session in it
+// unless the owner picks something else here.
 export const LAUNCH_PERMISSION_MODES = [
   { value: 'default', label: 'rail.permDefault', desc: 'rail.permDefaultDesc' },
   { value: 'acceptEdits', label: 'rail.permAcceptEdits', desc: 'rail.permAcceptEditsDesc' },
   { value: 'plan', label: 'rail.permPlan', desc: 'rail.permPlanDesc' },
   { value: 'bypassPermissions', label: 'rail.permBypass', desc: 'rail.permBypassDesc', danger: true },
 ];
-export const LAUNCH_PERMISSION_FALLBACK = 'acceptEdits';
+export const LAUNCH_PERMISSION_FALLBACK = 'bypassPermissions';
 
-// The mode a fresh launcher opens on: the owner's last pick, else acceptEdits.
+// The mode a fresh launcher opens on: the owner's last pick, else bypass.
 export function initialPermissionMode(prefs) {
   const v = prefs?.launcherPermissionMode;
   return LAUNCH_PERMISSION_MODES.some((m) => m.value === v) ? v : LAUNCH_PERMISSION_FALLBACK;
 }
 
 // What is actually sent for this engine: a pick the engine doesn't offer falls
-// back to its first mode (ask). An engine with no modes keeps the pick as-is.
+// back to bypass when it has it, else its first mode (ask). An engine with no
+// modes keeps the pick as-is.
 export function permissionModeForEngine(mode, engine) {
   const allowed = permissionModesFor(engine);
-  return !allowed.length || allowed.includes(mode) ? mode : allowed[0];
+  if (!allowed.length || allowed.includes(mode)) return mode;
+  return allowed.includes(LAUNCH_PERMISSION_FALLBACK) ? LAUNCH_PERMISSION_FALLBACK : allowed[0];
 }
 
 // Remember the pick as the next launcher's default.

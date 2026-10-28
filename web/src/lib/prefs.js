@@ -37,7 +37,7 @@ const DEFAULTS = {
   sessionDefaultPresetId: '', // id of the preset applied when the launcher opens, any tab
   sessionDefaultPresetByMode: { ticket: '', empty: '', trigger: '' }, // per-launcher-tab override
   autonomyWarningDismissed: false, // "don't show again" for the autonomous-trigger warning
-  launcherPermissionMode: '', // the launcher's last-picked permission mode ('' = never picked → acceptEdits)
+  launcherPermissionMode: '', // the launcher's last-picked permission mode ('' = never picked → bypassPermissions)
   usageExpanded: false, // rail usage panel: collapsed = one 5h-session line, expanded = full session+week charts
   accent: '', // brand accent hex (#rrggbb); '' = built-in default (jade)
   logo: DEFAULT_LOGO, // origami logo preset: 'star' (brand) | 'crane' | 'fold' | 'plane' | 'boat'
