@@ -122,13 +122,24 @@ async function startHost(dir: string, port: number): Promise<ChildProcess> {
 type Conn = { client: net.Socket; up: net.Socket; ws: boolean; ghost: boolean; sniffed: boolean };
 class Link {
   free = 0;
+  private q: { at: number; fn: () => void }[] = [];
+  private timer: ReturnType<typeof setTimeout> | null = null;
   constructor(private bps: number, private oneWayMs: number) {}
-  // FIFO serialisation at the link rate, then the propagation delay: keeps order per socket.
+  // FIFO serialisation at the link rate, then the propagation delay. ONE pump
+  // drains the queue in order — a timer per chunk can fire same-millisecond
+  // chunks out of order and corrupt the stream (seen as ERR_INVALID_CHUNKED_ENCODING).
   send(fn: () => void, bytes: number) {
     const now = Date.now();
     const start = Math.max(now, this.free);
     this.free = start + (bytes / this.bps) * 1000;
-    setTimeout(fn, this.free + this.oneWayMs - now);
+    this.q.push({ at: this.free + this.oneWayMs, fn });
+    if (!this.timer) this.pump();
+  }
+  private pump() {
+    this.timer = null;
+    const now = Date.now();
+    while (this.q.length && this.q[0].at <= now) this.q.shift()!.fn();
+    if (this.q.length) this.timer = setTimeout(() => this.pump(), Math.max(0, this.q[0].at - Date.now()));
   }
 }
 function startProxy(listenPort: number, hostPort: number) {
@@ -247,7 +258,15 @@ const VISIBILITY_SHIM = `(() => {
   };
 })();`;
 
+// page errors, printed if a cold load never becomes interactive
+const pageErrors: string[] = [];
 async function phone(cdp: Cdp) {
+  cdp.handlers.push((m) => {
+    if (m.method === 'Runtime.exceptionThrown') pageErrors.push(m.params.exceptionDetails?.exception?.description || m.params.exceptionDetails?.text);
+    if (m.method === 'Runtime.consoleAPICalled' && m.params.type === 'error') pageErrors.push(m.params.args?.map((a: any) => a.value ?? a.description).join(' '));
+    if (m.method === 'Network.loadingFailed') pageErrors.push(`load failed: ${m.params.errorText} ${m.params.blockedReason || ''}`);
+  });
+  await cdp.send('Runtime.enable');
   await cdp.send('Page.enable');
   await cdp.send('Network.enable');
   await cdp.send('Network.setCacheDisabled', { cacheDisabled: false });
@@ -311,6 +330,7 @@ async function run(n: number, ctx: Awaited<ReturnType<typeof boot>>, record?: st
   await cdp.send('Page.navigate', { url: `${base}/#/session/${bench.open}` });
   const coldMs = await waitFor(cdp, chatShown(bench.open), Number(arg('coldmax', '90000')), 100);
   const coldRequests = log.length;
+  if (coldMs == null) console.error('[cold] page errors:', pageErrors.slice(-8).map((e) => String(e).slice(0, 400)));
   if (coldMs == null)
     console.error('[cold] not interactive:', JSON.stringify(await cdp.eval(`({hash: location.hash, rows: document.querySelectorAll('[data-event-id]').length, pill: document.querySelector('[data-conn-state]')?.textContent, text: document.body.textContent.slice(0, 300)})`)));
   await settle(proxy);
