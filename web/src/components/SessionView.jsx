@@ -921,7 +921,8 @@ function UrlTab({ tab, active, session }) {
         >
           <Icon icon={faRotateRight} />
         </button>
-        <span className="min-w-0 flex-1 truncate font-mono text-[11.5px] md:text-[10px] text-fgdim">{tab.url}</span>
+        {/* an address reads left-to-right even in a Hebrew cockpit (else "/__pr/…" renders as "pr/…__/") */}
+        <span className="min-w-0 flex-1 truncate text-start font-mono text-[11.5px] md:text-[10px] text-fgdim"><span dir="ltr">{tab.url}</span></span>
         <a
           /* proxied so it opens from any device — the raw tab.url may point at
              the HOST's localhost, which a phone over VPN can't reach */
@@ -1037,7 +1038,12 @@ export function AgentHomeChat({ session, events, loading, agent, onOpenSession }
 // header) and the TabBar is `embedded`; every other tab (desktop, artifacts,
 // url, changes…) is the same component a work session gets, so the human can
 // see what the agent opened.
-export default function SessionView({ session, events, chatLoading, addTabOpen, setAddTabOpen, homeAgent = null, onOpenSession, onEdit, onArchive, onRestore }) {
+// `visible` (KEEP-ALIVE): App keeps the last few visited sessions mounted but
+// hidden (lib/sessionPool.js), so their iframe tabs don't reload and their
+// Changes tab keeps its place. A hidden view renders no tab bar and no chat
+// (the transcript remounts on return, as before — its draft lives in the
+// store), answers no window-wide command, and freezes its tab bodies.
+export default function SessionView({ session, events, chatLoading, addTabOpen, setAddTabOpen, homeAgent = null, onOpenSession, onEdit, onArchive, onRestore, visible = true }) {
   const isDesktop = useIsDesktop();
   const tt = useT();
   const { sessions: allSessions } = useStore();
@@ -1067,23 +1073,24 @@ export default function SessionView({ session, events, chatLoading, addTabOpen, 
 
   // Auto-focus the composer whenever the chat (session) tab is the active tab —
   // on a session switch or when the user switches to that tab. All tabs stay
-  // mounted (hidden via CSS), so this is driven by the active tab, not mount.
+  // mounted (hidden via .kept-hidden), so this is driven by the active tab, not mount.
   // Defer while the session is awaiting an answer — the permission / question
   // card grabs focus instead and hands it back here once answered. Desktop
   // only: on mobile this pops the on-screen keyboard on every session switch,
   // which is disruptive — mobile users focus the composer explicitly by tapping it.
   const chatTabId = tabs.find((t) => t.type === 'session')?.id;
   useEffect(() => {
-    if (isDesktop && activeTabId === chatTabId && session.claude?.state !== 'awaiting-input') {
+    if (visible && isDesktop && activeTabId === chatTabId && session.claude?.state !== 'awaiting-input') {
       window.dispatchEvent(new CustomEvent('host:focus-input'));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTabId, session.id, isDesktop]);
+  }, [activeTabId, session.id, isDesktop, visible]);
 
   // ChatPane's large-diff card asks to jump to the Changes tab.
   useEffect(() => {
     const onOpen = (ev) => {
-      if (ev.detail?.sessionId && ev.detail.sessionId !== session.id) return;
+      // addressed to a session → that one; unaddressed → the visible one only
+      if (ev.detail?.sessionId ? ev.detail.sessionId !== session.id : !visible) return;
       if (tabs.some((t) => t.id === CHANGES_TAB_ID)) setLocalActive(CHANGES_TAB_ID);
     };
     window.addEventListener('host:open-changes', onOpen);
@@ -1117,6 +1124,7 @@ export default function SessionView({ session, events, chatLoading, addTabOpen, 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session.id]);
   useEffect(() => {
+    if (!visible) return;
     const base = `#/session/${encodeURIComponent(session.id)}`;
     const cur = window.location.hash || '';
     if (cur !== base && !cur.startsWith(`${base}/tab/`)) return; // another view owns the URL
@@ -1125,41 +1133,42 @@ export default function SessionView({ session, events, chatLoading, addTabOpen, 
     if (cur !== want) {
       try { window.history.replaceState(null, '', want); } catch { /* very old engines */ }
     }
-  }, [activeTabId, session.id, chatTabId]);
+  }, [activeTabId, session.id, chatTabId, visible]);
 
   // Command bus → tab activation (voice: "open the changes tab", "go to terminal").
   // The command handler dispatches a window event after selecting this session;
   // route it through onActivate so local (Changes) and server tabs both work.
   useEffect(() => {
     const onCmd = (e) => {
-      if (e.detail?.sessionId && e.detail.sessionId !== session.id) return;
+      if (e.detail?.sessionId ? e.detail.sessionId !== session.id : !visible) return;
       if (e.detail?.tabId) onActivate({ id: e.detail.tabId });
     };
     window.addEventListener('host:activate-tab', onCmd);
     return () => window.removeEventListener('host:activate-tab', onCmd);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session.id, session.activeTabId]);
+  }, [session.id, session.activeTabId, visible]);
 
-  return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <TabBar
-        session={session}
-        tabs={tabs}
-        activeTabId={activeTabId}
-        onActivate={onActivate}
-        addOpen={addTabOpen}
-        setAddOpen={setAddTabOpen}
-        embedded={!!homeAgent}
-      />
+  // Hidden: render the bodies ONCE with visible=false (so their listeners and
+  // fetches stand down), then hand React the same element every render — an
+  // identical element skips reconciliation, so a hidden session costs nothing
+  // while the visible one streams. A tab the agent opens meanwhile mounts on return.
+  const frozenRef = useRef(null);
+  let bodies;
+  if (!visible && frozenRef.current) bodies = frozenRef.current;
+  else {
+    bodies = (
       <div className="relative min-h-0 flex-1">
         {tabs.map((tab) => {
           const active = tab.id === activeTabId;
+          // `live` = the tab the human is looking at: active AND this session shown
+          const live = active && visible;
           return (
             <div
               key={tab.id}
-              className={`absolute inset-0 flex-col bg-bg ${active ? 'flex' : 'hidden'}`}
+              data-tab-body={tab.id}
+              className={`absolute inset-0 flex flex-col bg-bg ${active ? '' : 'kept-hidden'}`}
             >
-              {tab.type === 'session' && homeAgent ? (
+              {tab.type === 'session' && !visible ? null : tab.type === 'session' && homeAgent ? (
                 <AgentHomeChat session={session} agent={homeAgent} events={events} loading={chatLoading} onOpenSession={onOpenSession} />
               ) : tab.type === 'session' ? (
                 <>
@@ -1180,11 +1189,11 @@ export default function SessionView({ session, events, chatLoading, addTabOpen, 
                   </ChatThemeScope>
                 </>
               ) : tab.type === 'changes' ? (
-                <ChangesTab key={session.id} session={session} active={active} />
+                <ChangesTab key={session.id} session={session} active={live} />
               ) : tab.type === 'orchestration' ? (
-                <OrchestrationTab session={session} active={active} />
+                <OrchestrationTab session={session} active={live} />
               ) : tab.type === 'url' ? (
-                <UrlTab tab={tab} active={active} session={session} />
+                <UrlTab tab={tab} active={live} session={session} />
               ) : (
                 <ContentTab tab={tab} />
               )}
@@ -1192,6 +1201,24 @@ export default function SessionView({ session, events, chatLoading, addTabOpen, 
           );
         })}
       </div>
+    );
+    frozenRef.current = visible ? null : bodies;
+  }
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      {visible && (
+        <TabBar
+          session={session}
+          tabs={tabs}
+          activeTabId={activeTabId}
+          onActivate={onActivate}
+          addOpen={addTabOpen}
+          setAddOpen={setAddTabOpen}
+          embedded={!!homeAgent}
+        />
+      )}
+      {bodies}
     </div>
   );
 }

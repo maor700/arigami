@@ -59,18 +59,54 @@ const Pill = ({ children, color = '#79c0ff' }) => (
 // server-rendered HTML (markdown/diffs) — kept server-side to reuse proven renderers
 const Html = ({ html, class: cls }) => <div class={cls} dangerouslySetInnerHTML={{ __html: html || '' }} />;
 
+// Stale-while-revalidate: the last answer for this ticket/PR is kept in
+// sessionStorage (this page is same-origin with the cockpit, so every card
+// iframe in the browser tab shares it) and painted at once on (re)load, while
+// the live fetch — a Linear call, or six `gh` calls for a PR — refreshes it in
+// the background. A failed refresh keeps the cached page instead of an error.
+const SWR_KEY = 'arigami.card.';
+const SWR_MAX = 8; // entries kept; oldest goes first (and on a full quota)
+const SWR_MAX_BYTES = 1_500_000;
+function swrRead(key) {
+  try { const v = sessionStorage.getItem(SWR_KEY + key); return v ? JSON.parse(v).d : null; } catch { return null; }
+}
+function swrWrite(key, d) {
+  try {
+    const v = JSON.stringify({ at: Date.now(), d });
+    if (v.length > SWR_MAX_BYTES) return;
+    const keys = () => Object.keys(sessionStorage).filter((k) => k.startsWith(SWR_KEY) && k !== SWR_KEY + key)
+      .map((k) => { try { return [k, JSON.parse(sessionStorage.getItem(k)).at || 0]; } catch { return [k, 0]; } })
+      .sort((a, b) => a[1] - b[1]).map(([k]) => k);
+    const old = keys();
+    while (old.length >= SWR_MAX) sessionStorage.removeItem(old.shift());
+    for (;;) {
+      try { sessionStorage.setItem(SWR_KEY + key, v); return; } catch {
+        if (!old.length) return; // nothing left to make room with
+        sessionStorage.removeItem(old.shift());
+      }
+    }
+  } catch { /* storage unavailable — no cache, same as before */ }
+}
+
 function useData(id, urlPrefix = '/__ticket-data/') {
-  const [d, setD] = useState(null);
+  const key = urlPrefix + id;
+  const [d, setD] = useState(() => swrRead(key));
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     let live = true;
-    if (attempt === 0) setD(null); // a reload after an action keeps the page (and its scroll) until the new data lands
     fetch(urlPrefix + id + (attempt ? `?r=${attempt}` : ''))
       .then((r) => r.json())
-      .then((j) => live && setD(j))
-      .catch(() => live && setD({ error: true }));
+      .then((j) => {
+        if (!live) return;
+        const bad = !j || j.error || (!j.ticket && !j.pr);
+        if (!bad) swrWrite(key, j);
+        // a failed refresh never replaces a page we already have
+        setD((cur) => (bad && cur && !cur.error ? cur : j));
+      })
+      .catch(() => live && setD((cur) => (cur && !cur.error ? cur : { error: true })));
     return () => { live = false; };
   }, [id, attempt]);
+  // a reload after an action keeps the page (and its scroll) until the new data lands
   return [d, () => setAttempt((a) => a + 1)];
 }
 
