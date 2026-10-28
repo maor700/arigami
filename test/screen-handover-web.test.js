@@ -93,8 +93,10 @@ test('a plain machine view opens in Watch with an owner badge and an explicit Ta
   expect(modal).toContain('data-screen-control-toggle');
   expect(modal).toContain("t('screen.takeControl')");
   expect(modal).toContain("t('screen.release')");
-  // typing into the desktop is a control action — not offered while watching
-  expect(modal).toContain('context?.sessionId && interactive &&');
+  // typing into the desktop is a control action: opening the field takes control, and in Watch it types nothing
+  expect(modal).toContain('if (next && plain) setControl(true)');
+  expect(modal).toContain('disabled={!interactive}');
+  expect(modal).toContain('(!typed && !enter) || !interactive');
   // "My browser" is opened in order to drive it — it opens already in control
   expect(read('components/Rail.jsx')).toContain('setScreenModal({ control: true })');
   expect(store.setScreenModal).toBeTypeOf('function');

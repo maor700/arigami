@@ -230,7 +230,7 @@ function disconnect(c) {
 // Cmd reaches the page as a Super key nobody listens to. The screencast
 // transport already inserts on a native paste event, so V is left to it there.
 
-const XK = { Control_L: 0xffe3, a: 0x61, v: 0x76, x: 0x78, z: 0x7a };
+const XK = { Control_L: 0xffe3, Return: 0xff0d, a: 0x61, v: 0x76, x: 0x78, z: 0x7a };
 
 function sendCtrl(rfb, key, code) {
   if (typeof rfb.sendKey !== 'function') return;
@@ -292,6 +292,34 @@ export async function pasteIntoRemote(text, { post, ctrlV }) {
   const set = await post('clipboard', { text });
   if (set?.ok === false) throw new Error(set.error || first.error || 'paste failed');
   ctrlV();
+}
+
+/**
+ * The take-over modal's "type into the screen" field: put `text` where the
+ * cursor is on a screen, then press Enter if asked. A session's desktop has its
+ * own route (CDP, else XTEST); the shared screen goes the paste way — DevTools
+ * if its Chrome has them, else the X clipboard plus Ctrl+V over this tab's VNC
+ * connection — and Enter is a key over the same connection. Keys need control:
+ * noVNC drops them in Watch.
+ */
+export async function typeIntoScreen(sessionId, text, { enter = false } = {}) {
+  if (sessionId) {
+    const r = await api.post(`/sessions/${encodeURIComponent(sessionId)}/desktop/type`, { text, enter: !!enter });
+    if (r?.ok === false) throw new Error(r.error || 'typing failed');
+    return;
+  }
+  const c = conns.get(scopeKey(null));
+  const rfb = c?.transport === 'rfb' ? c.rfb : null;
+  if (text) {
+    await pasteIntoRemote(text, {
+      post: (path, body) => api.post(`/desktop/${path}`, body),
+      ctrlV: rfb ? () => sendCtrl(rfb, 'v', 'KeyV') : null,
+    });
+  }
+  if (enter && typeof rfb?.sendKey === 'function') {
+    rfb.sendKey(XK.Return, 'Enter', true);
+    rfb.sendKey(XK.Return, 'Enter', false);
+  }
 }
 
 function attachClipboard(c, sessionId, transport) {

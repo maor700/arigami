@@ -22,15 +22,15 @@
 // Fullscreen API toggle (the canvas benefits from true fullscreen / pointer
 // lock). Mounted ONCE, in App.jsx, from store.screen.modal.
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { createPortal, flushSync } from 'react-dom';
 import ScreenView from './ScreenView.jsx';
-import { SCREEN_PRIORITY } from '../lib/useScreenConnection.js';
+import { SCREEN_PRIORITY, typeIntoScreen } from '../lib/useScreenConnection.js';
 import { answerScreenRequest, cancelScreenRequest, loadSharedDesktop, openScreenRequest, releaseSharedDesktop, setScreenModal, useStore } from '../lib/store.js';
 import * as setupApi from '../lib/setup-api.js';
 import { api } from '../lib/api.js';
 import { useT } from '../lib/i18n.js';
 import { engineLabel } from '../lib/engines.js';
-import { EyeIcon, MaximizeIcon, MinimizeIcon, MonitorIcon, MousePointerClickIcon, XIcon } from 'lucide-react';
+import { EyeIcon, KeyboardIcon, MaximizeIcon, MinimizeIcon, MonitorIcon, MousePointerClickIcon, XIcon } from 'lucide-react';
 import { Badge, Button, Input, StatusDot } from './ui/index.js';
 
 // `context` — store.screen.modal: {} for the global view, {sessionId} for a
@@ -47,19 +47,24 @@ export default function ScreenModal({ context, onClose }) {
   const [setupErr, setSetupErr] = useState(null);
   // F8: "type into the desktop" — the human's clipboard never crosses VNC, so
   // a code copied on their own machine can be typed here and inserted where
-  // the cursor is on the session desktop.
+  // the cursor is on the machine. On a phone it is also THE keyboard: the
+  // remote field's focus cannot open the phone's own. Shown by default on a
+  // session's machine in control; the keyboard button shows / hides it on any
+  // screen, the shared one included (`typeOpen` null = the default).
   const [typed, setTyped] = useState('');
   const [typeBusy, setTypeBusy] = useState(false);
   const [typeErr, setTypeErr] = useState(null);
+  const [typeOpen, setTypeOpen] = useState(null);
+  const typeRef = useRef(null);
   // On a phone the request's prompt is clamped to two lines (the screen gets
   // the room); a tap opens it in full.
   const [bannerOpen, setBannerOpen] = useState(false);
   const typeIt = async (enter) => {
-    if (!typed || !context?.sessionId) return;
+    if ((!typed && !enter) || !interactive) return;
     setTypeBusy(true);
     setTypeErr(null);
     try {
-      await api.post(`/sessions/${context.sessionId}/desktop/type`, { text: typed, enter: !!enter });
+      await typeIntoScreen(screenSessionId, typed, { enter });
       setTyped('');
     } catch (e) {
       setTypeErr(String(e?.message || e).replace(/^HTTP \d+ — /, ''));
@@ -101,6 +106,18 @@ export default function ScreenModal({ context, onClose }) {
   const [control, setControl] = useState(!!context?.control);
   const interactive = !!req || !!setupCtx || control;
   const plain = !req && !setupCtx;
+  const typeShown = typeOpen ?? (!!screenSessionId && interactive);
+  // Typing is driving: opening the field in Watch takes control. flushSync so
+  // the field exists when it is focused — a phone opens its keyboard only for a
+  // focus() inside the tap itself.
+  const toggleType = () => {
+    const next = !typeShown;
+    flushSync(() => {
+      setTypeOpen(next);
+      if (next && plain) setControl(true);
+    });
+    if (next) typeRef.current?.focus();
+  };
   const ownerSession = context?.sessionId ? s.sessions.find((x) => x.id === context.sessionId) : null;
   const owner = context?.sessionId && !openReq?.shared
     ? t('screen.ownerSession', { title: ownerSession?.title || context.sessionId })
@@ -226,12 +243,23 @@ export default function ScreenModal({ context, onClose }) {
             </Button>
           )}
           <Button
+            variant={typeShown ? 'outline' : 'ghost'}
+            size="icon"
+            data-screen-type-toggle=""
+            onClick={toggleType}
+            title={t('screen.typeInto')}
+            aria-label={t('screen.typeInto')}
+            aria-pressed={typeShown}
+            className={plain ? '' : 'ms-auto'}
+          >
+            <KeyboardIcon className="size-4" />
+          </Button>
+          <Button
             variant="ghost"
             size="icon"
             onClick={toggleFullscreen}
             title={fullscreen ? t('chat.exitFullscreen') : t('chat.fullscreen')}
             aria-label={fullscreen ? t('chat.exitFullscreen') : t('chat.fullscreen')}
-            className={plain ? '' : 'ms-auto'}
           >
             {fullscreen ? <MinimizeIcon className="size-4" /> : <MaximizeIcon className="size-4" />}
           </Button>
@@ -284,12 +312,15 @@ export default function ScreenModal({ context, onClose }) {
 
         <ScreenView priority={SCREEN_PRIORITY.modal} viewOnly={!interactive} sessionId={screenSessionId} zoomable className="min-h-0 flex-1" onStatusChange={onStatusChange} />
 
-        {context?.sessionId && interactive && !req?.shared && (
-          <div className="flex items-center gap-2 border-t border-border px-4 py-2" title={t('screen.typeIntoHint')}>
+        {typeShown && (
+          <div className="flex items-center gap-2 border-t border-border px-3 py-1.5 md:px-4 md:py-2" title={t('screen.typeIntoHint')} data-screen-type="">
             <Input
+              ref={typeRef}
               value={typed}
+              disabled={!interactive}
               onChange={(e) => setTyped(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && !typeBusy && typeIt(true)}
+              enterKeyHint="send"
               placeholder={t('screen.typeInto')}
               dir="auto"
               spellCheck={false}
