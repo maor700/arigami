@@ -3,7 +3,7 @@
 import { test, expect } from 'bun:test';
 import { mergeModel, requiredChecks } from '../server/lib/gh-merge.ts';
 
-const repo = (pr: any, extra: any = {}) => ({ squashMergeAllowed: true, mergeCommitAllowed: true, rebaseMergeAllowed: false, autoMergeAllowed: true, deleteBranchOnMerge: true, viewerDefaultMergeMethod: 'MERGE', ...extra, pullRequest: { state: 'OPEN', merged: false, isDraft: false, mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN', reviewDecision: 'APPROVED', headRefOid: 'abc1234', reviewThreads: { nodes: [] }, ...pr } });
+const repo = (pr: any, extra: any = {}) => ({ viewerPermission: 'WRITE', squashMergeAllowed: true, mergeCommitAllowed: true, rebaseMergeAllowed: false, autoMergeAllowed: true, deleteBranchOnMerge: true, viewerDefaultMergeMethod: 'MERGE', ...extra, pullRequest: { state: 'OPEN', merged: false, isDraft: false, mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN', reviewDecision: 'APPROVED', headRefOid: 'abc1234', reviewThreads: { nodes: [] }, ...pr } });
 const opts = (checks: any[] = []) => ({ number: 7, title: 'Fix it', base: 'main', head: 'feat', checks });
 
 test('clean: every row green, the button live, nothing for the chat to fix', () => {
@@ -51,8 +51,20 @@ test('blocked with every row green says a rule blocks it; auto-merge and admin b
   expect(on.canDisableAuto).toBe(true);
 });
 
+test('a viewer without write access sees what blocks it, but no button, no auto-merge and nothing for the chat', () => {
+  for (const viewerPermission of ['READ', 'TRIAGE', undefined]) {
+    const clean: any = mergeModel(repo({ viewerCanEnableAutoMerge: true, viewerCanMergeAsAdmin: true }, { viewerPermission }), opts());
+    expect(clean).toMatchObject({ canWrite: false, canMerge: false, canAuto: false, canAdmin: false });
+    const dirty: any = mergeModel(repo({ mergeable: 'CONFLICTING', mergeStateStatus: 'DIRTY' }, { viewerPermission }), opts([{ name: 'test', state: 'bad', required: true }]));
+    expect(dirty.rows.find((r: any) => r.id === 'conflicts').s).toBe('bad');
+    expect(dirty.fixable).toEqual([]);
+  }
+  expect((mergeModel(repo({ isDraft: true }, { viewerPermission: 'READ' }), opts()) as any).rows[0].action).toBeUndefined();
+  for (const viewerPermission of ['WRITE', 'MAINTAIN', 'ADMIN']) expect((mergeModel(repo({}, { viewerPermission }), opts()) as any).canMerge).toBe(true);
+});
+
 test('draft, merged and closed', () => {
-  const d: any = mergeModel(repo({ isDraft: true }), opts());
+  const d: any = mergeModel(repo({ isDraft: true, viewerCanUpdate: true }), opts());
   expect(d.canMerge).toBe(false);
   expect(d.rows[0]).toMatchObject({ id: 'draft', action: 'ready' });
   expect(mergeModel(repo({ merged: true, mergedBy: { login: 'jo' } }), opts())).toMatchObject({ status: 'merged', by: 'jo' });
