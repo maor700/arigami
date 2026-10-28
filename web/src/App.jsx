@@ -5,6 +5,7 @@ import { useStore, loadChat, setAttentionHandler, needsAttention, hasOpenScreenR
 import { usePrefs, setPrefs, getPrefs, setTermOverride } from './lib/prefs.js';
 import { useIsDesktop } from './lib/useMedia.js';
 import { isVncInputTarget } from './lib/useScreenConnection.js';
+import { poolCap, touchPool } from './lib/sessionPool.js';
 import { stopRecording, hotkeyPress, composerFocused, matchesHotkey, setSelectedContext, setVoiceAvailable } from './lib/voice.js';
 import { setCommandHandlers } from './lib/commands.js';
 import { useT, currentLang, t as tNow } from './lib/i18n.js';
@@ -376,6 +377,15 @@ function Cockpit() {
     .filter((s) => !s.archived && !s.metadata?.agentHome)
     .sort((a, b) => (a.sortOrder ?? 1e9) - (b.sortOrder ?? 1e9));
   const selected = sessions.find((s) => s.id === selectedId) || null;
+  // Recently visited sessions stay mounted (hidden) so their tabs don't reload
+  // on the way back — see lib/sessionPool.js for the cap and eviction rule.
+  const poolRef = useRef([]);
+  poolRef.current = touchPool(
+    poolRef.current,
+    selected?.id || null,
+    poolCap({ isDesktop, deviceMemory: typeof navigator !== 'undefined' ? navigator.deviceMemory : undefined }),
+    new Set(sessions.map((s) => s.id)),
+  );
 
   // Apply a parsed route to the view flags (one active, others cleared).
   const applyRoute = (r) => {
@@ -1025,27 +1035,9 @@ function Cockpit() {
       />
     );
   } else if (selected) {
-    // archived sessions render the same view (read-only peek; restore via ⋯ menu)
-    // The machine side panel docks to the right of the session (desktop only);
-    // it auto-opens while this session has an open request_screen, or via the
-    // header's 🖥 chip. See ScreenSidePanel.jsx.
-    main = (
-      <div className="flex min-h-0 flex-1">
-        <div className="flex min-w-0 flex-1 flex-col">
-          <SessionView
-            session={selected}
-            onEdit={(s) => setDialog({ type: 'edit', session: s })}
-            onArchive={(s) => setDialog({ type: 'archive', session: s })}
-            onRestore={(s) => api.patch(`/sessions/${s.id}`, { archived: false }).catch(() => {})}
-            events={chats[selected.id] || []}
-            chatLoading={!chatLoaded[selected.id] && !(chats[selected.id]?.length)}
-            addTabOpen={addTabOpen}
-            setAddTabOpen={setAddTabOpen}
-          />
-        </div>
-        {screenPanelOpen(storeState, selected.id) && <ScreenSidePanel session={selected} />}
-      </div>
-    );
+    // The session itself renders from the keep-alive pool below (archived
+    // sessions render the same view: read-only peek; restore via ⋯ menu).
+    main = null;
   } else {
     main = (
       <FirstRun
@@ -1136,6 +1128,43 @@ function Cockpit() {
             {reconnecting ? t('chrome.conn.reconnecting') : conn === 'connecting' ? t('chrome.conn.connecting') : t('chrome.conn.offline')}
           </div>
         )}
+        {/* The keep-alive pool: the visible session plus the last few visited,
+            hidden. It renders under every view (settings, launcher…) so coming
+            back from one doesn't reload the session's tabs either. The machine
+            side panel docks to the right of the visible session (desktop only);
+            it auto-opens while this session has an open request_screen, or via
+            the header's 🖥 chip. See ScreenSidePanel.jsx. */}
+        {/* rendered in a STABLE order (by id), not most-recent-first: React
+            moves a keyed node to reorder it, and moving an iframe in the DOM
+            reloads it — exactly what the pool exists to prevent */}
+        {[...poolRef.current].sort().map((id) => {
+          const s = sessions.find((x) => x.id === id);
+          if (!s) return null;
+          const visible = main === null && s.id === selected?.id;
+          return (
+            <div
+              key={id}
+              data-pool-session={id}
+              className={visible ? 'flex min-h-0 flex-1' : 'kept-hidden absolute inset-0 flex'}
+              {...(visible ? {} : { inert: '', 'aria-hidden': 'true' })}
+            >
+              <div className="flex min-w-0 flex-1 flex-col">
+                <SessionView
+                  session={s}
+                  visible={visible}
+                  onEdit={(x) => setDialog({ type: 'edit', session: x })}
+                  onArchive={(x) => setDialog({ type: 'archive', session: x })}
+                  onRestore={(x) => api.patch(`/sessions/${x.id}`, { archived: false }).catch(() => {})}
+                  events={chats[s.id] || []}
+                  chatLoading={!chatLoaded[s.id] && !(chats[s.id]?.length)}
+                  addTabOpen={visible && addTabOpen}
+                  setAddTabOpen={setAddTabOpen}
+                />
+              </div>
+              {visible && screenPanelOpen(storeState, s.id) && <ScreenSidePanel session={s} />}
+            </div>
+          );
+        })}
         <Suspense fallback={<ViewFallback />}>{main}</Suspense>
       </main>
       <VoiceHUD />

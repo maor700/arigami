@@ -12,6 +12,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import https from 'node:https';
 import { execFile } from 'node:child_process';
+import crypto from 'node:crypto';
 import { cfg } from './lib/config.js';
 import { secret } from './lib/secrets.js';
 import { resourceRoot } from './lib/resource-root.js';
@@ -688,7 +689,28 @@ const GH_HTML = ['-H', 'Accept: application/vnd.github.full+json'];
 async function ghJson(pathArgs) {
   try { return JSON.parse(await execFileP('gh', ['api', ...GH_HTML, ...pathArgs])); } catch { return null; }
 }
-async function fetchPR(owner, repo, num) {
+// A PR page costs six `gh` calls (~1.5–2.5 s, and the GitHub rate limit every
+// session shares). Concurrent asks for the same PR share one fetch, and a
+// plain (re)load within PR_TTL_MS reuses the last answer; `fresh` — the card's
+// reload after an action (?r=N) — always goes to GitHub.
+const PR_TTL_MS = 20_000;
+const prCache = new Map(); // "o/r/n" → { at, promise }
+export function fetchPR(owner, repo, num, { fresh = false } = {}) {
+  const key = `${owner}/${repo}/${num}`;
+  const hit = prCache.get(key);
+  if (hit && (hit.pending || (!fresh && Date.now() - hit.at < PR_TTL_MS))) return hit.promise;
+  const entry = { at: 0, pending: true, promise: null };
+  entry.promise = fetchPRNow(owner, repo, num).then((pr) => {
+    entry.pending = false;
+    entry.at = Date.now();
+    if (!pr) prCache.delete(key); // never cache a failure
+    return pr;
+  });
+  prCache.set(key, entry);
+  if (prCache.size > 50) prCache.delete(prCache.keys().next().value);
+  return entry.promise;
+}
+async function fetchPRNow(owner, repo, num) {
   const base = `${owner}/${repo}`;
   const fields = 'number,title,state,isDraft,author,headRefName,baseRefName,additions,deletions,changedFiles,url,body,reviewDecision,statusCheckRollup,files,comments,reviews,commits';
   try {
@@ -733,7 +755,8 @@ function buildCard() {
     cardBuild = Bun.build({ entrypoints: [CARD_SRC], minify: true, target: 'browser' })
       .then(async (r) => {
         if (!r.success || !r.outputs.length) throw new Error(r.logs ? r.logs.join('\n') : 'build failed');
-        return r.outputs[0].text();
+        const js = await r.outputs[0].text();
+        return { js, etag: `"${crypto.createHash('sha1').update(js).digest('hex').slice(0, 16)}"` };
       })
       .catch((e) => { cardBuild = null; throw e; });
   }
@@ -748,9 +771,16 @@ export function handlePage(req, res) {
 
   // The Preact card bundle the ticket shell mounts.
   if (u.pathname === '/__card.js') {
+    // no-cache + an ETag: every card iframe revalidates (so a host upgrade
+    // lands at once) but gets a 304 instead of the whole bundle again.
     buildCard().then(
-      (js) => {
-        res.writeHead(200, { 'content-type': 'application/javascript; charset=utf-8', 'cache-control': 'no-cache' });
+      ({ js, etag }) => {
+        if (req.headers['if-none-match'] === etag) {
+          res.writeHead(304, { etag, 'cache-control': 'no-cache' });
+          res.end();
+          return;
+        }
+        res.writeHead(200, { 'content-type': 'application/javascript; charset=utf-8', 'cache-control': 'no-cache', etag });
         res.end(js);
       },
       (e) => {
@@ -778,7 +808,7 @@ export function handlePage(req, res) {
     getTicket(id).then(async (t) => {
       let pr = null;
       const ghAtt = t && (t.attachments || []).find((a) => isPrUrl(a.url));
-      if (ghAtt) { const p = parsePrUrl(ghAtt.url); if (p) pr = await fetchPR(p.owner, p.repo, p.num); }
+      if (ghAtt) { const p = parsePrUrl(ghAtt.url); if (p) pr = await fetchPR(p.owner, p.repo, p.num, { fresh: u.searchParams.has('r') }); }
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
       res.end(JSON.stringify(ticketData(t, id, pr)));
     });
@@ -794,7 +824,7 @@ export function handlePage(req, res) {
       res.end(prShell(owner, repo, num));
       return true;
     }
-    fetchPR(owner, repo, num).then((pr) => {
+    fetchPR(owner, repo, num, { fresh: u.searchParams.has('r') }).then((pr) => {
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
       res.end(JSON.stringify(pr ? { pr: prViewModel(pr) } : { error: true }));
     });

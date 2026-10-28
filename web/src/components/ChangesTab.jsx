@@ -246,6 +246,17 @@ function BasePicker({ value, onChange, refs, defaultLabel, title }) {
   );
 }
 
+// Last file list per session+mode, so a Changes tab that mounts again (its
+// session fell out of the cockpit's keep-alive pool) paints at once while the
+// fresh list loads behind it. Bounded: the oldest entry goes first.
+const CHANGES_CACHE = new Map();
+const CHANGES_CACHE_MAX = 20;
+function rememberChanges(key, data) {
+  CHANGES_CACHE.delete(key);
+  CHANGES_CACHE.set(key, data);
+  if (CHANGES_CACHE.size > CHANGES_CACHE_MAX) CHANGES_CACHE.delete(CHANGES_CACHE.keys().next().value);
+}
+
 export default function ChangesTab({ session, active }) {
   const t = useT();
   const desktop = useIsDesktop();
@@ -438,11 +449,15 @@ export default function ChangesTab({ session, active }) {
   const modeQ = changesQuery(changesMode, baseSel);
 
   const load = useCallback(async () => {
+    const key = `${session.id}?${modeQ}`;
+    const cached = CHANGES_CACHE.get(key);
+    if (cached) setData((cur) => cur || cached);
     setLoading(true);
     setFailed(false);
     try {
       const res = await api.get(`/sessions/${session.id}/changes${modeQ ? `?${modeQ}` : ''}`);
       setData(res || {});
+      if (res && !res.error) rememberChanges(key, res);
     } catch {
       setFailed(true);
     }
