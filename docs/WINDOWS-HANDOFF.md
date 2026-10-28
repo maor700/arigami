@@ -73,7 +73,7 @@ The three things missing, in dependency order:
 2. **`packaged.plan()`/`run()`** need to drive that plugin instead of throwing,
    so the cockpit's existing upgrade button works.
 3. **There is nothing to update *from*, and detection is silently dead.**
-   `api.github.com/repos/maor700/arigami/releases` → **404**, and so does the
+   the repo's releases endpoint (`/repos/<owner>/arigami/releases` on the API) → **404**, and so does the
    repo itself unauthenticated: **the repo is private**. `fetchLatestRelease()`
    (`server/version.ts:90`) does `if (!r.ok) return null`, so the one
    implemented half reports "no update available" forever, with no error. Any
