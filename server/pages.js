@@ -534,6 +534,9 @@ const TICKET_CSS = `
   html[data-theme=light] .ghpage{background:#fff}html:not([data-theme=light]) .ghpage{background:#0d1117}
   .ghtop{display:flex;justify-content:space-between;align-items:center;padding:8px 20px;border-bottom:1px solid var(--border);color:var(--dim);font-size:13px}
   .ghscroll{flex:1;overflow:auto;padding:20px 24px 40px}
+  /* a readable column, centred in a wide tab: GitHub's own container-lg. The
+     tab is the viewport minus the rail, so a 1280px cap never engaged there. */
+  .ghscroll>.gh{max-width:1012px;margin-inline:auto}
   .gh a{color:var(--g-link)}
   .gh code{background:var(--g-code);border:0;color:var(--g-text);border-radius:6px;padding:.15em .4em;font-size:85%}
   .ghtitle{font-size:26px;font-weight:400;line-height:1.25;margin:0 0 8px;color:var(--g-text)}.ghnum{color:var(--g-dim);font-weight:300}
@@ -543,7 +546,7 @@ const TICKET_CSS = `
   .ghstate{display:inline-flex;align-items:center;border-radius:2em;padding:4px 12px;font-weight:500;color:#fff;font-size:14px}
   .ghstate.open{background:var(--g-green)}.ghstate.merged{background:var(--g-purple)}.ghstate.closed{background:var(--g-red)}.ghstate.draft{background:var(--g-gray)}
   .ghtabs{display:flex;align-items:center;gap:4px;border-bottom:1px solid var(--g-border);margin:14px 0 18px}
-  .ghtab{padding:8px 14px;cursor:pointer;color:var(--g-dim);border-bottom:2px solid transparent;margin-bottom:-1px;user-select:none}
+  .ghtab{padding:8px 14px;white-space:nowrap;cursor:pointer;color:var(--g-dim);border-bottom:2px solid transparent;margin-bottom:-1px;user-select:none}
   .ghtab.on{color:var(--g-text);border-bottom-color:#fd8c73;font-weight:600}
   .ghcount{display:inline-block;min-width:20px;padding:0 6px;margin-inline-start:4px;border-radius:2em;background:var(--g-muted);font-size:12px;font-weight:500;text-align:center;color:var(--g-text)}
   .ghdiffstat{margin-inline-start:auto;font-size:12.5px;font-family:ui-monospace,monospace}
@@ -557,9 +560,9 @@ const TICKET_CSS = `
   .ghav{border-radius:50%;flex:0 0 auto;background:var(--g-muted);display:inline-block;margin:0;border:0}
   .ghitem{display:flex;gap:12px;margin:0 0 16px;position:relative}
   .ghbox{flex:1;min-width:0;border:1px solid var(--g-border);border-radius:6px;background:var(--g-panel);overflow:hidden}
-  .ghboxh{display:flex;align-items:center;gap:6px;padding:8px 14px;background:var(--g-head);border-bottom:1px solid var(--g-border);font-size:14px;color:var(--g-text)}
+  .ghboxh{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:8px 14px;background:var(--g-head);border-bottom:1px solid var(--g-border);font-size:14px;color:var(--g-text)}
   .ghdim{color:var(--g-dim);font-weight:400}.ghassoc{margin-inline-start:auto;font-size:12px;border:1px solid var(--g-border);border-radius:2em;padding:0 7px;color:var(--g-dim);text-transform:capitalize}
-  .ghbody{padding:14px 16px;font-size:14px;color:var(--g-text);overflow-x:auto}
+  .ghbody{padding:14px 16px;font-size:14px;color:var(--g-text);overflow-x:auto;overflow-wrap:break-word}
   .ghbody p{margin:0 0 12px}.ghbody p:last-child{margin-bottom:0}
   .ghbody table{border-collapse:collapse;margin:0 0 14px;display:block;width:max-content;max-width:100%;overflow:auto}
   .ghbody table,.ghbody table *{border-color:var(--g-border)!important}
@@ -600,7 +603,10 @@ const TICKET_CSS = `
   .gh .diff span.add{background:var(--g-add-bg);color:var(--g-add-tx)}.gh .diff span.del{background:var(--g-del-bg);color:var(--g-del-tx)}
   .gh .diff span.hunk{background:color-mix(in srgb,var(--g-link) 12%,transparent);color:var(--g-dim)}
   .gh .ghthread .diff{border-bottom:1px solid var(--g-border)}
-  @media (max-width:900px){.ghcols{flex-direction:column-reverse}.ghside{flex:0 0 auto;width:100%;display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:0 16px}}
+  @media (max-width:600px){.ghscroll{padding:14px 12px 32px}.ghtitle{font-size:20px}.ghtabs{gap:0;overflow-x:auto;scrollbar-width:none}.ghtab{padding:8px 8px;font-size:13px;margin-bottom:0}.ghdiffstat{display:none}.ghtop{padding:8px 12px}}
+  /* stacked: the conversation fills the column (align-items:flex-start sized
+     it to its widest unbreakable line — 540px in a 342px phone column) */
+  @media (max-width:900px){.ghcols{flex-direction:column-reverse;align-items:stretch}.ghside{flex:0 0 auto;width:100%;display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:0 16px}}
   @media (max-width:760px){
     .lin-body{flex-direction:column-reverse;align-items:stretch}
     .lin-side{flex:0 0 auto;position:static;min-height:0;border-left:0;border-bottom:1px solid var(--border);padding:12px 18px;display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));column-gap:16px}

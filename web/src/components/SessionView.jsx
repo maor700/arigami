@@ -921,7 +921,8 @@ function UrlTab({ tab, active, session }) {
         >
           <Icon icon={faRotateRight} />
         </button>
-        <span className="min-w-0 flex-1 truncate font-mono text-[11.5px] md:text-[10px] text-fgdim">{tab.url}</span>
+        {/* an address reads left-to-right even in a Hebrew cockpit (else "/__pr/…" renders as "pr/…__/") */}
+        <span className="min-w-0 flex-1 truncate text-start font-mono text-[11.5px] md:text-[10px] text-fgdim"><span dir="ltr">{tab.url}</span></span>
         <a
           /* proxied so it opens from any device — the raw tab.url may point at
              the HOST's localhost, which a phone over VPN can't reach */
