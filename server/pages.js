@@ -600,8 +600,8 @@ const TICKET_CSS = `
   .ghmerge{position:relative}.ghmicon{flex:0 0 32px;width:32px;height:32px;border-radius:6px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:16px;background:var(--g-gray)}
   .ghmicon.ok{background:var(--g-green)}.ghmicon.bad{background:var(--g-red)}.ghmicon.pending{background:var(--g-gray)}.ghmicon.merged{background:var(--g-purple)}.ghmicon.closed{background:var(--g-red)}
   .ghmbox{overflow:visible}.ghmbox.ok{border-color:var(--g-green)}.ghmbox.bad{border-color:var(--g-red)}
-  .ghmrow{display:flex;align-items:flex-start;gap:12px;padding:14px 16px;border-bottom:1px solid var(--g-border)}.ghmrow .ghck{margin-top:2px}
-  .ghmrow .ghcact{margin-inline-start:auto;display:flex;gap:8px;flex-wrap:wrap}.ghmtext{min-width:0}.ghmtext b{color:var(--g-text)}
+  .ghmrow{display:flex;flex-wrap:wrap;align-items:flex-start;gap:12px;padding:14px 16px;border-bottom:1px solid var(--g-border)}.ghmrow .ghck{margin-top:2px}
+  .ghmrow .ghcact{margin-inline-start:auto;display:flex;gap:8px;flex-wrap:wrap}.ghmrow .ghcact .ghbtn{white-space:nowrap}.ghmtext{min-width:0;flex:1 1 200px}.ghmtext b{color:var(--g-text)}
   .ghmfoot{padding:14px 16px;background:var(--g-head);border-radius:0 0 6px 6px}.ghmsum{margin:0 0 10px}.ghmfoot .ghcrow{padding:0;background:transparent}
   .ghmbtns{justify-content:flex-start;gap:10px}.ghsplit{position:relative;display:inline-flex}
   .ghsplit .ghbtn:first-child:not(:only-child){border-start-end-radius:0;border-end-end-radius:0}.ghbtn.caret{border-start-start-radius:0;border-end-start-radius:0;border-inline-start:1px solid rgba(0,0,0,.25);padding:4px 9px}

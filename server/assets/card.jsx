@@ -570,7 +570,9 @@ function GhMergeBox({ pr, reload, say }) {
           </div>
         )}
         <div class="ghmfoot">
-          {confirm ? (
+          {!mg.canWrite ? (
+            <div class="ghmsum"><b>You can’t merge this pull request</b><div class="ghdim">Only people with write access to {pr.owner}/{pr.repo} can merge it.</div></div>
+          ) : confirm ? (
             <div class="ghmconfirm">
               {method !== 'rebase' && <>
                 <input class="ghinput" value={subject} onInput={(e) => setSubject(e.currentTarget.value)} placeholder="Commit title" />

@@ -11,10 +11,10 @@ const gh = (args: string[]): Promise<string> =>
   });
 
 const MERGE_QUERY = `query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){
-  mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed autoMergeAllowed deleteBranchOnMerge viewerDefaultMergeMethod
+  viewerPermission mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed autoMergeAllowed deleteBranchOnMerge viewerDefaultMergeMethod
   pullRequest(number:$n){
     state merged mergedAt mergedBy{login} isDraft mergeable mergeStateStatus reviewDecision headRefOid
-    viewerCanMergeAsAdmin viewerCanEnableAutoMerge viewerCanDisableAutoMerge viewerCanUpdateBranch
+    viewerCanUpdate viewerCanMergeAsAdmin viewerCanEnableAutoMerge viewerCanDisableAutoMerge viewerCanUpdateBranch
     autoMergeRequest{mergeMethod enabledBy{login}}
     reviewThreads(first:100){nodes{isResolved}}
     commits(last:1){nodes{commit{statusCheckRollup{contexts(first:100){nodes{
@@ -49,8 +49,11 @@ export function mergeModel(info: any, opts: { number: number; title: string; bas
   if (pr.state === 'CLOSED') return { status: 'closed' };
   const mss = String(pr.mergeStateStatus || 'UNKNOWN');
   const rows: Row[] = [];
+  // GitHub merges only for write access — a reader still sees what blocks it, but gets no button and no "Merge via chat"
+  // (the agent merges with the same gh login). An unknown permission counts as none.
+  const canWrite = ['ADMIN', 'MAINTAIN', 'WRITE'].includes(String(info.viewerPermission || ''));
 
-  if (pr.isDraft) rows.push({ id: 'draft', s: 'warn', title: 'This pull request is still a work in progress', detail: 'Draft pull requests cannot be merged.', action: 'ready' });
+  if (pr.isDraft) rows.push({ id: 'draft', s: 'warn', title: 'This pull request is still a work in progress', detail: 'Draft pull requests cannot be merged.', action: pr.viewerCanUpdate ? 'ready' : undefined });
 
   const rd = String(pr.reviewDecision || '');
   if (rd === 'APPROVED') rows.push({ id: 'reviews', s: 'ok', title: 'Changes approved', detail: 'The required reviews approved these changes.' });
@@ -84,9 +87,9 @@ export function mergeModel(info: any, opts: { number: number; title: string; bas
   else if (mergeable === 'UNKNOWN') rows.push({ id: 'conflicts', s: 'pending', title: 'Checking for the ability to merge automatically…' });
   else rows.push({ id: 'conflicts', s: 'ok', title: 'No conflicts with base branch', detail: 'Merging can be performed automatically.' });
 
-  const canMerge = !pr.isDraft && mergeable === 'MERGEABLE' && ['CLEAN', 'UNSTABLE', 'HAS_HOOKS'].includes(mss);
+  const canMerge = canWrite && !pr.isDraft && mergeable === 'MERGEABLE' && ['CLEAN', 'UNSTABLE', 'HAS_HOOKS'].includes(mss);
   // BLOCKED with every row green: a requirement GitHub enforces but doesn't spell out to this viewer (a code owner, a ruleset)
-  const unexplained = !canMerge && mss === 'BLOCKED' && !rows.some((r) => r.s !== 'ok');
+  const unexplained = canWrite && !canMerge && mss === 'BLOCKED' && !rows.some((r) => r.s !== 'ok');
   if (unexplained) rows.push({ id: 'rules', s: 'bad', title: 'Merging is blocked', detail: `The ${opts.base} branch's rules require something this PR doesn't meet yet.` });
 
   const methods = (
@@ -95,6 +98,7 @@ export function mergeModel(info: any, opts: { number: number; title: string; bas
   const pref = { SQUASH: 'squash', MERGE: 'merge', REBASE: 'rebase' }[String(info.viewerDefaultMergeMethod || '')] || '';
   return {
     status: 'open',
+    canWrite,
     rows,
     canMerge,
     blocked: !canMerge,
@@ -104,12 +108,12 @@ export function mergeModel(info: any, opts: { number: number; title: string; bas
     defaultTitle: { squash: `${opts.title} (#${opts.number})`, merge: `Merge pull request #${opts.number} from ${opts.head}`, rebase: '' } as Record<string, string>,
     headSha: pr.headRefOid || '',
     deleteBranch: !!info.deleteBranchOnMerge,
-    canAdmin: !!pr.viewerCanMergeAsAdmin,
-    canAuto: !!(pr.viewerCanEnableAutoMerge && info.autoMergeAllowed && !pr.autoMergeRequest),
+    canAdmin: canWrite && !!pr.viewerCanMergeAsAdmin,
+    canAuto: !!(canWrite && pr.viewerCanEnableAutoMerge && info.autoMergeAllowed && !pr.autoMergeRequest),
     canDisableAuto: !!pr.viewerCanDisableAutoMerge && !!pr.autoMergeRequest,
     auto: pr.autoMergeRequest ? { method: String(pr.autoMergeRequest.mergeMethod || '').toLowerCase(), by: pr.autoMergeRequest.enabledBy?.login || '' } : null,
     // what "Merge via chat" would fix — shown only when there is any
-    fixable: rows.filter((r) => (r.id === 'conflicts' && r.s !== 'ok' && r.s !== 'pending') || (r.id === 'checks' && r.s === 'bad')).map((r) => r.title),
+    fixable: !canWrite ? [] : rows.filter((r) => (r.id === 'conflicts' && r.s !== 'ok' && r.s !== 'pending') || (r.id === 'checks' && r.s === 'bad')).map((r) => r.title),
   };
 }
 
