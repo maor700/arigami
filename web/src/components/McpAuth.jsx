@@ -68,7 +68,8 @@ export default function McpAuth({ session, cwd }) {
   // Any new verdict (init, probe, a live tool call, a respawn) → re-read the rows.
   const healthAt = session?.claude?.mcp?.checkedAt;
   const loadedAt = session?.claude?.mcpLoaded?.at;
-  const healthKey = JSON.stringify(Object.values(session?.claude?.mcp?.servers || {}).map((h) => [h.status, h.at]));
+  // RESUME: wire v2 sends the health map's signature instead of the map itself.
+  const healthKey = session?.claude?.mcp?.sig ?? JSON.stringify(Object.values(session?.claude?.mcp?.servers || {}).map((h) => [h.status, h.at]));
   useEffect(() => { load(); }, [load, healthAt, loadedAt, healthKey]);
 
   // A reconnect just finished → re-probe so the rows settle to real verdicts.

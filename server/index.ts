@@ -5,6 +5,7 @@ import './lib/platform.js';
 import http, { IncomingMessage, ServerResponse } from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
+import { COMPRESS_MIN, compress, compressibleType, pickEncoding } from './lib/http-compress.js';
 import { resourceRoot } from './lib/resource-root.js';
 import { cfg, ensureConfigFile, flushState } from './state.js';
 import * as api from './api.js';
@@ -210,10 +211,36 @@ function serveHost(pathname: string, res: ServerResponse): void {
     );
     return;
   }
-  res.writeHead(200, {
-    'content-type': MIME[path.extname(file)] || 'application/octet-stream',
-  });
+  const type = MIME[path.extname(file)] || 'application/octet-stream';
+  // RESUME: the bundle is ~2.5MB of JS — on a phone link that is the cold load.
+  // Text assets go out gzip/br (packed once per file version, kept in memory).
+  const enc = compressibleType(type) ? pickEncoding((res as any).req?.headers?.['accept-encoding']) : null;
+  const packed = enc ? packedAsset(file, enc) : null;
+  if (packed) {
+    res.writeHead(200, { 'content-type': type, 'content-encoding': enc!, 'content-length': packed.length, vary: 'Accept-Encoding' });
+    res.end(packed);
+    return;
+  }
+  res.writeHead(200, { 'content-type': type, ...(compressibleType(type) ? { vary: 'Accept-Encoding' } : {}) });
   fs.createReadStream(file).pipe(res);
+}
+
+const assetCache = new Map<string, { key: string; body: Buffer | null }>();
+function packedAsset(file: string, enc: 'br' | 'gzip'): Buffer | null {
+  try {
+    const st = fs.statSync(file);
+    if (st.size < COMPRESS_MIN || st.size > 20e6) return null;
+    const key = `${st.mtimeMs}:${st.size}`;
+    const id = `${enc}:${file}`;
+    const hit = assetCache.get(id);
+    if (hit && hit.key === key) return hit.body;
+    const body = compress(fs.readFileSync(file), enc, 'max');
+    if (assetCache.size > 400) assetCache.clear();
+    assetCache.set(id, { key, body });
+    return body;
+  } catch {
+    return null;
+  }
 }
 
 const server = http.createServer(
