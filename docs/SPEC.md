@@ -118,6 +118,27 @@ Server → client events: `{type:'state', sessions}` on connect, then granular:
 `action:<sessionId>`, `progress:<sessionId>`.
 Client → server: none (use REST). Reconnect = full state replay.
 
+Fast resume (wire v2, opt-in per socket — `server/lib/wire-resume.ts`,
+`web/src/lib/resume.js`): `/__ws?wire=2[&z=1][&since=<rev>&boot=<id>][&open=<sid>&seq=<n>&clip=<c>]`.
+- v2 sessions (replay, broadcasts, `GET /__api/sessions?wire=2`) drop what the
+  rail never renders: `claude.capabilities.skills/mcpServers` → `counts`,
+  `claude.mcp.servers` → `{sig, count}`, `claude.mcpLoaded` → `{at, count}`,
+  `changesExplanations` → `changesExplained {mode: generatedAt}`. The open
+  session's come from `GET /__api/sessions/:id?fields=changesExplanations,claude.capabilities`.
+- The replay carries `{v:2, rev, boot}`; every session-scoped broadcast carries
+  `wrev`. Reconnecting with `since`+`boot` gets `{delta:true, sessions:[changed], deleted:[ids]}`
+  (listeners/folders/triggers/pending whole); an unknown boot or a too-old
+  cursor gets the full replay. `open`+`seq` adds `{chat:{sessionId, since, events}}`
+  — the open chat's gap (≤300 events, else the client refills it over REST).
+- `z=1`: frames ≥4KB go out as one binary gzip frame (Bun's `ws` shim never
+  negotiates permessage-deflate). REST JSON and the web bundle are gzip/br when
+  the request asks for it (`Vary: Accept-Encoding`).
+- No params = the old v1 wire, unchanged — an old cockpit against a new host
+  keeps working, and a new cockpit treats a replay without `v` as an old host
+  (full merge + REST list, REST chat gap fill).
+- Measure it: `bun scripts/bench-resume.ts --root <checkout> --label <name>`
+  (isolated host on a copy of the state, Slow-4G shaping proxy, phone profile).
+
 ## Claude process manager (server/claude.js)
 
 - Spawn: `claude --input-format stream-json --output-format stream-json --verbose

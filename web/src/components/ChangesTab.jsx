@@ -4,6 +4,8 @@ import {
   MessageSquareIcon, MoreHorizontalIcon, RotateCwIcon, ScaleIcon, ShrinkIcon, TriangleAlertIcon, WandSparklesIcon, XIcon,
 } from 'lucide-react';
 import { api } from '../lib/api.js';
+import { useStore, changesExplanationsOf, ensureChangesExplanations } from '../lib/store.js';
+import { explanationsKey } from '../lib/resume.js';
 import { toastError, toastSuccess } from '../lib/toast.js';
 import { defaultChangesMode, explanationSwitchOffer, newestExplanation, changesQuery, loadDefaultBase, saveDefaultBase, filterBaseRefs } from '../lib/changesMode.js';
 import { Truncate } from './Truncate.jsx';
@@ -322,7 +324,13 @@ export default function ChangesTab({ session, active }) {
 
   // Explanations are stored per-mode on the server (changesExplanations:
   // { uncommitted, pr }). Show the one for the mode currently being viewed.
-  const explanations = session.changesExplanations || {};
+  // RESUME: list payloads carry only their stamps (changesExplained); this
+  // session's are fetched on demand and re-fetched when a stamp moves.
+  useStore(); // re-render when the fetched explanations land
+  const explLoaded = changesExplanationsOf(session); // null = still loading
+  const explanations = explLoaded || {};
+  const explKey = explanationsKey(session);
+  useEffect(() => { ensureChangesExplanations(session); }, [session.id, explKey]); // eslint-disable-line react-hooks/exhaustive-deps
   const expl = explanations[changesMode] || null;
   const explMatches = !!expl; // expl is, by construction, for the current mode
   const features = Array.isArray(expl?.features) ? expl.features : [];
@@ -338,11 +346,12 @@ export default function ChangesTab({ session, active }) {
   const changesModeRef = useRef(changesMode);
   changesModeRef.current = changesMode;
   useEffect(() => {
+    if (explLoaded === null) return; // not loaded yet — arriving is not "new"
     const offer = explanationSwitchOffer(explanations, changesModeRef.current, lastExpl.current);
     lastExpl.current = newestExplanation(explanations)?.generatedAt || null;
     if (offer) setSwitchOffer(offer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [explanations.work?.generatedAt, explanations.uncommitted?.generatedAt, explanations.pr?.generatedAt]);
+  }, [explLoaded === null, explanations.work?.generatedAt, explanations.uncommitted?.generatedAt, explanations.pr?.generatedAt]);
   // A manual mode switch (by the user, or by accepting the offer) makes any
   // pending offer for that mode moot.
   useEffect(() => { if (switchOffer?.mode === changesMode) setSwitchOffer(null); }, [changesMode, switchOffer]);

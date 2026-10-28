@@ -422,7 +422,7 @@ function CapBody({ caps, session, initialTab, onClose, onPickCommand }) {
   const codex = normalizeEngine(session?.engine) === 'codex';
   const { codexVersion } = useModels();
   // P4-2: codex has no init report — a thread id means it ran; account/plan come from the accounts store.
-  const started = codex ? !!session?.claude?.sessionId : !!(caps.commands?.length || caps.slashCommands?.length || caps.mcpServers?.length || caps.counts?.commands);
+  const started = codex ? !!session?.claude?.sessionId : !!(caps.commands?.length || caps.slashCommands?.length || caps.mcpServers?.length || caps.counts?.commands || caps.counts?.mcpServers);
   const codexAccount = codex ? sessionAccounts(session, accounts).account : null;
   return (
     <div
@@ -453,8 +453,8 @@ function CapBody({ caps, session, initialTab, onClose, onPickCommand }) {
           {tabs.map(([id, labelKey]) => {
             const label = labelKey ? t(labelKey) : 'MCP';
             const count = {
-              mcp: caps.mcpServers?.length,
-              skills: caps.skills?.length,
+              mcp: caps.mcpServers?.length ?? caps.counts?.mcpServers,
+              skills: caps.skills?.length ?? caps.counts?.skills,
               tools: caps.tools?.length,
               agents: agents.length || undefined,
               commands: caps.commands?.length || caps.slashCommands?.length,
@@ -522,7 +522,7 @@ function CapBody({ caps, session, initialTab, onClose, onPickCommand }) {
                     [t('dialogs.infoPermissionMode'), 'bypassPermissions'],
                     [t('dialogs.infoAccount'), codexAccount?.email || codexAccount?.label],
                     [t('dialogs.infoPlan'), codexAccount?.plan],
-                    [t('dialogs.infoMcpServers'), caps.mcpServers?.length],
+                    [t('dialogs.infoMcpServers'), caps.mcpServers?.length ?? caps.counts?.mcpServers],
                   ]
                 : [
                     [t('dialogs.infoModel'), caps.model],
@@ -531,9 +531,9 @@ function CapBody({ caps, session, initialTab, onClose, onPickCommand }) {
                     [t('dialogs.infoAccount'), caps.account?.email],
                     [t('dialogs.infoOrganization'), caps.account?.organization],
                     [t('dialogs.infoPlan'), caps.account?.subscriptionType],
-                    [t('dialogs.infoMcpServers'), caps.mcpServers?.length],
+                    [t('dialogs.infoMcpServers'), caps.mcpServers?.length ?? caps.counts?.mcpServers],
                     [t('dialogs.infoTools'), caps.tools?.length],
-                    [t('dialogs.infoSkills'), caps.skills?.length],
+                    [t('dialogs.infoSkills'), caps.skills?.length ?? caps.counts?.skills],
                     [t('dialogs.infoCommands'), caps.commands?.length || caps.slashCommands?.length],
                   ]
               ).map(([k, v]) => (

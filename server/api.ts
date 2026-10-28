@@ -13,6 +13,8 @@ import { skillDir, NAME_RE as SKILL_NAME_RE } from './skills.js';
 import { updateScreenConfig, updateAuthConfig, updateDefaultEngine, defaultEngine } from './lib/config.js';
 import { syncComposioKey } from './lib/mcp-servers.js';
 import { auth, canReadFullList } from './auth.js';
+import { COMPRESS_MIN, compress, pickEncoding } from './lib/http-compress.js';
+import { WIRE_V2, slimHeavy } from './lib/wire-resume.js';
 import * as screens from './screenshots.js';
 import * as artifacts from './artifacts.js';
 import { shareTokens } from './share-token.js';
@@ -537,8 +539,36 @@ function json(
   body: unknown,
   status: number = 200
 ): void {
+  const text = JSON.stringify(body);
+  // RESUME: gzip/br for anything sizeable (the session list was 570KB raw on a
+  // ~90-session host). Only when the caller asked for it — see http-compress.ts.
+  if (text !== undefined && text.length >= COMPRESS_MIN) {
+    const enc = pickEncoding((res as any).req?.headers?.['accept-encoding']);
+    const packed = enc ? compress(text, enc) : null;
+    if (packed) {
+      res.writeHead(status, { 'content-type': 'application/json', 'content-encoding': enc!, vary: 'Accept-Encoding' });
+      res.end(packed);
+      return;
+    }
+    res.writeHead(status, { 'content-type': 'application/json', vary: 'Accept-Encoding' });
+    res.end(text);
+    return;
+  }
   res.writeHead(status, { 'content-type': 'application/json' });
-  res.end(JSON.stringify(body));
+  res.end(text);
+}
+
+// `a,b.c` → {id, a, b:{c}} — top-level keys and one level of nesting.
+function pickFields(s: Record<string, any>, list: string): Record<string, any> {
+  const out: Record<string, any> = { id: s.id };
+  for (const f of list.split(',').map((x) => x.trim()).filter(Boolean).slice(0, 16)) {
+    const [a, b] = f.split('.');
+    if (!a || a === '__proto__' || b === '__proto__') continue;
+    if (!b) { if (s[a] !== undefined) out[a] = s[a]; continue; }
+    const v = s[a]?.[b];
+    if (v !== undefined) out[a] = { ...(out[a] || {}), [b]: v };
+  }
+  return out;
 }
 
 const notFound = (
@@ -6298,9 +6328,13 @@ export async function handle(
       // workers' result.summary capped. Full detail: GET /__api/sessions/:id,
       // or ?full=1 for bearer/internal callers (host-mcp list_sessions — masters
       // read child results from it); browsers always get the slim form.
+      // RESUME: ?wire=2 (a current cockpit) also drops the fields the rail never
+      // renders (wire-resume.ts slimHeavy); the open session's come on demand.
       const archived = u.searchParams.get('archived') === 'true';
       const full = u.searchParams.get('full') === '1' && canReadFullList((req as any).auth ?? null);
-      return json(res, full ? state.listSessions({ archived }) : state.listSessionsForWire({ archived }));
+      if (full) return json(res, state.listSessions({ archived }));
+      const list = state.listSessionsForWire({ archived });
+      return json(res, Number(u.searchParams.get('wire')) >= WIRE_V2 ? list.map(slimHeavy) : list);
     }
     // The ticket launcher's plan panel: the worktree, branch and (reserved) port a
     // `provision` launch will get. Re-post with the returned `reservation` to keep
@@ -6470,6 +6504,10 @@ export async function handle(
     const sub = parts.slice(3).join('/');
 
     if (!sub) {
+      // RESUME: ?fields=changesExplanations,claude.capabilities — just the heavy
+      // parts the cockpit fetches on demand for the OPEN session (an old host
+      // ignores the param and returns everything, which the client also reads).
+      if (m === 'GET' && u.searchParams.get('fields')) return json(res, pickFields(s, u.searchParams.get('fields')!));
       if (m === 'GET') return json(res, s);
       if (m === 'PATCH') {
         const body = (await readBody(req)) as any;

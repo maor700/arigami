@@ -5,6 +5,7 @@
 // correct); an opt-in AI pass adds per-skill summaries and inferred secondary
 // edges, clearly marked as suggested.
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useStore, fullCapabilities, ensureFullCapabilities } from '../lib/store.js';
 import Md from './Md.jsx';
 
 // B24: SKILL.md starts with YAML frontmatter (name/description/triggers…) — metadata the
@@ -732,7 +733,10 @@ export default function SkillsView({ session, onClose }) {
     }
   };
 
-  const sessionSkills = session?.claude?.capabilities?.skills || [];
+  // RESUME: list payloads drop caps.skills (counts only) — the full caps come on demand.
+  useStore(); // re-render when the full caps land
+  useEffect(() => { if (session?.claude?.capabilities?.slim) ensureFullCapabilities(session); }, [session?.id, session?.claude?.sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
+  const sessionSkills = fullCapabilities(session)?.skills || [];
   const analysis = analysisResp?.analysis || null;
   const aiSummary = selected ? analysis?.summaries?.[selected] : null;
 

@@ -1,7 +1,7 @@
 import { Suspense, lazy, useEffect, useRef, useState } from 'react';
 import VaultAutoFill from './components/VaultAutoFill.jsx';
 import { api } from './lib/api.js';
-import { useStore, loadChat, setAttentionHandler, needsAttention, hasOpenScreenRequest, interruptSession, restartSession, getState, screenPanelOpen, closeScreenTakeover } from './lib/store.js';
+import { useStore, loadChat, setOpenSession, setAttentionHandler, needsAttention, hasOpenScreenRequest, interruptSession, restartSession, getState, screenPanelOpen, closeScreenTakeover } from './lib/store.js';
 import { usePrefs, setPrefs, getPrefs, setTermOverride } from './lib/prefs.js';
 import { useIsDesktop } from './lib/useMedia.js';
 import { isVncInputTarget } from './lib/useScreenConnection.js';
@@ -310,13 +310,18 @@ function Cockpit() {
   // NOTE: this can't be an early `return` here — every hook below still has
   // to run on every render (Rules of Hooks), so the branch happens at the
   // bottom, right before the final JSX return.
-  const { sessions, chats, chatLoaded, conn, reconnecting, config, pending } = storeState;
+  const { sessions, chats, chatLoaded, conn, reconnecting, syncing, config, pending } = storeState;
   const prefs = usePrefs();
   // Seed each view flag from the URL hash so a deep link / refresh lands on the
   // right page. The two sync effects below keep hash ↔ state aligned thereafter.
   // B11: the host's `/__host/?session=<id>` links resolve like `#/session/<id>`.
   const initial = parseLocation(window.location);
-  const [selectedId, setSelectedId] = useState(initial.view === 'session' ? initial.id : null);
+  const [selectedId, setSelectedId] = useState(() => {
+    const id = initial.view === 'session' ? initial.id : null;
+    setOpenSession(id); // RESUME: known before the first replay lands (deep link)
+    return id;
+  });
+  useEffect(() => { setOpenSession(selectedId); }, [selectedId]);
   const [launcher, setLauncher] = useState(initial.view === 'launcher' ? { mode: initial.mode } : null); // null | {mode:'ticket'|'empty'|'trigger'}
   const [previewTicket, setPreviewTicket] = useState(initial.view === 'ticket' ? initial.id : null); // ticket id shown full-pane (pending preview)
   const [settingsOpen, setSettingsOpen] = useState(initial.view === 'settings');
@@ -1119,13 +1124,14 @@ function Cockpit() {
             </span>
           </div>
         )}
-        {conn !== 'open' && (
-          <div className="absolute top-2 end-3 z-40 inline-flex items-center gap-1.5 rounded-md border border-border bg-popover px-2 py-1 text-xs text-muted-foreground shadow-pop" data-conn-state={conn}>
-            <span className="size-1.5 rounded-full bg-err" aria-hidden="true" />
+        {(conn !== 'open' || syncing) && (
+          <div className="absolute top-2 end-3 z-40 inline-flex items-center gap-1.5 rounded-md border border-border bg-popover px-2 py-1 text-xs text-muted-foreground shadow-pop" data-conn-state={conn !== 'open' ? conn : 'syncing'}>
+            <span className={`size-1.5 rounded-full ${conn === 'open' ? 'bg-warn' : 'bg-err'}`} aria-hidden="true" />
             {/* CHATWS: once the link was up, both the retry wait and the attempt read
                 "reconnecting…" — "host offline" is misleading when it is the PHONE
-                that lost its network. */}
-            {reconnecting ? t('chrome.conn.reconnecting') : conn === 'connecting' ? t('chrome.conn.connecting') : t('chrome.conn.offline')}
+                that lost its network. RESUME: the screen under it is the cached one;
+                the pill stays until the replay + the open chat's gap have landed. */}
+            {reconnecting || syncing ? t('chrome.conn.reconnecting') : conn === 'connecting' ? t('chrome.conn.connecting') : t('chrome.conn.offline')}
           </div>
         )}
         {/* The keep-alive pool: the visible session plus the last few visited,
