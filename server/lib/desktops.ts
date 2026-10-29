@@ -29,6 +29,7 @@ import { subscribe } from '../bus.js';
 import { ARIGAMI_DIR } from './instance.js';
 import * as state from '../state.js';
 import { auth } from '../auth.js';
+import { sweepShm, shmHeadroom, X11VNC_SHM_NEED } from './shm-sweep.js';
 
 export interface DesktopInfo {
   display: string; // ':100'
@@ -189,6 +190,43 @@ function spawnShell(display: string, label: string, opts: { which: (bin: string)
   return procs;
 }
 
+// ---- x11vnc and SysV shared memory (shm-sweep.ts) ----------------------------
+/** Room for x11vnc's MIT-SHM polling? When short, sweep the dead segments first; still short → poll without it. */
+function vncShmArgs(): string[] {
+  const room = shmHeadroom();
+  if (room === null || room >= X11VNC_SHM_NEED) return [];
+  sweepShm(60);
+  const after = shmHeadroom();
+  if (after === null || after >= X11VNC_SHM_NEED) return [];
+  console.warn(`[desktops] only ${after} shared-memory segments left (kernel.shmmni) — starting x11vnc with -noshm`);
+  return ['-noshm'];
+}
+
+/** The tail of a child's stderr: x11vnc says why it quit there, even with -quiet. */
+function stderrTail(p: ChildProcess): () => string {
+  let buf = '';
+  p.stderr?.on('data', (d) => { buf = (buf + String(d)).slice(-4000); });
+  return () => buf;
+}
+
+const SHM_FAILED = /shmget|No space left on device/i;
+
+/** A clear reason for an x11vnc that never listened, instead of the bare timeout. */
+function vncFailure(e: Error, tail: string): Error {
+  if (SHM_FAILED.test(tail)) return new Error(`x11vnc could not get shared memory (shmget failed: the SysV segment limit, kernel.shmmni, is used up) — ${e.message}`);
+  const last = tail.trim().split('\n').slice(-2).join(' ').slice(0, 300);
+  return new Error(last ? `${e.message} — x11vnc: ${last}` : e.message);
+}
+
+/** Start the periodic sweep of segments killed desktops left behind (Linux; once at boot, then every 15 minutes). */
+let sweeper: ReturnType<typeof setInterval> | null = null;
+export function startShmSweeper(): void {
+  if (sweeper || process.platform !== 'linux') return;
+  sweepShm();
+  sweeper = setInterval(() => sweepShm(), 15 * 60_000);
+  sweeper.unref?.();
+}
+
 async function spawnDesktop(sessionId: string): Promise<DesktopInfo> {
   const { display, vncPort } = await allocateFree();
   const displayNum = display.slice(1);
@@ -217,15 +255,28 @@ async function spawnDesktop(sessionId: string): Promise<DesktopInfo> {
     '-localhost', '-shared', '-forever', '-noxdamage', '-quiet',
     ...(cfg.screen.vncPassword ? ['-passwd', cfg.screen.vncPassword] : ['-nopw']),
   ];
-  const x11vnc = spawn('x11vnc', vncArgs, { stdio: ['ignore', 'ignore', 'pipe'] });
-  supervise(x11vnc, `desktop:${sessionId}:x11vnc`);
-  try {
-    await waitForPort(vncPort, '127.0.0.1', 5000);
-  } catch (e) {
-    killTree(xvfb.pid);
-    killTree(x11vnc.pid);
-    for (const p of extras) killTree(p.pid);
-    throw e;
+  // Out of shared memory → x11vnc quits at once; one more try without MIT-SHM rather than no desktop.
+  let shm = vncShmArgs();
+  let x11vnc!: ChildProcess;
+  for (;;) {
+    x11vnc = spawn('x11vnc', [...vncArgs, ...shm], { stdio: ['ignore', 'ignore', 'pipe'] });
+    supervise(x11vnc, `desktop:${sessionId}:x11vnc`);
+    const tail = stderrTail(x11vnc);
+    try {
+      await waitForPort(vncPort, '127.0.0.1', 5000);
+      break;
+    } catch (e) {
+      killTree(x11vnc.pid);
+      if (!shm.length && SHM_FAILED.test(tail())) {
+        console.warn(`[desktops] x11vnc for ${sessionId} found no shared memory — retrying with -noshm`);
+        sweepShm(60);
+        shm = ['-noshm'];
+        continue;
+      }
+      killTree(xvfb.pid);
+      for (const p of extras) killTree(p.pid);
+      throw vncFailure(e as Error, tail());
+    }
   }
 
   const forget = () => { const c = alive.get(sessionId); if (c?.xvfb === xvfb || c?.x11vnc === x11vnc) alive.delete(sessionId); };
@@ -367,7 +418,9 @@ export async function ensureGlobalDesktop(opts: GlobalDesktopOpts = {}): Promise
     '-display', display, '-rfbport', String(vncPort),
     '-localhost', '-shared', '-forever', '-noxdamage', '-quiet',
     ...(pw ? ['-passwd', pw] : ['-nopw']),
+    ...(opts.spawnFn ? [] : vncShmArgs()),
   ], { stdio: ['ignore', 'ignore', 'pipe'] });
+  const vncTail = stderrTail(x11vnc);
   supervise(x11vnc, 'desktop:global:x11vnc');
   globalProcs.push(x11vnc);
   if (x11vnc.pid) pids.push(x11vnc.pid);
@@ -376,7 +429,7 @@ export async function ensureGlobalDesktop(opts: GlobalDesktopOpts = {}): Promise
   } catch (e) {
     for (const p of globalProcs) killTree(p.pid);
     globalProcs.length = 0;
-    return { started: false, reason: `x11vnc did not come up: ${(e as Error).message}` };
+    return { started: false, reason: `x11vnc did not come up: ${vncFailure(e as Error, vncTail()).message}` };
   }
   // Only a desktop this process started gets a wallpaper (and never under a test's spawnFn): one somebody else runs
   // keeps whatever background its owner gave it.

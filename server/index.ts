@@ -557,7 +557,7 @@ server.listen(cfg.port, cfg.bind, () => {
   // Shared :99 desktop (spec §7.3): default instance only, no-op when the
   // display is already up (legacy unit) or Xvfb/x11vnc are missing.
   import('./lib/desktops.js')
-    .then((m: any) => m.ensureGlobalDesktop())
+    .then((m: any) => { m.startShmSweeper(); return m.ensureGlobalDesktop(); })
     .then((r: any) => console.log(r?.started ? `[host] global desktop up on ${r.display} (vnc :${r.vncPort})` : `[host] global desktop not started: ${r?.reason}`))
     .then(() => seedOwnerChrome())
     .catch((e: any) => console.error('[host] global desktop failed:', e?.message));
