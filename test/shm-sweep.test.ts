@@ -33,5 +33,6 @@ test('spawnDesktop checks the headroom first, retries without MIT-SHM when x11vn
   expect(src).toContain('let shm = vncShmArgs();');
   expect(src).toMatch(/SHM_FAILED\.test\(tail\(\)\)[\s\S]{0,200}shm = \['-noshm'\]/);
   expect(src).toContain('throw vncFailure(e as Error, tail());');
+  expect(src).toContain("x11vnc.on('exit', () => reapShmOf(x11vnc.pid));");
   expect(fs.readFileSync(path.resolve(import.meta.dir, '../server/index.ts'), 'utf8')).toContain('m.startShmSweeper()');
 });

@@ -42,10 +42,11 @@ const pidAlive = (pid: number) => {
   try { process.kill(pid, 0); return true; } catch (e) { return (e as NodeJS.ErrnoException).code === 'EPERM'; }
 };
 
-/** Remove our orphaned segments. Returns how many went. */
-export function sweepShm(minAgeSec = 600): number {
+/** Remove our orphaned segments — all of them, or only those one (dead) process created. Returns how many went. */
+export function sweepShm(minAgeSec = 600, creator?: number): number {
   if (process.platform !== 'linux' || typeof process.getuid !== 'function') return 0;
-  const dead = orphanSegments(readSegments(), { uid: process.getuid(), nowSec: Math.floor(Date.now() / 1000), minAgeSec, alive: pidAlive });
+  const dead = orphanSegments(readSegments(), { uid: process.getuid(), nowSec: Math.floor(Date.now() / 1000), minAgeSec, alive: pidAlive })
+    .filter((s) => creator === undefined || s.cpid === creator);
   if (!dead.length) return 0;
   // ipcrm takes many ids at once (one already gone fails only itself); chunks keep the argv small
   for (let i = 0; i < dead.length; i += 200) {
@@ -74,3 +75,20 @@ export function shmHeadroom(): number | null {
 
 /** x11vnc's polling needs ~42 segments; below this much headroom a desktop starts with -noshm instead. */
 export const X11VNC_SHM_NEED = 64;
+
+/**
+ * After a desktop's x11vnc was told to stop: once it is gone (killTree escalates to SIGKILL after 1.5s), remove the
+ * segments it created and didn't free — only its own, so nothing waits for the periodic sweep.
+ */
+export function reapShmOf(pid: number | undefined | null, waitMs = 5000): void {
+  if (!pid || process.platform !== 'linux') return;
+  const until = Date.now() + waitMs;
+  const tick = () => {
+    if (pidAlive(pid)) {
+      if (Date.now() < until) setTimeout(tick, 250).unref?.();
+      return; // still running: not ours to judge — the periodic sweep has it if it dies later
+    }
+    sweepShm(0, pid);
+  };
+  setTimeout(tick, 250).unref?.();
+}

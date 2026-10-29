@@ -29,7 +29,7 @@ import { subscribe } from '../bus.js';
 import { ARIGAMI_DIR } from './instance.js';
 import * as state from '../state.js';
 import { auth } from '../auth.js';
-import { sweepShm, shmHeadroom, X11VNC_SHM_NEED } from './shm-sweep.js';
+import { sweepShm, shmHeadroom, reapShmOf, X11VNC_SHM_NEED } from './shm-sweep.js';
 
 export interface DesktopInfo {
   display: string; // ':100'
@@ -267,6 +267,7 @@ async function spawnDesktop(sessionId: string): Promise<DesktopInfo> {
       break;
     } catch (e) {
       killTree(x11vnc.pid);
+      reapShmOf(x11vnc.pid);
       if (!shm.length && SHM_FAILED.test(tail())) {
         console.warn(`[desktops] x11vnc for ${sessionId} found no shared memory — retrying with -noshm`);
         sweepShm(60);
@@ -282,6 +283,8 @@ async function spawnDesktop(sessionId: string): Promise<DesktopInfo> {
   const forget = () => { const c = alive.get(sessionId); if (c?.xvfb === xvfb || c?.x11vnc === x11vnc) alive.delete(sessionId); };
   xvfb.on('exit', forget);
   x11vnc.on('exit', forget);
+  // however it ends — released, crashed, OOM-killed — what it didn't free goes now, not at the next sweep
+  x11vnc.on('exit', () => reapShmOf(x11vnc.pid));
   alive.set(sessionId, { xvfb, x11vnc, extras });
 
   state.patchSession(sessionId, { metadata: { screen: { display, vncPort } } });
@@ -322,6 +325,7 @@ export function releaseDesktop(sessionId: string): void {
   if (procs) {
     killTree(procs.xvfb.pid);
     killTree(procs.x11vnc.pid);
+    reapShmOf(procs.x11vnc.pid);
     for (const p of procs.extras) killTree(p.pid);
     alive.delete(sessionId);
   }
@@ -422,6 +426,7 @@ export async function ensureGlobalDesktop(opts: GlobalDesktopOpts = {}): Promise
   ], { stdio: ['ignore', 'ignore', 'pipe'] });
   const vncTail = stderrTail(x11vnc);
   supervise(x11vnc, 'desktop:global:x11vnc');
+  x11vnc.on?.('exit', () => reapShmOf(x11vnc.pid));
   globalProcs.push(x11vnc);
   if (x11vnc.pid) pids.push(x11vnc.pid);
   try {
