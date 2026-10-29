@@ -1951,6 +1951,8 @@ export async function callExtTool(ext: string, tool: string, args: Record<string
         const text = String((r?.content || []).map((c: any) => c.text || '').join('\n'));
         if (r?.isError && empty) { lastErr = text || `no tool "${tool}" on ${key}`; continue; }
         if (r?.isError) return { ok: false, error: text || 'tool error' };
+        const failed = (await import('./lib/ext-result.js')).failureOf(r?.content, r?.structuredContent);
+        if (failed) return { ok: false, error: failed };
         return { ok: true, result: r?.structuredContent ?? r?.content ?? r };
       } finally {
         try { await client.close(); } catch {}
