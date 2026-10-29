@@ -91,3 +91,44 @@ test('ext-mcp: an agent calling a sender files a request instead of sending', as
     host.stop(true);
   }
 }, 30_000);
+
+test('ext-mcp: a tool that returns { error } fails, and missing required arguments are refused before a card', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'outbound-err-'));
+  const mod = path.join(dir, 'tools', 'module.js');
+  fs.mkdirSync(path.dirname(mod), { recursive: true });
+  fs.writeFileSync(
+    mod,
+    `export const tools = [
+       { name: 'send_note', inputSchema: { type: 'object', properties: { target: { type: 'string' } }, required: ['target'] },
+         run: async () => ({ error: 'channel_not_found' }) },
+     ];`
+  );
+  const seen: any[] = [];
+  const host = Bun.serve({ port: 0, fetch: async (req) => (seen.push(new URL(req.url).pathname), Response.json({ pending: true })) });
+  const base = { ARIGAMI_URL: `http://127.0.0.1:${host.port}`, ARIGAMI_TOKEN: 't', EXT_NAME: 'notes', EXT_DIR: dir };
+  try {
+    const failed = await mcpCallRaw({ ...base, EXT_HOST_CALL: '1' }, mod, 'send_note', { target: 'C1' });
+    expect(failed.isError).toBe(true);
+    expect(failed.text).toContain('channel_not_found');
+    const missing = await mcpCallRaw({ ...base, ARIGAMI_SESSION_ID: 'sess_abc' }, mod, 'send_note', { to: 'C1' });
+    expect(missing.isError).toBe(true);
+    expect(missing.text).toContain('target');
+    expect(seen).toEqual([]); // no card was filed for a call that cannot work
+  } finally {
+    host.stop(true);
+  }
+}, 30_000);
+
+async function mcpCallRaw(env: Record<string, string>, modulePath: string, tool: string, args: Record<string, unknown>) {
+  const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
+  const { StdioClientTransport } = await import('@modelcontextprotocol/sdk/client/stdio.js');
+  const transport = new StdioClientTransport({ command: 'bun', args: [path.join(ROOT, 'mcp/ext-mcp.js'), modulePath], env: { ...(process.env as Record<string, string>), ...env } });
+  const client = new Client({ name: 't', version: '0' }, { capabilities: {} });
+  await client.connect(transport);
+  try {
+    const r: any = await client.callTool({ name: tool, arguments: args });
+    return { isError: !!r.isError, text: String((r.content || []).map((c: any) => c.text).join('')) };
+  } finally {
+    await client.close();
+  }
+}

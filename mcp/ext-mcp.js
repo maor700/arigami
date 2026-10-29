@@ -114,6 +114,20 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
   })),
 }));
 
+// A tool that returns `{ error }` instead of throwing has still failed: report it
+// as an error, or a host call (the owner's Send) would read it as delivered.
+function reportsError(result) {
+  return !!result && typeof result === 'object' && result.ok !== true && result.error != null && result.error !== '';
+}
+
+// The arguments the tool's schema requires, checked before anything runs — and
+// before an outbound card is filed, so the owner never approves a call that
+// cannot work.
+function missingArgs(tool, args) {
+  const required = Array.isArray(tool.inputSchema?.required) ? tool.inputSchema.required : [];
+  return required.filter((name) => args[name] === undefined || args[name] === null);
+}
+
 server.setRequestHandler(CallToolRequestSchema, async (req) => {
   const tool = TOOLS.find((t) => t.name === req.params.name);
   if (!tool)
@@ -122,6 +136,9 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
   const meta = SHARED ? req.params._meta || {} : {};
   const callSession = SHARED ? String(meta['arigami/session'] || '') : SESSION_ID;
   const callCtx = SHARED ? makeCtx(String(meta['arigami/token'] || '')) : ctx;
+  const missing = missingArgs(tool, req.params.arguments || {});
+  if (missing.length)
+    return { content: [{ type: 'text', text: `missing required argument(s): ${missing.join(', ')}` }], isError: true };
   if (callSession && !HOST_CALL && isOutbound(tool.name)) {
     try {
       const r = await callCtx.host.api('POST', `/__api/sessions/${callSession}/outbound`, {
@@ -137,7 +154,10 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
   }
   try {
     const result = await tool.run(req.params.arguments || {}, callCtx);
-    return { content: [{ type: 'text', text: typeof result === 'string' ? result : JSON.stringify(result ?? { ok: true }) }] };
+    return {
+      content: [{ type: 'text', text: typeof result === 'string' ? result : JSON.stringify(result ?? { ok: true }) }],
+      ...(reportsError(result) ? { isError: true } : {}),
+    };
   } catch (e) {
     return { content: [{ type: 'text', text: `error: ${e?.message || e}` }], isError: true };
   }
