@@ -30,7 +30,7 @@ test.skipIf(!chrome)('the host finds the sign-in fields, fills only them on the 
   expect(o.inspectKeys.sort()).toEqual(['fields', 'origin', 'tab']);
   // VAULT2: a named field — by the words of its label, or the focused one; one marked element, one origin, once
   // the card learns WHERE the value goes (tag, type, label words) and is never automatic (pref 'ask' whatever the site's sign-in choice)
-  expect(o.cardReq).toEqual({ kind: 'field', fields: ['card_number'], entry: 'Dana', host: '127.0.0.1', pref: 'ask', page: { tag: 'input', type: 'text', label: 'Card number' } });
+  expect(o.cardReq).toEqual({ kind: 'field', fields: ['card_number'], entry: 'Dana', host: '127.0.0.1', pref: 'ask', page: { tag: 'input', type: 'text', label: 'Card number', id: 'cn', name: 'cardNumber' } });
   expect(o.cardFill).toMatchObject({ filled: ['card_number'], submitted: false });
   expect(o.cardSeen).toEqual({ cn: '4111 1111 1111 1111', cvv: '', exp: '', other: '', marks: 0 });
   expect(o.cardReuse).toMatch(/no longer open/);
@@ -65,4 +65,18 @@ test.skipIf(!chrome)('the host finds the sign-in fields, fills only them on the 
   expect(o.oracle).toEqual({ value: null, valueDigit: null, note: null, number: null, label: true, button: true, placeholder: true });
   expect(o.fieldMoved).toMatch(/no longer on 127\.0\.0\.1 — nothing was filled/);
   expect(o.fieldMovedValue).toBe('');
+  // VAULT3: an expiry's month / year into two selects — the card learns the part and the select's name, never a value
+  expect(o.monthReq).toEqual({ part: 'month', fields: ['expiry'], page: { tag: 'select', type: 'select-one', label: 'Expiry month', id: 'cmbExpiryMonth', name: 'cmbExpiryMonth' } });
+  expect(o.monthFill).toMatchObject({ filled: ['expiry'] });
+  expect(o.yearFill).toMatchObject({ filled: ['expiry'] });
+  expect(o.selected).toEqual(['3', '27']); // "03" ↔ option "3"; "2027" ↔ option "27"
+  expect(o.bogus).toMatchObject({ status: 409 });
+  expect(o.bogus.message).toMatch(/none of the 2 options of cmbBogus matches the saved expiry year — nothing was chosen/);
+  expect(o.bogus.message).not.toContain('2027');
+  expect(o.bogusValue).toBe('a');
+  expect(o.selectHidden).toEqual([['rgba(0, 0, 0, 0)', 'none', '-1', '1'], ['rgba(0, 0, 0, 0)', 'none', '-1', '1']]);
+  expect(o.selectOracle).toEqual({ byText03: null, byText2027: null, guardOnSelect: true, guardOnButton: false, gate: 'filled', payButton: true });
+  expect(o.selectPixelsSame).toBe(true);
+  expect(o.plainSelectPixelsSame).toBe(false);
+  expect(o.paid).toEqual({ n: '', m: '11', y: '29' });
 }, 60000);

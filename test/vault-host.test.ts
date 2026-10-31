@@ -285,6 +285,10 @@ test('vault_fill without a page: one blocked reason and what to do, no card; a s
   expect(r.json.next).toMatch(/browser_open/);
   expect((await call('POST', `/__api/sessions/${sid}/vault/fill`, 'session', { site: 'bank.example', field: '' })).json.reason).toMatch(/field required/);
   expect((await call('POST', `/__api/sessions/${sid}/vault/fill`, 'session', { site: 'bank.example', field: 'Title' })).json.reason).toMatch(/field required/);
+  // VAULT3: the part is one of value | month | year — refused before any page is looked at
+  const bad = await call('POST', `/__api/sessions/${sid}/vault/fill`, 'session', { site: 'bank.example', field: 'expiry', part: 'day' });
+  expect(bad.json).toMatchObject({ status: 'blocked', field: 'expiry' });
+  expect(bad.json.reason).toMatch(/part is one of value \| month \| year/);
   expect((await call('GET', `/__api/sessions/${sid}`, 'person')).json.credentialRequest ?? null).toBeNull();
 });
 

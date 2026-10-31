@@ -1063,19 +1063,20 @@ export async function createArigamiServer(env = process.env) {
         'Have the host put ONE saved detail from the owner\'s vault into a field of the page in your browser — you never see the value. ' +
         'Click into the field first (browser_click), or pass target: words of its label / name / placeholder, then vault_fill({site, field}). ' +
         'The owner sees on a card which page field it goes into and taps (a named field is never automatic); the host types it into that one field on that host, draws the field as dots, and answers {status:"filled"} — then press the page\'s own button yourself and check with browser_snapshot. ' +
-        'A secret is never put into a search box or a free-text area (blocked) — aim at the field made for it. After you submit, the site may show the value back on its next page; that is the site\'s doing, not a value for you to repeat. ' +
+        'A secret is never put into a search box or a free-text area (blocked) — aim at the field made for it. A <select> (an expiry month / year) gets the matching option, with part:"month" | "year" on the saved expiry. A filled field is hidden and off-limits afterwards: browser_click / browser_type refuse it. After you submit, the site may show the value back on its next page; that is the site\'s doing, not a value for you to repeat. ' +
         'Only in YOUR session browser: while you are driving a sign-in in the owner\'s Chrome it is refused (finish with sign_in({site, done:true}) first, or hand the step to the owner with sign_in({site, human})). ' +
         '{status:"manual", next} — the owner types it themselves (request_screen); {status:"blocked"|"cancelled"|"expired", reason} — stop and report that one reason. ' +
         'The field names: vault_fields({site}); a missing one: vault_collect.',
       inputSchema: obj({
         site: { type: 'string', description: 'The site the detail belongs to (a domain or url) — it is filled only on that site' },
         field: { type: 'string', description: 'The saved field\'s name (username | password | otp, or a name from vault_fields / vault_collect)' },
+        part: { type: 'string', enum: ['value', 'month', 'year'], description: 'Which part of the saved value: value (default, the whole of it) | month | year — for an expiry saved as MM/YY (or MM/YYYY, YYYY-MM) going into two selects; the vault splits it (month two digits, year four), the host picks the matching option' },
         entry: { type: 'string', description: 'Which entry (account) when the owner has several for the site: its title or id from vault_fields' },
         target: { type: 'string', description: 'Words of the page field\'s label / name / placeholder, instead of clicking into it first' },
         reason: { type: 'string', description: 'One short line the owner sees on the card' },
         ...SID_PROP,
       }, ['site', 'field']),
-      run: (a) => blockingCall(`/__api/sessions/${sid(a)}/vault/fill`, { site: a.site, field: a.field, ...(a.entry ? { entry: a.entry } : {}), ...(a.target ? { target: a.target } : {}), ...(a.reason ? { reason: a.reason } : {}) }),
+      run: (a) => blockingCall(`/__api/sessions/${sid(a)}/vault/fill`, { site: a.site, field: a.field, ...(a.part ? { part: a.part } : {}), ...(a.entry ? { entry: a.entry } : {}), ...(a.target ? { target: a.target } : {}), ...(a.reason ? { reason: a.reason } : {}) }),
     },
     {
       name: 'browser_logins',

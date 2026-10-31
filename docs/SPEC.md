@@ -225,7 +225,7 @@ request_screen({prompt, reason?, hint?, session_id?}) → {ok, takenOver, note?}
 vault_fields({site}) → {site, entries:[{id, title, origin, fields:[{name, type}]}]}     // GET /sessions/:id/vault/fields?site=
 vault_collect({site, fields:[{name, type?, label?, required?}], title?, reason?})       // POST /sessions/:id/vault/collect (blocking)
    → {status:'saved', host, entry:{id?, title?, fields:[names]}, next} | {status:'cancelled'|'expired', host, reason} | {status:'blocked', reason}
-vault_fill({site, field, entry?, target?, reason?})                                     // POST /sessions/:id/vault/fill (blocking)
+vault_fill({site, field, part?: 'value'|'month'|'year', entry?, target?, reason?})     // POST /sessions/:id/vault/fill (blocking); part = an expiry's month/year into a <select>, split in the vault worker
    → {status:'filled', field, host, where:'session-browser', next} | {status:'manual', next} | {status:'blocked'|'cancelled'|'expired', reason}
    // session browser only: refused (blocked + next) while the session drives a sign-in in the owner's Chrome
    // owner only: PUT/GET /__api/vault/catalog (names-only catalog the cockpit uploads after each save)

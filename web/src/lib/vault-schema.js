@@ -101,6 +101,30 @@ export function entryAllowedFor(entryOrigin, requestOrigin, field) {
   return !!a && a === b && entryOrigin.startsWith('https://') === requestOrigin.startsWith('https://');
 }
 
+export const FIELD_PARTS = ['value', 'month', 'year'];
+
+/**
+ * VAULT3 (pure, runs in the vault worker only): the part of a saved expiry an agent asked for. Accepts MM/YY, MM/YYYY,
+ * M/YY, MM-YY, MM.YY, MMYY, YYYY-MM and YYYY/MM; month → two digits, year → four (a two-digit year is 20YY). Returns
+ * null for anything else — the caller says "not in a known format" and never the value.
+ */
+export function expiryPart(value, part) {
+  if (!part || part === 'value') return typeof value === 'string' ? value : null;
+  if (part !== 'month' && part !== 'year') return null;
+  const s = String(value ?? '').trim();
+  let mm = null, yy = null;
+  let m;
+  if ((m = /^(\d{1,2})\s*[\/\-. ]\s*(\d{2}|\d{4})$/.exec(s))) { mm = m[1]; yy = m[2]; }
+  else if ((m = /^(\d{4})\s*[\/\-. ]\s*(\d{1,2})$/.exec(s))) { yy = m[1]; mm = m[2]; }
+  else if ((m = /^(\d{2})(\d{2})$/.exec(s))) { mm = m[1]; yy = m[2]; }
+  else return null;
+  const month = Number(mm);
+  if (!(month >= 1 && month <= 12)) return null;
+  const year = yy.length === 2 ? 2000 + Number(yy) : Number(yy);
+  if (!(year >= 2000 && year <= 2099)) return null;
+  return part === 'month' ? String(month).padStart(2, '0') : String(year);
+}
+
 /** Does an entry (as `describe` returns it) match the agent's hint — its id, its title or its username? */
 export function entryMatches(e, hint) {
   const h = String(hint || '').trim().toLowerCase();

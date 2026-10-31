@@ -78,6 +78,8 @@ export const en = {
   'vault.fieldCard.private': 'Only you see this: it goes straight into that one field on the page, drawn as dots there. The agent and the chat never get it — but once the agent submits the form, the site may show the value back on its next page.',
   'vault.fieldCard.fillFrom': 'Fill {field} from {entry}',
   'vault.fieldCard.into': 'Into the page field “{label}” ({kind})',
+  'vault.part.month': 'month',
+  'vault.part.year': 'year',
   'vault.fieldCard.save': 'Keep it in the vault ({entry})',
   'vault.type.text': 'text',
   'vault.type.secret': 'secret',

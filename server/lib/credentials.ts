@@ -95,9 +95,18 @@ export interface CredentialRequest {
   spec?: FieldSpec[];
   /** 'form': the entry the details belong to (an account name); 'field': the entry the agent asked for, if it named one. */
   entry?: string;
-  /** 'field': the page element the value goes into, so the owner sees WHERE on the card — its tag, type and label words. */
-  page?: { tag: string; type: string; label: string };
+  /** 'field': the page element the value goes into, so the owner sees WHERE on the card — its tag, type, id/name and label words. */
+  page?: { tag: string; type: string; label: string; id?: string; name?: string };
+  /** 'field': which part of the saved value goes in — the whole value, or an expiry's month / full year (split in the vault worker, never here). */
+  part?: FieldPart;
 }
+
+// VAULT3: a saved expiry ("MM/YY") lands in two selects on most payment forms. The agent names the part; the owner's
+// vault worker does the split (month → two digits, year → four); the host only learns "month" / "year" and types what
+// the worker sends into the one marked element — a <select> gets the option that matches, hidden afterwards.
+export type FieldPart = 'value' | 'month' | 'year';
+export const FIELD_PARTS: FieldPart[] = ['value', 'month', 'year'];
+export const fieldPart = (raw: unknown): FieldPart | null => (raw === undefined || raw === null || raw === '' ? 'value' : FIELD_PARTS.includes(raw as FieldPart) ? (raw as FieldPart) : null);
 
 interface Pending {
   sessionId: string;
@@ -453,7 +462,7 @@ export function targetJs(requestId: string, target: string | null): string {
     const label = (labelOf(el).trim() || el.getAttribute('aria-label') || el.placeholder || el.name || el.id || '').replace(/\\s+/g, ' ').trim().slice(0, 80);
     // a search box or a free-text area prints what it gets back on the page: not a place for a secret
     const searchy = type === 'search' || (el.getAttribute('role') || '').toLowerCase() === 'searchbox' || /\\bsearch\\b|חיפוש|חפש/.test(words(el));
-    return { origin: location.origin, found: true, tag: el.tagName.toLowerCase(), type, label, searchy, textarea: el.tagName === 'TEXTAREA' };
+    return { origin: location.origin, found: true, tag: el.tagName.toLowerCase(), type, label, searchy, textarea: el.tagName === 'TEXTAREA', id: String(el.id || '').slice(0, 80), name: String(el.name || '').slice(0, 80) };
   })()`;
 }
 
@@ -471,8 +480,32 @@ export function fillFieldJs(origin: string, requestId: string, value: string): s
     if (!el) return { error: 'gone' };
     el.removeAttribute('data-arigami-fill');
     const value = ${JSON.stringify(value)};
+    // the element is marked as holding a vault value: the browser tools refuse to click, type into or match it from now on
+    const hide = (props) => { for (const [k, v] of props) el.style.setProperty(k, v, 'important'); el.setAttribute('data-arigami-filled', '1'); };
+    if (el.tagName === 'SELECT') {
+      // a <select>: the option that matches what the worker sent — by value or text, as the same number ("03" ↔ "3"),
+      // or a year by its last two digits ("2027" ↔ "27"); the selection is never reported back, only that one matched
+      const norm = (s) => String(s ?? '').trim();
+      const digits = (s) => /^\\d+$/.test(s);
+      const opts = [...el.options];
+      const want = norm(value);
+      const match = opts.find((o) => norm(o.value) === want || norm(o.text) === want)
+        || (digits(want) ? opts.find((o) => (digits(norm(o.value)) && Number(norm(o.value)) === Number(want)) || (digits(norm(o.text)) && Number(norm(o.text)) === Number(want))) : null)
+        || (digits(want) && want.length === 4 ? opts.find((o) => norm(o.value) === want.slice(2) || norm(o.text) === want.slice(2)) : null)
+        || (digits(want) && want.length === 2 ? opts.find((o) => (/^\\d{4}$/.test(norm(o.value)) && norm(o.value).slice(2) === want) || (/^\\d{4}$/.test(norm(o.text)) && norm(o.text).slice(2) === want)) : null);
+      if (!match) return { error: 'nomatch', options: opts.length };
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'selectedIndex').set.call(el, match.index);
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+      // the chosen option's text is drawn transparent, the control cannot be opened by a click or reached by Tab (a
+      // native dropdown would show the selection highlighted); the value stays for the page to submit
+      hide([['color', 'transparent'], ['-webkit-text-fill-color', 'transparent'], ['pointer-events', 'none']]);
+      el.setAttribute('tabindex', '-1');
+      el.blur();
+      return { ok: true };
+    }
     el.focus();
-    const proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : el.tagName === 'SELECT' ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
+    const proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
     const setter = Object.getOwnPropertyDescriptor(proto, 'value').set;
     setter.call(el, value);
     el.dispatchEvent(new Event('input', { bubbles: true }));
@@ -481,11 +514,8 @@ export function fillFieldJs(origin: string, requestId: string, value: string): s
     // input or textarea (drawn like a password field), and for the input types Chrome does not dot (number, date…) an
     // invisible value — in both the value stays in the field for the page to submit
     const t = (el.type || '').toLowerCase();
-    if (el.tagName === 'INPUT' && /^(number|date|month|week|time|datetime-local|range)$/.test(t)) {
-      el.style.setProperty('color', 'transparent', 'important');
-      el.style.setProperty('-webkit-text-fill-color', 'transparent', 'important');
-      el.style.setProperty('caret-color', 'transparent', 'important');
-    } else if (el.tagName !== 'SELECT') el.style.setProperty('-webkit-text-security', 'disc', 'important');
+    if (/^(number|date|month|week|time|datetime-local|range)$/.test(t)) hide([['color', 'transparent'], ['-webkit-text-fill-color', 'transparent'], ['caret-color', 'transparent']]);
+    else hide([['-webkit-text-security', 'disc']]);
     return { ok: true };
   })()`;
 }
@@ -501,7 +531,7 @@ export type FieldOutcome =
  */
 export async function requestField(
   sessionId: string,
-  o: { site?: string; field: string; entry?: string; target?: string; reason?: string }
+  o: { site?: string; field: string; entry?: string; target?: string; reason?: string; part?: FieldPart }
 ): Promise<FieldOutcome> {
   let tab: ChromeTab;
   try {
@@ -510,7 +540,7 @@ export async function requestField(
     return { status: 'error', error: (e as Error).message, next: 'open the page that has the field with browser_open / browser_navigate, click into the field (or pass target), then call vault_fill again' };
   }
   const requestId = 'cred_' + crypto.randomBytes(9).toString('base64url');
-  let r: { origin: string; found: boolean; why?: string; tag?: string; type?: string; label?: string; searchy?: boolean; textarea?: boolean };
+  let r: { origin: string; found: boolean; why?: string; tag?: string; type?: string; label?: string; searchy?: boolean; textarea?: boolean; id?: string; name?: string };
   try {
     r = await evalOn(tab, targetJs(requestId, o.target || null));
   } catch (e) {
@@ -534,7 +564,8 @@ export async function requestField(
   const request: CredentialRequest = {
     // a named field is never filled without a tap: the sign-in card's "auto" choice for this origin does not reach here
     requestId, at: new Date().toISOString(), origin, host, fields: [o.field], pref: 'ask', kind: 'field',
-    page: { tag: String(r.tag || ''), type: String(r.type || ''), label: String(r.label || '') },
+    page: { tag: String(r.tag || ''), type: String(r.type || ''), label: String(r.label || ''), ...(r.id ? { id: String(r.id) } : {}), ...(r.name ? { name: String(r.name) } : {}) },
+    ...(o.part && o.part !== 'value' ? { part: o.part } : {}),
     ...(o.entry ? { entry: String(o.entry).slice(0, 120) } : {}),
     ...(o.reason ? { reason: String(o.reason).slice(0, 200) } : {}),
   };
@@ -548,9 +579,11 @@ async function fillField(sessionId: string, requestId: string, p: Pending, value
   if (typeof value !== 'string') throw new FillError(`the card was for ${JSON.stringify(name)}, and no value for it was given`, 400);
   const tab = (await listTabs(sessionId)).find((t) => t.id === p.tabId && t.webSocketDebuggerUrl);
   if (!tab) throw new FillError('the tab with the field was closed', 410);
-  const r = (await evalOn(tab, fillFieldJs(p.origin, requestId, value))) as { error?: string; ok?: boolean };
+  const r = (await evalOn(tab, fillFieldJs(p.origin, requestId, value))) as { error?: string; ok?: boolean; options?: number };
   if (r?.error === 'origin') throw new FillError(`the tab is no longer on ${hostOf(p.origin)} — nothing was filled`);
   if (r?.error === 'gone') throw new FillError('the field is no longer on the page — nothing was filled', 410);
+  // a <select> with no option for the saved value: nothing is chosen, and nothing about the value is said
+  if (r?.error === 'nomatch') throw new FillError(`none of the ${r.options ?? 0} options of ${p.request.page?.name || p.request.page?.id || 'the select'} matches the saved ${name}${p.request.part && p.request.part !== 'value' ? ` ${p.request.part}` : ''} — nothing was chosen`, 409);
   pending.delete(requestId);
   settle(requestId, 'filled');
   return { filled: [name], submitted: false, origin: p.origin };
