@@ -22,6 +22,20 @@ const PAGES: Record<string, string> = {
     <label for="exp">Expiry</label><input id="exp" name="exp"><input id="cvv" type="password" placeholder="CVV"><input id="other" name="other">
     <label for="notes">Notes</label><textarea id="notes" name="notes"></textarea>
     <input id="num" type="number" aria-label="Amount"><input id="dob" type="date" aria-label="Birth date"><input id="q" type="search" placeholder="Search"><button type="submit">Verify</button></form>`,
+  // VAULT3: a payment form with the real target's public shape — a card number input, a CVV, and the expiry as two selects
+  '/pay': `<form id="pay" onsubmit="event.preventDefault();window.paid={n:document.querySelector('#txtNumber').value,m:document.querySelector('#cmbExpiryMonth').value,y:document.querySelector('#cmbExpiryYear').value};document.title='paid'">
+    <label for="txtNumber">Card number</label><input id="txtNumber" name="txtNumber">
+    <label for="txtCVV">CVV</label><input id="txtCVV" name="txtCVV" type="password">
+    <label for="cmbExpiryMonth">Expiry month</label><select id="cmbExpiryMonth" name="cmbExpiryMonth"><option value="">--</option>${Array.from({ length: 12 }, (_, i) => `<option value="${i + 1}">${String(i + 1).padStart(2, '0')}</option>`).join('')}</select>
+    <label for="cmbExpiryYear">Expiry year</label><select id="cmbExpiryYear" name="cmbExpiryYear"><option value="">--</option>${Array.from({ length: 6 }, (_, i) => `<option value="${26 + i}">${2026 + i}</option>`).join('')}</select>
+    <label for="cmbBogus">Bogus</label><select id="cmbBogus" name="cmbBogus"><option value="a">A</option><option value="b">B</option></select>
+    <label for="cmbPlain">Plain</label><select id="cmbPlain" name="cmbPlain"><option value="x">X</option><option value="y">Y</option></select>
+    <label for="txtExpiry">Expiry (text)</label><input id="txtExpiry" name="txtExpiry">
+    <label for="cmbRetry">Retry</label><select id="cmbRetry" name="cmbRetry"><option value="">--</option><option value="26">2026</option><option value="27">2027</option></select>
+    <label for="cmbDis">Disabled</label><select id="cmbDis" name="cmbDis"><option value="">--</option><option value="26" disabled>2026</option><optgroup label="old" disabled><option value="28">2028</option></optgroup><option value="27">2027</option></select>
+    <label for="cmbY03">Years with 2003</label><select id="cmbY03" name="cmbY03"><option value="">--</option><option value="2003">2003</option><option value="2027">2027</option></select>
+    <label for="cmbAmb">Ambiguous</label><select id="cmbAmb" name="cmbAmb"><option value="">--</option><option value="3">March</option><option value="03">03</option></select>
+    <button id="paySubmit" type="submit">Pay</button></form>`,
 };
 const server = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: (req) => new Response(`<!doctype html><title>t</title>${PAGES[new URL(req.url).pathname] || ''}`, { headers: { 'content-type': 'text/html' } }) });
 const base = `http://127.0.0.1:${server.port}`;
@@ -168,7 +182,8 @@ try {
     valueDigit: await ev(ba.findClickableJs('4')),
     note: await ev(ba.findClickableJs('SECRET-NOTE')),
     number: await ev(ba.findClickableJs('1234')),
-    label: (await ev(ba.findClickableJs('Card number'))) !== null,
+    label: (await ev(ba.findClickableJs('Card number'))) !== null, // the label of a FILLED field: skipped (F-1)
+    labelFree: (await ev(ba.findClickableJs('Expiry'))) !== null, // the label of a field not filled: still a target
     button: (await ev(ba.findClickableJs('Verify'))) !== null,
     placeholder: (await ev(ba.findClickableJs('Search'))) !== null,
   };
@@ -178,6 +193,141 @@ try {
   await go(`${other}/card`);
   out.fieldMoved = await cr.fill(sid, f3.request.requestId, { exp: '01/31' }).then(() => 'filled', (e) => e.message);
   out.fieldMovedValue = await ev("document.querySelector('#exp').value");
+
+  // ---- VAULT3: an expiry's month / year into two selects -------------------------------------------------------------
+  await go(`${base}/pay`);
+  cr.writeCatalog({ entries: [{ id: 't2', title: 'Test', origin: base, fields: [{ name: 'card_number', type: 'number' }, { name: 'cvv', type: 'secret' }, { name: 'expiry', type: 'secret' }] }] });
+  const ba2 = await import('../server/lib/browser-actions.ts');
+  const fM = await cr.requestField(sid, { site: '127.0.0.1', field: 'expiry', part: 'month', target: 'cmbExpiryMonth' });
+  out.monthReq = fM.status === 'pending' ? { part: fM.request.part, page: fM.request.page, fields: fM.request.fields } : fM;
+  if (fM.status !== 'pending') throw new Error('no month request: ' + JSON.stringify(fM));
+  // the worker sends the PART only ("03"); the host picks the option that is the same number
+  out.monthFill = await cr.fill(sid, fM.request.requestId, { expiry: '03' });
+  const fY = await cr.requestField(sid, { site: '127.0.0.1', field: 'expiry', part: 'year', target: 'expiry year' });
+  if (fY.status !== 'pending') throw new Error('no year request: ' + JSON.stringify(fY));
+  out.yearFill = await cr.fill(sid, fY.request.requestId, { expiry: '2027' }); // options are "26".."31" — matched by the last two digits
+  out.selected = await ev("[document.querySelector('#cmbExpiryMonth').value, document.querySelector('#cmbExpiryYear').value]");
+  // no option for the saved part: nothing is chosen, and the error names the select and the count, never the value
+  const fBog = await cr.requestField(sid, { field: 'expiry', part: 'year', target: 'bogus' });
+  if (fBog.status !== 'pending') throw new Error('no bogus request: ' + JSON.stringify(fBog));
+  out.bogus = await cr.fill(sid, fBog.request.requestId, { expiry: '2027' }).then(() => 'filled', (e) => ({ message: e.message, status: e.status }));
+  out.bogusValue = await ev("document.querySelector('#cmbBogus').value");
+  // F-5: a miss leaves the request open and the field marked — the next try on the same card lands
+  const fR = await cr.requestField(sid, { field: 'expiry', part: 'year', target: 'retry' });
+  if (fR.status !== 'pending') throw new Error('no retry request: ' + JSON.stringify(fR));
+  out.retryMiss = await cr.fill(sid, fR.request.requestId, { expiry: '2031' }).then(() => 'filled', (e) => e.status);
+  out.retryMarked = await ev("document.querySelector('#cmbRetry').getAttribute('data-arigami-fill') !== null");
+  out.retryHit = await cr.fill(sid, fR.request.requestId, { expiry: '2027' }).then((r) => r.filled, (e) => e.message);
+  out.retryValue = await ev("document.querySelector('#cmbRetry').value");
+  // F-4: a disabled option, or one inside a disabled optgroup, is never chosen (it would not be submitted)
+  const fD = await cr.requestField(sid, { field: 'expiry', part: 'year', target: 'disabled' });
+  if (fD.status !== 'pending') throw new Error('no disabled request: ' + JSON.stringify(fD));
+  out.disabledOpt = await cr.fill(sid, fD.request.requestId, { expiry: '2026' }).then(() => 'filled', (e) => ({ message: e.message, status: e.status }));
+  out.disabledGroup = await cr.fill(sid, fD.request.requestId, { expiry: '2028' }).then(() => 'filled', (e) => e.status);
+  out.disabledOk = await cr.fill(sid, fD.request.requestId, { expiry: '2027' }).then((r) => r.filled, (e) => e.message);
+  out.disabledValue = await ev("document.querySelector('#cmbDis').value");
+  // F-3: the 2↔4-digit rule is a YEAR rule — a month "03" never picks "2003"; two candidates are no choice
+  const fY03 = await cr.requestField(sid, { field: 'expiry', part: 'month', target: 'years with 2003' });
+  if (fY03.status !== 'pending') throw new Error('no y03 request: ' + JSON.stringify(fY03));
+  out.monthNot2003 = await cr.fill(sid, fY03.request.requestId, { expiry: '03' }).then(() => 'filled', (e) => ({ message: e.message, status: e.status }));
+  out.monthNot2003Value = await ev("document.querySelector('#cmbY03').value");
+  const fAmb = await cr.requestField(sid, { field: 'expiry', part: 'month', target: 'ambiguous' });
+  if (fAmb.status !== 'pending') throw new Error('no ambiguous request: ' + JSON.stringify(fAmb));
+  out.ambiguous = await cr.fill(sid, fAmb.request.requestId, { expiry: '03' }).then(() => 'filled', (e) => ({ message: e.message, status: e.status }));
+  out.ambiguousValue = await ev("document.querySelector('#cmbAmb').value");
+  out.reasonLine = fAmb.request.reason;
+  // F-2: an older cockpit that ignores `part` sends the WHOLE expiry — the host splits it in this route's memory into
+  // the part that was asked for (never a whole expiry in a month field); garbage is refused before the page is touched,
+  // the field stays empty and the message carries no value
+  const fS = await cr.requestField(sid, { field: 'expiry', part: 'month', target: 'txtExpiry' });
+  if (fS.status !== 'pending') throw new Error('no txtExpiry request: ' + JSON.stringify(fS));
+  out.staleShape = await cr.fill(sid, fS.request.requestId, { expiry: 'next year' }).then(() => 'filled', (e) => ({ message: e.message, status: e.status }));
+  out.staleShapeValue = await ev("document.querySelector('#txtExpiry').value");
+  out.staleShapeOk = await cr.fill(sid, fS.request.requestId, { expiry: '03/27' }).then((r) => r.filled, (e) => e.message);
+  out.staleShapeOkValue = await ev("document.querySelector('#txtExpiry').value");
+  const fS2 = await cr.requestField(sid, { field: 'expiry', part: 'year', target: 'cmbExpiryYear' });
+  if (fS2.status !== 'pending') throw new Error('no year-shape request: ' + JSON.stringify(fS2));
+  out.staleShapeSelect = await cr.fill(sid, fS2.request.requestId, { expiry: '27' }).then(() => 'filled', (e) => ({ message: e.message, status: e.status }));
+  out.staleShapeSelectValue = await ev("document.querySelector('#cmbExpiryYear').value");
+  out.staleWholeSelect = await cr.fill(sid, fS2.request.requestId, { expiry: '12/2028' }).then((r) => r.filled, (e) => e.message);
+  out.staleWholeSelectValue = await ev("document.querySelector('#cmbExpiryYear').value");
+  // put the year back to what the inert checks below expect
+  const fS3 = await cr.requestField(sid, { field: 'expiry', part: 'year', target: 'cmbExpiryYear' });
+  if (fS3.status !== 'pending') throw new Error('no year-restore request: ' + JSON.stringify(fS3));
+  await cr.fill(sid, fS3.request.requestId, { expiry: '2027' });
+  // hidden and off-limits: transparent text, no pointer events, not in the Tab order, marked; both selects
+  out.selectHidden = await ev("['#cmbExpiryMonth','#cmbExpiryYear'].map((s) => { const el = document.querySelector(s); const cs = getComputedStyle(el); return [cs.color, cs.pointerEvents, el.getAttribute('tabindex'), el.getAttribute('data-arigami-filled'), el.inert, el.hasAttribute('inert')]; })");
+  // F-1: the select is INERT — its <label>, a programmatic focus and real keys (what desktop_keyboard sends) can neither
+  // focus, change nor open it; the value is still what the owner approved, the pixels unchanged, the form still submits it
+  const labelCentre = await ev("(() => { const r = document.querySelector('label[for=\"cmbExpiryMonth\"]').getBoundingClientRect(); return [Math.round(r.x + r.width / 2), Math.round(r.y + r.height / 2)]; })()");
+  const page = (await cdp.listTabs(sid)).find((t) => t.type === 'page' && t.webSocketDebuggerUrl)!;
+  const key = async (k: string, code: string, vk: number) => {
+    for (const type of ['keyDown', 'keyUp']) await cdp.cdpCall(page.webSocketDebuggerUrl!, 'Input.dispatchKeyEvent', { type, key: k, code, windowsVirtualKeyCode: vk });
+  };
+  await ev('document.activeElement && document.activeElement.blur()');
+  await sleep(100);
+  const inertBefore = await cdp.pageScreenshot(sid);
+  out.inertLabelByText = await ev(ba2.findClickableJs('Expiry month'));
+  out.inertLabelGuard = await ev(ba2.clickGuardJs(labelCentre[0], labelCentre[1]));
+  await cdp.pageClick(sid, labelCentre[0], labelCentre[1]); // a real click on the label
+  await sleep(100);
+  out.inertAfterLabelClick = await ev("document.activeElement ? (document.activeElement.id || document.activeElement.tagName) : null");
+  await key('ArrowDown', 'ArrowDown', 40);
+  await key(' ', 'Space', 32);
+  await key('F4', 'F4', 115);
+  await ev("document.querySelector('#cmbExpiryMonth').focus()"); // programmatic focus
+  out.inertAfterFocus = await ev("document.activeElement ? (document.activeElement.id || document.activeElement.tagName) : null");
+  await key('ArrowDown', 'ArrowDown', 40);
+  await key(' ', 'Space', 32);
+  await ev("document.querySelector('label[for=\"cmbExpiryMonth\"]').click()"); // a scripted label click
+  await key('ArrowUp', 'ArrowUp', 38);
+  await sleep(150);
+  out.inertValueAfter = await ev("[document.querySelector('#cmbExpiryMonth').value, document.querySelector('#cmbExpiryYear').value]");
+  out.inertFocusAfter = await ev("document.activeElement ? (document.activeElement.id || document.activeElement.tagName) : null");
+  await ev('document.activeElement && document.activeElement.blur()');
+  await sleep(100);
+  out.inertPixelsSame = inertBefore.equals(await cdp.pageScreenshot(sid));
+  out.inertFormData = await ev("(() => { const fd = new FormData(document.querySelector('#pay')); return [fd.get('cmbExpiryMonth'), fd.get('cmbExpiryYear')]; })()");
+  // no oracle: the selects' option texts match nothing by click-text, the click guard refuses their spot, typing into a focused one is refused
+  const centre = (s: string) => ev(`(() => { const r = document.querySelector('${s}').getBoundingClientRect(); return [Math.round(r.x + r.width / 2), Math.round(r.y + r.height / 2)]; })()`);
+  const [mx, my] = await centre('#cmbExpiryMonth');
+  const [bx, by] = await centre('#paySubmit');
+  // the gate: an inert select cannot take the focus at all; a filled INPUT can, and typing into it is refused (reason 'filled')
+  const fN2 = await cr.requestField(sid, { site: '127.0.0.1', field: 'card_number', target: 'txtNumber' });
+  if (fN2.status !== 'pending') throw new Error('no txtNumber request: ' + JSON.stringify(fN2));
+  await cr.fill(sid, fN2.request.requestId, { card_number: '4111111111111111' });
+  await ev("document.querySelector('#txtNumber').focus()");
+  out.selectOracle = {
+    // option texts that exist only in the FILLED selects ('03' / '2027' also sit in the unfilled test selects, which stay clickable)
+    byText11: await ev(ba2.findClickableJs('11')),
+    byText2029: await ev(ba2.findClickableJs('2029')),
+    guardOnSelect: await ev(ba2.clickGuardJs(mx, my)),
+    guardOnButton: await ev(ba2.clickGuardJs(bx, by)),
+    gate: (await ba2.humanGate(sid)).reason || null,
+    payButton: (await ev(ba2.findClickableJs('Pay'))) !== null,
+  };
+  await ev('document.activeElement && document.activeElement.blur()');
+  // the pixels: a different month / year in the hidden selects renders the same screenshot; a plain select does not
+  await sleep(150);
+  const payA = await cdp.pageScreenshot(sid);
+  const fM2 = await cr.requestField(sid, { field: 'expiry', part: 'month', target: 'cmbExpiryMonth' });
+  if (fM2.status !== 'pending') throw new Error('no second month request');
+  await cr.fill(sid, fM2.request.requestId, { expiry: '11' });
+  const fY2 = await cr.requestField(sid, { field: 'expiry', part: 'year', target: 'cmbExpiryYear' });
+  if (fY2.status !== 'pending') throw new Error('no second year request');
+  await cr.fill(sid, fY2.request.requestId, { expiry: '2029' });
+  await ev('document.activeElement && document.activeElement.blur()');
+  await sleep(150);
+  const payB = await cdp.pageScreenshot(sid);
+  out.selectPixelsSame = payA.equals(payB);
+  await ev("document.querySelector('#cmbPlain').value = 'y'");
+  await sleep(150);
+  const payC = await cdp.pageScreenshot(sid);
+  out.plainSelectPixelsSame = payB.equals(payC);
+  // the page submits what was chosen
+  await ev("document.querySelector('#paySubmit').click()");
+  await sleep(200);
+  out.paid = await ev('window.paid');
 
   await go(`${base}/none`);
   out.none = await cr.request(sid, {});

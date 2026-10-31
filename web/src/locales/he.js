@@ -77,6 +77,8 @@ export const he = {
   'vault.fieldCard.private': 'רק אתה רואה את זה: הערך עובר ישר לשדה האחד הזה בדף ומוצג שם כנקודות. הסוכן והצ׳אט לא מקבלים אותו — אבל אחרי שהסוכן שולח את הטופס, האתר עשוי להציג את הערך בדף הבא שלו.',
   'vault.fieldCard.fillFrom': 'מלא {field} מ-{entry}',
   'vault.fieldCard.into': 'לשדה בדף “{label}” ({kind})',
+  'vault.part.month': 'חודש',
+  'vault.part.year': 'שנה',
   'vault.fieldCard.save': 'שמור בכספת ({entry})',
   'vault.type.text': 'טקסט',
   'vault.type.secret': 'סוד',

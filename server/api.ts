@@ -1546,18 +1546,22 @@ async function vaultFill(id: string, body: any): Promise<VaultFillOutcome> {
   if (!field) return { status: 'blocked', field: '', reason: `field required: the name of the saved detail (vault_fields({site}) lists them), up to ${cr.FIELD_NAME_MAX} characters` };
   const reason = String(body?.reason || '').slice(0, 200);
   const entry = body?.entry ? String(body.entry).slice(0, 120) : undefined;
+  // VAULT3: which part of the saved value — the whole of it, or an expiry's month / year (split by the owner's vault worker)
+  const part = cr.fieldPart(body?.part);
+  if (!part) return { status: 'blocked', field, reason: `part is one of ${cr.FIELD_PARTS.join(' | ')} (month / year split a saved expiry like MM/YY into two selects)` };
   const job = signInJobs.get(id);
   const where = si.vaultFillTarget({ signInRunning: !!job && !job.gcloud, holdsShared: sharedDesktop.get().holder?.sessionId === id, site: job?.site || null });
   if (where.target === 'refused') {
     console.log(`[vault] ${new Date().toISOString()} ${id} fill ${field} refused: owner Chrome is not a target for named values`);
     return { status: 'blocked', field, reason: where.reason, next: where.next };
   }
-  const out = await cr.requestField(id, { site: body?.site ? String(body.site) : undefined, field, entry, target: body?.target ? String(body.target).slice(0, 120) : undefined, reason });
+  const out = await cr.requestField(id, { site: body?.site ? String(body.site) : undefined, field, entry, target: body?.target ? String(body.target).slice(0, 120) : undefined, reason, part });
   if (out.status === 'error') return { status: 'blocked', field, reason: out.error, ...(out.next ? { next: out.next } : {}) };
   if (out.status === 'manual') return { status: 'manual', field, host: out.host, next: `the owner types ${out.host} details themselves: call request_screen (say which field, and where) and wait` };
   const req = out.request;
   state.patchSession(id, { credentialRequest: req });
-  if (req.pref !== 'auto') pushIntervention(id, 'action', `${req.host} asks for your ${field}` + (reason ? ` — ${reason}` : ''), 'waiting for your vault');
+  const what = part === 'value' ? field : `${field} (${part})`;
+  if (req.pref !== 'auto') pushIntervention(id, 'action', `${req.host} asks for your ${what}` + (reason ? ` — ${reason}` : ''), 'waiting for your vault');
   let settled: import('./lib/credentials.js').Settled;
   try {
     settled = await cr.waitSettled(req.requestId, SIGN_IN_WAIT_MS);
@@ -1565,7 +1569,7 @@ async function vaultFill(id: string, body: any): Promise<VaultFillOutcome> {
     if ((state.getSession(id) as any)?.credentialRequest?.requestId === req.requestId) state.patchSession(id, { credentialRequest: null });
   }
   if (settled === 'filled')
-    return { status: 'filled', field, host: req.host, where: 'session-browser', next: `the host put the ${field} into the field (nobody saw it; the field is drawn as dots from now on). Press the page's own button yourself and check with browser_snapshot.` };
+    return { status: 'filled', field, host: req.host, where: 'session-browser', next: `the host put the ${what} into the field (nobody saw it; the field is hidden from now on — do not click, type into or read it). Press the page's own button yourself and check with browser_snapshot.` };
   if (settled === 'manual') return { status: 'manual', field, host: req.host, next: `the owner types the ${field} themselves: call request_screen (say which field, and where) and wait` };
   cr.forget(req.requestId, settled === 'expired' ? 'expired' : 'cancel');
   if (settled === 'cancel') return { status: 'cancelled', field, host: req.host, reason: `the owner cancelled — do not ask for the ${field} again in this turn, and never in the chat` };

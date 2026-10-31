@@ -180,7 +180,10 @@ function FieldCardView({ sessionId, request }) {
   const name = isRole ? t(`vault.field.${field}`) : field;
   // WHERE on the page the value goes (the host read the element): the owner judges the target, not only the site
   const page = request.page || null;
-  const pageKind = page ? [page.tag, page.type].filter(Boolean).filter((x, i, a) => a.indexOf(x) === i).join(' · ') : '';
+  const pageKind = page ? [page.tag, page.type, page.name || page.id].filter(Boolean).filter((x, i, a) => a.indexOf(x) === i).join(' · ') : '';
+  // VAULT3: which PART of the saved value — an expiry's month or year (split in the vault worker, never shown here)
+  const part = request.part && request.part !== 'value' ? request.part : null;
+  const source = part ? `${name} · ${t(`vault.part.${part}`)}` : name;
 
   useEffect(() => {
     let alive = true;
@@ -195,7 +198,7 @@ function FieldCardView({ sessionId, request }) {
     try { await fn(); } catch (e) { setErr(errText(e)); setBusy(false); }
   };
   // no "remember this choice" here: a named field is never filled without a tap (the per-site auto choice is a sign-in's)
-  const base = { sessionId, requestId: request.requestId, origin: request.origin, field };
+  const base = { sessionId, requestId: request.requestId, origin: request.origin, field, ...(part ? { part } : {}) };
   const fillFrom = (m) => run(() => fillVaultField({ ...base, entryId: m.id }));
   const fillTyped = () => run(async () => {
     const keep = save && supported && field !== 'otp';
@@ -209,7 +212,7 @@ function FieldCardView({ sessionId, request }) {
   const shared = request.target === 'shared';
 
   return (
-    <CardFrame tone="accent" live data-credential-request={request.requestId} data-cred-kind="field" label={t('vault.fieldCard.title', { field: name, host: request.host })}>
+    <CardFrame tone="accent" live data-credential-request={request.requestId} data-cred-kind="field" data-cred-part={part || undefined} label={t('vault.fieldCard.title', { field: source, host: request.host })}>
       {request.reason && <Prose className="mt-2">{request.reason}</Prose>}
       {shared && <Prose dim className="mt-1" data-cred-shared>{t('vault.card.shared', { account: request.account || 'Chrome' })}</Prose>}
       {page && (
@@ -223,7 +226,7 @@ function FieldCardView({ sessionId, request }) {
         <div className="mt-2.5 flex flex-wrap items-center gap-2">
           {matches.map((m) => (
             <Btn key={m.id} variant="primary" disabled={busy} data-fill-from={m.title} onClick={() => fillFrom(m)}>
-              {t('vault.fieldCard.fillFrom', { field: name, entry: m.title || m.username })}{!m.exact && <span className="opacity-70"> · {new URL(m.origin).hostname}</span>}
+              {t('vault.fieldCard.fillFrom', { field: source, entry: m.title || m.username })}{!m.exact && <span className="opacity-70"> · {new URL(m.origin).hostname}</span>}
             </Btn>
           ))}
           <Btn variant="quiet" disabled={busy} onClick={() => setTyping(true)}>{t('vault.card.other')}</Btn>
@@ -394,7 +397,7 @@ export const CredentialCardDef = defineHostComponent({
   description: 'Host: request_credentials — fill a sign-in from the owner\'s vault, or hand it to take-over',
   props: loose({
     sessionId: z.string(),
-    request: loose({ requestId: str, origin: str, host: str, fields: any, reason: any, pref: any, target: any, account: any, kind: any, spec: any, entry: any, page: any }),
+    request: loose({ requestId: str, origin: str, host: str, fields: any, reason: any, pref: any, target: any, account: any, kind: any, spec: any, entry: any, page: any, part: any }),
   }),
   component: CredentialCardView,
 });

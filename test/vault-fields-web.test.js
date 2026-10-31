@@ -104,6 +104,28 @@ test('what is stored: only the types the protected flag would not say; names cle
   expect(schema.entryAllowedFor('https://bank.example', 'http://login.bank.example', 'password')).toBe(false);
   expect(schema.entryAllowedFor('https://bank.example', 'https://other.example', 'password')).toBe(false);
   expect(schema.entryAllowedFor('', 'https://bank.example', 'password')).toBe(false);
+  // VAULT3: the part of a saved expiry, split in the worker — month two digits, year four; anything else is null (no value in errors)
+  expect(schema.expiryPart('03/27', 'month')).toBe('03');
+  expect(schema.expiryPart('03/27', 'year')).toBe('2027');
+  expect(schema.expiryPart('3/27', 'month')).toBe('03');
+  expect(schema.expiryPart('12/2030', 'year')).toBe('2030');
+  expect(schema.expiryPart('12/2030', 'month')).toBe('12');
+  expect(schema.expiryPart('2028-05', 'month')).toBe('05');
+  expect(schema.expiryPart('2028-05', 'year')).toBe('2028');
+  expect(schema.expiryPart('2028/5', 'month')).toBe('05');
+  expect(schema.expiryPart('0729', 'year')).toBe('2029');
+  expect(schema.expiryPart(' 07 - 29 ', 'month')).toBe('07');
+  expect(schema.expiryPart('07.29', 'year')).toBe('2029');
+  expect(schema.expiryPart('13/27', 'month')).toBe(null);
+  expect(schema.expiryPart('00/27', 'month')).toBe(null);
+  expect(schema.expiryPart('03/2', 'year')).toBe(null);
+  expect(schema.expiryPart('03/1999', 'year')).toBe(null);
+  expect(schema.expiryPart('abc', 'month')).toBe(null);
+  expect(schema.expiryPart('', 'month')).toBe(null);
+  expect(schema.expiryPart('03/27', 'day')).toBe(null);
+  expect(schema.expiryPart('03/27', 'value')).toBe('03/27');
+  expect(schema.expiryPart('03/27')).toBe('03/27');
+  expect(schema.FIELD_PARTS).toEqual(['value', 'month', 'year']);
   const e = { id: 'e1', title: 'Dana', username: 'dana@example.com' };
   expect(schema.entryMatches(e, 'dana')).toBe(true);
   expect(schema.entryMatches(e, 'e1')).toBe(true);
@@ -174,6 +196,12 @@ test('one named field (vault_fill) renders WHERE it goes, a single dotted input,
   // a one-time code is never kept
   const otp = render(h(CredentialCard, { sessionId: 's1', request: { ...base, kind: 'field', fields: ['otp'] } }));
   expect(otp).not.toContain('Keep it in the vault');
+  // VAULT3: a part of a saved expiry into a select — the card names the part and the select (name), never a value
+  const month = render(h(CredentialCard, { sessionId: 's1', request: { ...base, kind: 'field', fields: ['expiry'], part: 'month', page: { tag: 'select', type: 'select-one', label: 'Expiry month', id: 'cmbExpiryMonth', name: 'cmbExpiryMonth' } } }));
+  expect(month).toContain('data-cred-part="month"');
+  expect(month).toContain('expiry · month for bank.example');
+  expect(month).toContain('Into the page field “Expiry month” (select · select-one · cmbExpiryMonth)');
+  expect(month).not.toMatch(/\b20\d\d\b|\b0[1-9]\/|\d\d\/\d\d/);
 });
 
 test('the Passwords page renders an unlocked vault\'s entries with their fields as dots — a value is never in the markup', async () => {

@@ -7,7 +7,7 @@
 import * as kdbxweb from 'kdbxweb';
 import { argon2id, argon2d } from 'hash-wasm';
 import { totpSpec, totp } from './totp.js';
-import { TYPES_FIELD, fieldsOf, kdbxKey, cleanName, cleanType, isProtectedType, typesToStore, parseTypes, catalogOf, entryMatches, entryAllowedFor } from './vault-schema.js';
+import { TYPES_FIELD, fieldsOf, kdbxKey, cleanName, cleanType, isProtectedType, typesToStore, parseTypes, catalogOf, entryMatches, entryAllowedFor, expiryPart } from './vault-schema.js';
 
 kdbxweb.CryptoEngine.setArgon2Impl((password, salt, memory, iterations, length, parallelism, type) =>
   (type === kdbxweb.CryptoEngine.Argon2TypeArgon2id ? argon2id : argon2d)({
@@ -298,7 +298,7 @@ const ops = {
    * `save` keeps on the entry it names (saveTo), the only entry of the site, or a new one. The value goes to the host's
    * fill route and nowhere else.
    */
-  async fillField({ sessionId, requestId, origin, field, entryId, value, save: keep, saveTo, title, remember, auto }) {
+  async fillField({ sessionId, requestId, origin, field, part, entryId, value, save: keep, saveTo, title, remember, auto }) {
     let v;
     if (entryId) {
       if (!db) throw new Error('the vault is locked');
@@ -311,10 +311,16 @@ const ops = {
       if (typeof value !== 'string' || !value) throw new Error('nothing to fill');
       v = value;
     }
+    // VAULT3: an expiry's month / year — split HERE, so the host and the agent only ever see the part that was asked for
+    let sent = v;
+    if (part && part !== 'value') {
+      sent = expiryPart(v, part);
+      if (sent === null) throw new Error(`the saved ${field} is not an expiry in a known format (MM/YY, MM/YYYY, YYYY-MM) — the ${part} cannot be taken from it`);
+    }
     const r = await fetch(`/__api/sessions/${encodeURIComponent(sessionId)}/credentials/fill`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ requestId, values: { [field]: v }, remember: !!remember, auto: !!auto }),
+      body: JSON.stringify({ requestId, values: { [field]: sent }, remember: !!remember, auto: !!auto }),
     });
     const out = await r.json().catch(() => ({}));
     if (!r.ok) throw Object.assign(new Error(out.error || `HTTP ${r.status}`), { status: r.status });
