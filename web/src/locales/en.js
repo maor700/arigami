@@ -75,7 +75,7 @@ export const en = {
   'vault.form.save': 'Save to vault',
   'vault.form.missing': 'Still missing: {fields}',
   'vault.fieldCard.title': '{field} for {host}',
-  'vault.fieldCard.private': 'Only you see this: it goes straight into that one field on the page. The agent and the chat never get it.',
+  'vault.fieldCard.private': 'Only you see this: it goes straight into that one field on the page, drawn as dots there. The agent and the chat never get it — but once the agent submits the form, the site may show the value back on its next page.',
   'vault.fieldCard.fillFrom': 'Fill {field} from {entry}',
   'vault.fieldCard.into': 'Into the page field “{label}” ({kind})',
   'vault.fieldCard.save': 'Keep it in the vault ({entry})',
