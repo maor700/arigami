@@ -192,6 +192,83 @@ The same vault and card fill it, with three differences:
   value.
 - TOTP: an entry's `otp` field (`otpauth://totp/…`) or `TOTP Seed` fills an `otp` field (`web/src/lib/totp.js`, RFC 6238).
 
+### As built (VAULT2) — named fields: a secure form, a field fill, a names-only catalog
+
+An entry holds more than a sign-in. The owner's details for a site — a card number and its expiry for a payment
+verification, an ID number, a customer code — are **named fields** on the same KDBX entry (KeePassXC shows them as
+additional attributes), each with a **type** that only shapes the cockpit's input (`secret` default, `text`, `multiline`,
+`number`, `date`, `email`, `phone`, `otp`). Names are free (any language, ≤ 64 chars; `Title`/`URL`/`Notes`/`Arigami …`
+are the entry's own). Values are memory-protected in the file unless the type is `text` or `multiline`; the types that the protected flag alone
+would not say live in one JSON field, `Arigami field types`. Several accounts for one site are several entries, told
+apart by title (and username). Entries that predate this keep working unchanged: `username` / `password` / `otp` are
+the standard keys under their agent names.
+
+Three tools, all riding with the `browser` family (`server/agent-policy.ts`), none of which ever returns a value:
+
+| Tool | What happens | What the model hears |
+|---|---|---|
+| `vault_fields({site})` | reads the **catalog** (below) for that site's registrable domain | entries: id, title, origin, `[{name, type}]` |
+| `vault_collect({site, fields:[{name,type?,label?}], title?, reason})` | a **secure form card** (`credentialRequest.kind = 'form'`): the owner types the values in the cockpit; the vault worker encrypts them into the entry (new or the one with that title) and uploads the ciphertext; the cockpit answers the card `saved` with the entry's id, title and field **names** | `{status:'saved', entry:{id,title,fields}}` / `cancelled` / `expired` |
+| `vault_fill({site, field, entry?, target?, reason})` | in the **session browser only**: the host marks the field the agent means (the focused one, or by `target` words of its label/name/placeholder) with the request id, puts a card up (`kind:'field'`), and on the owner's tap types that one value into the marked element only, after re-checking the origin in the same tick, then draws the field as dots. Nothing is submitted. **While the session drives a sign-in in the owner's Chrome** (lease held) the call is refused before any card or value (`vaultFillTarget`): the owner's Chrome has no DOM for the host to mask in. | `{status:'filled'}` / `manual` / `blocked` / `cancelled` / `expired` |
+
+- **The catalog** — `$ARIGAMI_DIR/user/vault/catalog.json` (0600, inside the ignored `vault/`): the cockpit uploads it
+  after every save and on every unlock (`PUT /__api/vault/catalog`, admin only), so entries from before VAULT2 are
+  known once the owner has unlocked the vault once. It is **names only**: ids, titles, origins and
+  `[{name,type}]`. The host projects it on the way in (`cleanCatalog`) so whatever shape arrives, a value or a username
+  cannot land in it. A session reads it per site: `GET /__api/sessions/:id/vault/fields?site=`.
+- **The card is the same card.** `credentialRequest` gained `kind`, `spec` and `entry`; a request with no `kind` is a
+  sign-in exactly as before. The host's own pending record stays authoritative; the fill route reads only the keys the
+  card announced (a sign-in's roles, or the one named field); a form card is never filled into a page (`400`), and
+  `saved` is accepted only for a form.
+- **Never automatic.** The per-site `auto` choice (made with "Remember" on a sign-in card) is a sign-in's: a named
+  field always takes the owner's tap (`pref` is `ask` on a field card, the card has no "remember", and
+  `VaultAutoFill` acts only on a request without a `kind`). A form is never automatic either.
+- **The card says where.** A field card carries `page: {tag, type, label}` read from the element the host marked, and
+  shows "Into the page field “Card number” (input · text) · bank.example" — the owner judges the target, not only the
+  site. A detail whose saved type is not plain text (secret, number, date, otp — or a name the catalog does not know)
+  is refused before any card when the target is a `<textarea>`, a `type=search` / `role=searchbox` input or a field whose
+  words say search: such fields echo their content back on the page.
+- **No oracle through clicks.** `browser_click({text})` no longer matches an input's or textarea's *value* (it used to:
+  `el.innerText || el.value`, a prefix oracle on anything the host had filled), and skips masked fields; labels,
+  buttons, placeholders and select options still match (pinned in `test/credentials-fill.test.js`).
+- **Host, not site.** The agent's `site` and `vault_fields({site})` are matched to the page's host exactly (`www.`
+  aside, `sameHost`) — no hand-written "same site" suffix list decides where a value may go or which entries are
+  listed. The sign-in card's legacy `registrable()` matching is unchanged for sign-ins.
+- **Masking by input type.** Text inputs and textareas are drawn as dots after a fill; `number`, `date`, `month`,
+  `week`, `time`, `datetime-local` and `range` inputs (Chrome draws no dots there) get a transparent text colour instead
+  — pinned in pixels for text, textarea, number and date. A `<select>` shows its option text and is not masked.
+- **Route-level allowlist.** `GET /sessions/:id/vault/fields` checks the agent's A3 policy (`toolAllowed`) itself, not
+  only through the MCP tool list and the PreToolUse hook.
+- **The owner's side** — Settings › Connections › Passwords lists each entry's fields by name and type; the owner can add
+  a field (name, type, value), replace one, **Reveal** / **Copy** a value (their own click, in their own tab, shown for
+  20 s), remove one, and add an entry by hand (site, account name, username). The worker's `reveal` op is the one op
+  that returns a value to the page script, and only on that click.
+- **What the agent can see afterwards — session browser.** `browser_snapshot` reads `body.innerText`, which never
+  includes an input's or a textarea's value. The pixels: the fill leaves the element drawn with
+  `-webkit-text-security: disc !important` — dots on screen, the value intact for the page to submit; two different
+  values of the same length render byte-identical screenshots (pinned in `test/credentials-fill.test.js`, where a plain
+  field is the control that does change). Not perfect, and said so: the dot count still tells the value's length; a page
+  script can remove the inline style; and, as in VAULT1, an agent with Bash can read the field over the session Chrome's
+  DevTools port. "Never read the field back" in the tool text is advice, not the guard.
+- **The owner's Chrome is not a target for named values.** The host has no DOM there, so a plain field would show the
+  value as the site draws it to the agent's next `desktop_screenshot({shared:true})`. Rather than promise a masking it
+  cannot do, `vault_fill` refuses while the session is driving a sign-in in the owner's Chrome (`vaultFillTarget`, pure,
+  pinned in `test/sign-in.test.ts`): no card goes up, no value moves, and the answer says what to do — finish the
+  sign-in (`sign_in({site, done:true})` brings the login into the session browser) and fill there, or hand a step only
+  the owner should type to them (`sign_in({site, human})`). The three sign-in roles in the owner's Chrome stay
+  `sign_in({fill})`'s, unchanged. Limit: a value the OWNER types on the shared desktop during a hand-over is on their
+  screen like any typing of theirs.
+- **Trust in `site`, and origin vs site.** The agent's `site` is a sanity check only: the origin that counts is the
+  page's own (`location.origin`, read in-page at the request and again in the same tick as the fill). The worker then
+  fills from an entry only if `entryAllowedFor` says so: a
+  **named field** needs the entry's origin to be exactly the page's (a sibling subdomain or `http://` is another origin
+  and gets nothing without the owner typing it there — which saves it for that origin); a **sign-in role** keeps the
+  sign-in card's legacy rule, the same registrable domain (`login.x.example` serves `x.example`) — legacy, not claimed
+  as isolation.
+- **Logs and chat lines** name the field and the host (`🔑 Typed your card_number for bank.example…`, `Saved 3
+  detail(s)…`); the fill and answer bodies are read and dropped, never echoed. `test/credentials.test.js`,
+  `test/sign-in.test.ts`, `test/vault-host.test.ts` and `test/credentials-fill.test.js` pin it.
+
 ## Order of work
 
 1. Phase 1: registry + overrides + Settings page + the `login` block (and the MCP rules moved in). Tests: composition

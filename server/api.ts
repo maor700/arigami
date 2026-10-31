@@ -1463,17 +1463,12 @@ async function signInSaved(id: string, raw: string, d: import('./lib/login-vault
   return { status: 'signed_in', site: site.id, via: 'saved', ...(r.profile ? { account: r.profile } : {}), next: `the owner's ${site.label} login is in your browser now${r.check ? ` (checked: ${r.check.url})` : ''} — browser_open the site and continue.` };
 }
 
-/** sign_in({fill}): the host types ONE vault value into the field the agent clicked, in the owner's Chrome. */
-async function signInFill(id: string, field: string, reason: string): Promise<SignInOutcome> {
+/**
+ * The shared-desktop fill gate (lib/sign-in.ts sharedFillGuard) for a session's running sign-in: may a vault value be
+ * typed into the focused field now — and `recheck`, run again right before the keys go out, says if the page moved.
+ */
+async function sharedGateFor(id: string, job: SignInJob | undefined): Promise<{ gate: import('./lib/sign-in.js').FillGate; recheck: () => Promise<string | null> }> {
   const si = await import('./lib/sign-in.js');
-  const cr = await import('./lib/credentials.js');
-  const job = signInJobs.get(id);
-  if (!si.FILL_FIELDS.includes(field as any)) return si.blocked(job?.site || '', `fill is one of ${si.FILL_FIELDS.join(' | ')}`);
-  // the desktop went back while the agent looked (60 s idle): take it again for the same sign-in, then check
-  if (job && sharedDesktop.get().holder?.sessionId !== id) {
-    const busy = await holdSharedDesktop(id, job.site, reason || `sign in to ${job.site}`);
-    if (busy) return si.blocked(job.site, busy);
-  }
   const facts = async () => {
     const L = sharedDesktop.get();
     const active = await dc().sharedActiveWindow().catch(() => null);
@@ -1487,17 +1482,114 @@ async function signInFill(id: string, field: string, reason: string): Promise<Si
     });
   };
   const gate = await facts();
+  const recheck = async () => {
+    const g = await facts();
+    if (!g.ok) return g.reason;
+    return gate.ok && g.origin === gate.origin ? null : `the page moved to ${g.host}`;
+  };
+  return { gate, recheck };
+}
+
+// ---- VAULT2: the owner's named details — a secure form (vault_collect) and a field fill (vault_fill) ---------------
+// Both wait on a card like sign_in({fill}) does; neither ever carries a value: the form is saved by the cockpit straight
+// into the vault, and a fill is typed by the host into one marked field (the session browser) or the focused field of
+// the owner's Chrome mid sign-in. What comes back to the agent is names and outcomes.
+const FORM_WAIT_MS = 30 * 60_000;
+
+type VaultCollectOutcome =
+  | { status: 'saved'; host: string; entry: { id?: string; title?: string; fields: string[] }; next: string }
+  | { status: 'cancelled' | 'expired'; host: string; reason: string }
+  | { status: 'blocked'; reason: string };
+
+async function vaultCollect(id: string, body: any): Promise<VaultCollectOutcome> {
+  const cr = await import('./lib/credentials.js');
+  const spec = cr.normalizeFieldSpecs(body?.fields);
+  if ('error' in spec) return { status: 'blocked', reason: spec.error };
+  const out = cr.requestForm(id, { site: String(body?.site || ''), fields: spec.fields, title: body?.title ? String(body.title) : undefined, reason: String(body?.reason || '').slice(0, 200) });
+  if (out.status === 'error') return { status: 'blocked', reason: out.error };
+  const req = out.request;
+  state.patchSession(id, { credentialRequest: req });
+  pushIntervention(id, 'action', `${req.host}: ${req.fields.length} detail(s) to fill in on a secure form` + (req.reason ? ` — ${req.reason}` : ''), 'a secure form is waiting');
+  let settled: import('./lib/credentials.js').Settled;
+  try {
+    settled = await cr.waitSettled(req.requestId, FORM_WAIT_MS);
+  } finally {
+    if ((state.getSession(id) as any)?.credentialRequest?.requestId === req.requestId) state.patchSession(id, { credentialRequest: null });
+  }
+  if (settled === 'saved') {
+    const d = (cr.takeSettleDetail(req.requestId) || {}) as { id?: string; title?: string; fields?: string[] };
+    const entry = { ...(d.id ? { id: d.id } : {}), ...(d.title ? { title: d.title } : {}), fields: Array.isArray(d.fields) ? d.fields : [] };
+    return { status: 'saved', host: req.host, entry, next: `the owner saved these in the vault (you never see a value). To put one into a page: vault_fill({site:"${req.host}", field:"<name>"}) after clicking into the field, or with target: words of its label.` };
+  }
+  cr.forget(req.requestId, settled === 'expired' ? 'expired' : 'cancel');
+  if (settled === 'expired') return { status: 'expired', host: req.host, reason: `nobody answered the ${req.host} form in ${FORM_WAIT_MS / 60_000} minutes` };
+  return { status: 'cancelled', host: req.host, reason: `the owner cancelled the ${req.host} form — do not ask for these details again in this turn, and never in the chat` };
+}
+
+type VaultFillOutcome =
+  | { status: 'filled'; field: string; host: string; where: 'session-browser'; next: string }
+  | { status: 'manual'; field: string; host: string; next: string }
+  | { status: 'cancelled' | 'expired'; field: string; host: string; reason: string }
+  | { status: 'blocked'; field: string; reason: string; next?: string };
+
+/**
+ * vault_fill types ONLY into the session's own browser, where the host can mask the filled field (dots) before the
+ * agent's next screenshot. The owner's Chrome on the shared desktop has no DOM for the host: a named value typed there
+ * would stand as plain text in the agent's desktop_screenshot — so while this session is driving a sign-in there, the
+ * call is refused before any card goes up and any value moves (lib/sign-in.ts vaultFillTarget). Sign-in roles in the
+ * owner's Chrome stay sign_in({fill})'s, unchanged.
+ */
+async function vaultFill(id: string, body: any): Promise<VaultFillOutcome> {
+  const cr = await import('./lib/credentials.js');
+  const si = await import('./lib/sign-in.js');
+  const field = cr.fieldName(body?.field);
+  if (!field) return { status: 'blocked', field: '', reason: `field required: the name of the saved detail (vault_fields({site}) lists them), up to ${cr.FIELD_NAME_MAX} characters` };
+  const reason = String(body?.reason || '').slice(0, 200);
+  const entry = body?.entry ? String(body.entry).slice(0, 120) : undefined;
+  const job = signInJobs.get(id);
+  const where = si.vaultFillTarget({ signInRunning: !!job && !job.gcloud, holdsShared: sharedDesktop.get().holder?.sessionId === id, site: job?.site || null });
+  if (where.target === 'refused') {
+    console.log(`[vault] ${new Date().toISOString()} ${id} fill ${field} refused: owner Chrome is not a target for named values`);
+    return { status: 'blocked', field, reason: where.reason, next: where.next };
+  }
+  const out = await cr.requestField(id, { site: body?.site ? String(body.site) : undefined, field, entry, target: body?.target ? String(body.target).slice(0, 120) : undefined, reason });
+  if (out.status === 'error') return { status: 'blocked', field, reason: out.error, ...(out.next ? { next: out.next } : {}) };
+  if (out.status === 'manual') return { status: 'manual', field, host: out.host, next: `the owner types ${out.host} details themselves: call request_screen (say which field, and where) and wait` };
+  const req = out.request;
+  state.patchSession(id, { credentialRequest: req });
+  if (req.pref !== 'auto') pushIntervention(id, 'action', `${req.host} asks for your ${field}` + (reason ? ` — ${reason}` : ''), 'waiting for your vault');
+  let settled: import('./lib/credentials.js').Settled;
+  try {
+    settled = await cr.waitSettled(req.requestId, SIGN_IN_WAIT_MS);
+  } finally {
+    if ((state.getSession(id) as any)?.credentialRequest?.requestId === req.requestId) state.patchSession(id, { credentialRequest: null });
+  }
+  if (settled === 'filled')
+    return { status: 'filled', field, host: req.host, where: 'session-browser', next: `the host put the ${field} into the field (nobody saw it; the field is drawn as dots from now on). Press the page's own button yourself and check with browser_snapshot.` };
+  if (settled === 'manual') return { status: 'manual', field, host: req.host, next: `the owner types the ${field} themselves: call request_screen (say which field, and where) and wait` };
+  cr.forget(req.requestId, settled === 'expired' ? 'expired' : 'cancel');
+  if (settled === 'cancel') return { status: 'cancelled', field, host: req.host, reason: `the owner cancelled — do not ask for the ${field} again in this turn, and never in the chat` };
+  return { status: 'expired', field, host: req.host, reason: `nobody answered the ${req.host} card in ${SIGN_IN_WAIT_MS / 60_000} minutes (the vault may be locked in the cockpit)` };
+}
+
+/** sign_in({fill}): the host types ONE vault value into the field the agent clicked, in the owner's Chrome. */
+async function signInFill(id: string, field: string, reason: string): Promise<SignInOutcome> {
+  const si = await import('./lib/sign-in.js');
+  const cr = await import('./lib/credentials.js');
+  const job = signInJobs.get(id);
+  if (!si.FILL_FIELDS.includes(field as any)) return si.blocked(job?.site || '', `fill is one of ${si.FILL_FIELDS.join(' | ')}`);
+  // the desktop went back while the agent looked (60 s idle): take it again for the same sign-in, then check
+  if (job && sharedDesktop.get().holder?.sessionId !== id) {
+    const busy = await holdSharedDesktop(id, job.site, reason || `sign in to ${job.site}`);
+    if (busy) return si.blocked(job.site, busy);
+  }
+  const { gate, recheck } = await sharedGateFor(id, job);
   if (!gate.ok) {
     console.log(`[sign-in] ${new Date().toISOString()} ${id} fill ${field} refused: ${gate.reason.slice(0, 80)}`);
     if (!job) return si.blocked('', gate.reason);
     return { status: 'driving', site: job.site, account: job.label, next: `nothing was typed: ${gate.reason}.` };
   }
-  const recheck = async () => {
-    const g = await facts();
-    if (!g.ok) return g.reason;
-    return g.origin === gate.origin ? null : `the page moved to ${g.host}`;
-  };
-  const out = cr.requestShared(id, { origin: gate.origin, field: field as any, reason: reason || `sign in to ${job!.site}`, account: job!.label, recheck });
+  const out = cr.requestShared(id, { origin: gate.origin, field, reason: reason || `sign in to ${job!.site}`, account: job!.label, recheck });
   if (out.status === 'manual') return signInHuman(id, `type your ${field} for ${out.host} in the field that is focused`);
   const req = out.request;
   state.patchSession(id, { credentialRequest: req });
@@ -4363,10 +4455,21 @@ export async function handle(
     // shape every agent, so reading and editing them is the owner's (admin) only, never a session's.
     // VAULT1: the owner's credential vault — a KDBX 4 file the cockpit encrypts and decrypts itself; the host only
     // stores the ciphertext (lib/credentials.ts) and the per-site sign-in preferences (no secrets). Owner only.
-    if (p === '/__api/vault/file' || p === '/__api/vault/prefs') {
+    if (p === '/__api/vault/file' || p === '/__api/vault/prefs' || p === '/__api/vault/catalog') {
       const me = (req as any).auth as import('./auth.js').Principal | null;
       if (!(me?.kind === 'off' || (me?.kind === 'user' && auth.isAdmin(me)))) return json(res, { error: 'admin only' }, 403);
       const cr = await import('./lib/credentials.js');
+      // VAULT2: the catalog — entry ids, titles, origins and field NAMES/types the cockpit uploads after each save, so an
+      // agent can ask vault_fields({site}). Cleaned on the way in (cleanCatalog): a value cannot land in it.
+      if (p === '/__api/vault/catalog') {
+        if (m === 'GET') return json(res, { entries: cr.readCatalog() });
+        if (m === 'PUT') {
+          const body = (await readBody(req, 512_000).catch(() => null)) as any;
+          if (!body || typeof body !== 'object') return badRequest(res, 'entries required');
+          return json(res, { ok: true, ...cr.writeCatalog(body) });
+        }
+        return notFound(res);
+      }
       if (p === '/__api/vault/prefs') {
         if (m === 'GET') return json(res, { prefs: cr.prefs() });
         if (m === 'PUT') {
@@ -7092,6 +7195,18 @@ export async function handle(
         return notFound(res, 'this sign-in request is no longer open');
       }
       if (sub === 'credentials/answer') {
+        // VAULT2: a form card is answered "saved" — the cockpit put the values in the vault itself; the host hears
+        // the entry's id, title and field NAMES, and hands those to the waiting vault_collect
+        if (body.choice === 'saved') {
+          if (card.kind !== 'form') return badRequest(res, 'only a form card is saved');
+          const d = body.entry && typeof body.entry === 'object' ? body.entry : {};
+          const names = (Array.isArray(d.fields) ? d.fields : []).map((f: unknown) => cr.fieldName(typeof f === 'string' ? f : (f as any)?.name)).filter(Boolean).slice(0, cr.FIELDS_MAX * 2) as string[];
+          cr.setSettleDetail(card.requestId, { ...(d.id ? { id: String(d.id).slice(0, 64) } : {}), ...(d.title ? { title: String(d.title).replace(/\s+/g, ' ').trim().slice(0, 120) } : {}), fields: names });
+          cr.forget(card.requestId, 'saved');
+          state.patchSession(id, { credentialRequest: null });
+          claude.appendChat(id, { kind: 'system', text: `🔑 Saved ${names.length} detail(s) for ${card.host} in your vault — the agent did not see them.` });
+          return json(res, { ok: true, saved: names.length });
+        }
         const choice = body.choice === 'manual' ? 'manual' : 'cancel';
         if (choice === 'manual' && body.remember === true) cr.setPref(card.origin, 'manual');
         const owned = cr.hasWaiter(card.requestId); // sign_in waits on it and tells the agent itself
@@ -7123,7 +7238,8 @@ export async function handle(
       if (body.remember === true) cr.setPref(card.origin, 'auto');
       state.patchSession(id, { credentialRequest: null });
       if (owned) {
-        claude.appendChat(id, { kind: 'system', text: `🔑 Typed your ${r.filled.join(', ')} for ${card.host} from your vault into your Chrome on the shared desktop${body.auto === true ? ' (automatically)' : ''} — the agent did not see it.` });
+        const where = card.target === 'shared' ? 'into your Chrome on the shared desktop' : "into the field on the agent's page";
+        claude.appendChat(id, { kind: 'system', text: `🔑 Typed your ${r.filled.join(', ')} for ${card.host} from your vault ${where}${body.auto === true ? ' (automatically)' : ''} — the agent did not see it.` });
         return json(res, { ok: true, filled: r.filled, submitted: r.submitted });
       }
       claude.appendChat(id, { kind: 'system', text: `🔑 Signed in to ${card.host} from your vault${body.auto === true ? ' (automatically)' : ''} — the agent did not see the details.` });
@@ -7133,6 +7249,24 @@ export async function handle(
         `If the site asks for a one-time code next, call request_credentials again.`;
       try { claude.sendMessage(id, line); } catch (e) { return json(res, { error: (e as Error).message }, 500); }
       return json(res, { ok: true, filled: r.filled, submitted: r.submitted });
+    }
+    // ---- VAULT2: the owner's named details (lib/credentials.ts) — names the agent may know, a secure form, a field fill
+    if (sub === 'vault/fields' && m === 'GET') {
+      // the agent's allowlist (A3) is checked here too, not only in the MCP tool list and the PreToolUse hook
+      if (!policy.toolAllowed(policy.policyFor(sessionAgent(s)), 'vault_fields')) return json(res, { error: "vault_fields is not in this agent's allowlist" }, 403);
+      const site = String(u.searchParams.get('site') || '').trim();
+      if (!site) return badRequest(res, 'site required');
+      const cr = await import('./lib/credentials.js');
+      const entries = cr.catalogFor(site);
+      return json(res, { site, entries, note: entries.length ? 'names and types only — a value is filled by vault_fill, never returned' : 'nothing saved for this site yet — vault_collect asks the owner for the details on a secure form' });
+    }
+    if (sub === 'vault/collect' && m === 'POST') {
+      const body = (await readBody(req)) as any;
+      return respondBlocking(res, body, id, vaultCollect(id, body));
+    }
+    if (sub === 'vault/fill' && m === 'POST') {
+      const body = (await readBody(req)) as any;
+      return respondBlocking(res, body, id, vaultFill(id, body));
     }
     // ---- sign_in: ONE tool for getting in anywhere (lib/sign-in.ts). Blocks (long-poll legs) until one outcome. ----
     if (sub === 'sign-in' && m === 'POST') {

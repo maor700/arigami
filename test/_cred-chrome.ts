@@ -17,6 +17,11 @@ const PAGES: Record<string, string> = {
     <input id="u" name="username" autocomplete="username"><button type="submit">Next</button></form>`,
   '/otp': `<input id="code" autocomplete="one-time-code" inputmode="numeric"><button onclick="window.code=document.querySelector('#code').value">Verify</button>`,
   '/none': `<p>hello</p>`,
+  // VAULT2: a payment-verification form — named fields, no sign-in
+  '/card': `<form onsubmit="event.preventDefault()"><label for="cn">Card number</label><input id="cn" name="cardNumber" autocomplete="cc-number">
+    <label for="exp">Expiry</label><input id="exp" name="exp"><input id="cvv" type="password" placeholder="CVV"><input id="other" name="other">
+    <label for="notes">Notes</label><textarea id="notes" name="notes"></textarea>
+    <input id="num" type="number" aria-label="Amount"><input id="dob" type="date" aria-label="Birth date"><input id="q" type="search" placeholder="Search"><button type="submit">Verify</button></form>`,
 };
 const server = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: (req) => new Response(`<!doctype html><title>t</title>${PAGES[new URL(req.url).pathname] || ''}`, { headers: { 'content-type': 'text/html' } }) });
 const base = `http://127.0.0.1:${server.port}`;
@@ -36,6 +41,8 @@ try {
   for (let i = 0; i < 80 && !(await cdp.listTabs(sid)).some((t) => t.url.startsWith(base)); i++) await sleep(150);
   const ev = (expr: string) => cdp.pageEvaluate(sid, expr);
   const go = async (u: string) => { await cdp.pageNavigate(sid, u); await sleep(100); };
+  // a cold Chrome in a full test run lists the tab before the page has its inputs: wait for the form itself
+  for (let i = 0; i < 100 && !(await ev("!!document.querySelector('#p')").catch(() => false)); i++) await sleep(100);
 
   out.login = await cr.inspect(sid).then((r) => ({ origin: r.origin, fields: r.fields }));
   const req = await cr.request(sid, { site: '127.0.0.1', reason: 'test' });
@@ -68,6 +75,109 @@ try {
   await go(`${base}/otp`);
   const req4 = await cr.request(sid, {});
   out.otpFields = req4.status === 'pending' ? req4.request.fields : req4;
+
+  // ---- VAULT2: one named field into the field the agent means -------------------------------------------------------
+  await go(`${base}/card`);
+  // what the vault knows for this origin (names and types only): remarks is plain multi-line text, the others are not
+  cr.writeCatalog({ entries: [{ id: 't1', title: 'Test', origin: base, fields: [{ name: 'remarks', type: 'multiline' }, { name: 'card_number', type: 'number' }, { name: 'cvv', type: 'secret' }] }] });
+  const f1 = await cr.requestField(sid, { site: '127.0.0.1', field: 'card_number', target: 'card number', entry: 'Dana', reason: 'verify' });
+  out.cardReq = f1.status === 'pending' ? { kind: f1.request.kind, fields: f1.request.fields, entry: f1.request.entry, host: f1.request.host, pref: f1.request.pref, page: f1.request.page } : f1;
+  if (f1.status !== 'pending') throw new Error('no field request: ' + JSON.stringify(f1));
+  // the body names more than the card asked for: only the card's one field lands, in the marked element only
+  out.cardFill = await cr.fill(sid, f1.request.requestId, { card_number: '4111 1111 1111 1111', cvv: '999', exp: '12/30' });
+  out.cardSeen = await ev("({cn: document.querySelector('#cn').value, cvv: document.querySelector('#cvv').value, exp: document.querySelector('#exp').value, other: document.querySelector('#other').value, marks: document.querySelectorAll('[data-arigami-fill]').length})");
+  out.cardReuse = await cr.fill(sid, f1.request.requestId, { card_number: 'x' }).then(() => 'filled', (e) => e.message);
+  // a multi-line value into a textarea, by its label
+  const fN = await cr.requestField(sid, { field: 'remarks', target: 'notes' });
+  if (fN.status !== 'pending') throw new Error('no textarea request: ' + JSON.stringify(fN));
+  out.notesFill = await cr.fill(sid, fN.request.requestId, { remarks: 'line one\nline two SECRET-NOTE' });
+  out.notesSeen = await ev("document.querySelector('#notes').value");
+  // what browser_snapshot reads (body.innerText) after the fills: the page's text, never a field's value — input or textarea
+  const snap = String(await ev('document.body.innerText'));
+  out.snapshotLeak = snap.includes('4111') || snap.includes('SECRET-NOTE');
+  // and what a screenshot shows of a filled plain field from now on: dots (the value is still there for the page to submit)
+  out.masked = await ev("[getComputedStyle(document.querySelector('#cn')).webkitTextSecurity, getComputedStyle(document.querySelector('#notes')).webkitTextSecurity, getComputedStyle(document.querySelector('#other')).webkitTextSecurity]");
+  // the input types Chrome does not dot (number, date): the value is made invisible instead, and still submitted
+  const fNum = await cr.requestField(sid, { field: 'amount', target: 'amount' });
+  if (fNum.status !== 'pending') throw new Error('no number request: ' + JSON.stringify(fNum));
+  out.numFill = await cr.fill(sid, fNum.request.requestId, { amount: '1234' });
+  const fDob = await cr.requestField(sid, { field: 'dob', target: 'birth date' });
+  if (fDob.status !== 'pending') throw new Error('no date request: ' + JSON.stringify(fDob));
+  out.dobFill = await cr.fill(sid, fDob.request.requestId, { dob: '2020-01-02' });
+  out.numDobSeen = await ev("[document.querySelector('#num').value, document.querySelector('#dob').value]");
+  out.numDobInvisible = await ev("[getComputedStyle(document.querySelector('#num')).color, getComputedStyle(document.querySelector('#dob')).color, getComputedStyle(document.querySelector('#num')).webkitTextFillColor]");
+  // the pixels: two different values of the same length in the masked fields (text, textarea, number, date) render the
+  // SAME screenshot (no caret — nothing has the focus), while the same change in an unmasked field renders a different one
+  await ev('document.activeElement && document.activeElement.blur()');
+  const shotA = await cdp.pageScreenshot(sid);
+  const fA = await cr.requestField(sid, { field: 'card_number', target: 'card number' });
+  const fB = await cr.requestField(sid, { field: 'remarks', target: 'notes' });
+  // (a second request on the same session replaces the first card: fill the textarea, then the card number)
+  if (fB.status !== 'pending') throw new Error('no second textarea request');
+  await cr.fill(sid, fB.request.requestId, { remarks: 'line two\nline one SECRET-NOTE' });
+  const fA2 = await cr.requestField(sid, { field: 'card_number', target: 'card number' });
+  if (fA2.status !== 'pending') throw new Error('no second card request');
+  await cr.fill(sid, fA2.request.requestId, { card_number: '4222 3333 4444 5555' });
+  const fNum2 = await cr.requestField(sid, { field: 'amount', target: 'amount' });
+  if (fNum2.status !== 'pending') throw new Error('no second number request');
+  await cr.fill(sid, fNum2.request.requestId, { amount: '5678' });
+  const fDob2 = await cr.requestField(sid, { field: 'dob', target: 'birth date' });
+  if (fDob2.status !== 'pending') throw new Error('no second date request');
+  await cr.fill(sid, fDob2.request.requestId, { dob: '2021-03-04' });
+  await ev('document.activeElement && document.activeElement.blur()');
+  await sleep(150);
+  const shotB = await cdp.pageScreenshot(sid);
+  out.maskedPixelsSame = shotA.equals(shotB);
+  if (!out.maskedPixelsSame) {
+    // for a human to look at: the two frames, under the run's own temp root
+    const dbg = process.env.TMPDIR || '/tmp';
+    fs.writeFileSync(path.join(dbg, 'cred-chrome-shotA.png'), shotA);
+    fs.writeFileSync(path.join(dbg, 'cred-chrome-shotB.png'), shotB);
+    out.maskedPixelsDump = dbg;
+  }
+  out.maskedValues = await ev("[document.querySelector('#cn').value, document.querySelector('#notes').value, document.querySelector('#num').value, document.querySelector('#dob').value]");
+  await ev("document.querySelector('#other').value = 'aaaa'");
+  await sleep(150);
+  const shotC = await cdp.pageScreenshot(sid);
+  await ev("document.querySelector('#other').value = 'bbbb'");
+  await sleep(150);
+  const shotD = await cdp.pageScreenshot(sid);
+  out.plainPixelsSame = shotC.equals(shotD);
+  void fA;
+  // no target: the focused field (a password-type CVV the agent may not type into itself)
+  await ev("document.querySelector('#cvv').focus()");
+  const f2 = await cr.requestField(sid, { field: 'cvv' });
+  if (f2.status !== 'pending') throw new Error('no focus request: ' + JSON.stringify(f2));
+  out.focusFill = await cr.fill(sid, f2.request.requestId, { cvv: '321' });
+  out.focusSeen = await ev("document.querySelector('#cvv').value");
+  // nothing focused and no target, a target that matches nothing, the wrong site: told, no card
+  await ev('document.activeElement.blur()');
+  out.noFocus = await cr.requestField(sid, { field: 'cvv' });
+  out.noMatch = await cr.requestField(sid, { field: 'iban', target: 'iban' });
+  out.fieldWrongSite = (await cr.requestField(sid, { site: 'example.com', field: 'cvv', target: 'cvv' })).status;
+  out.fieldWwwSite = (await cr.requestField(sid, { site: 'www.127.0.0.1', field: 'cvv', target: 'cvv' })).status; // www. aside, the same host
+  // a secret (by its saved type — or unknown to the catalog) never goes into a search box or a free-text area
+  out.cvvIntoTextarea = await cr.requestField(sid, { field: 'cvv', target: 'notes' });
+  out.cvvIntoSearch = await cr.requestField(sid, { field: 'cvv', target: 'search' });
+  out.unknownIntoTextarea = await cr.requestField(sid, { field: 'iban', target: 'notes' });
+  out.searchValue = await ev("document.querySelector('#q').value");
+  // browser_click({text}) is no oracle on a filled field: a value never matches, a label or a button still does
+  const ba = await import('../server/lib/browser-actions.ts');
+  out.oracle = {
+    value: await ev(ba.findClickableJs('4111')),
+    valueDigit: await ev(ba.findClickableJs('4')),
+    note: await ev(ba.findClickableJs('SECRET-NOTE')),
+    number: await ev(ba.findClickableJs('1234')),
+    label: (await ev(ba.findClickableJs('Card number'))) !== null,
+    button: (await ev(ba.findClickableJs('Verify'))) !== null,
+    placeholder: (await ev(ba.findClickableJs('Search'))) !== null,
+  };
+  // the page moves to another origin between the card and the fill: nothing is typed
+  const f3 = await cr.requestField(sid, { field: 'exp', target: 'expiry' });
+  if (f3.status !== 'pending') throw new Error('no move request: ' + JSON.stringify(f3));
+  await go(`${other}/card`);
+  out.fieldMoved = await cr.fill(sid, f3.request.requestId, { exp: '01/31' }).then(() => 'filled', (e) => e.message);
+  out.fieldMovedValue = await ev("document.querySelector('#exp').value");
 
   await go(`${base}/none`);
   out.none = await cr.request(sid, {});

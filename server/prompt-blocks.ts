@@ -64,7 +64,7 @@ export const BUILTIN: BuiltinBlock[] = [
     vars: [],
     text:
       'Signing in anywhere (a site, a service, gcloud): call sign_in({site, reason}) and do what its answer says — the host picks the way in.\n' +
-      'Never type or ask for a password, 2FA code or token yourself: sign_in({site, fill}) has the host type it from the vault. What the human writes in the chat themselves and asks you to enter, you enter.\n' +
+      'Never type or ask for a password, 2FA code, token or other private detail (a card number, an ID number) yourself: sign_in({site, fill}) has the host type a sign-in value from the vault, vault_fill({site, field}) any other saved detail, and vault_collect({site, fields}) asks the human for missing ones on a secure form only they see. What the human writes in the chat themselves and asks you to enter, you enter.\n' +
       'If sign_in answers blocked, stop and report its one reason to the human.',
   },
   {

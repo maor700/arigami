@@ -13,7 +13,9 @@ export default function VaultAutoFill() {
     if (!vault.unlocked) return;
     for (const s of sessions || []) {
       const r = s.credentialRequest;
-      if (!r || r.pref !== 'auto' || tried.current.has(r.requestId)) continue;
+      // VAULT2: only a SIGN-IN is ever automatic. A form is the owner's to fill, and a named field (kind 'field') always
+      // takes a tap — the "remember" choice made on a sign-in card is not a grant to put any saved detail into any field.
+      if (!r || r.pref !== 'auto' || r.kind || tried.current.has(r.requestId)) continue;
       tried.current.add(r.requestId);
       matchVault(r.origin)
         .then((m) => {

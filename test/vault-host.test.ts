@@ -212,6 +212,82 @@ test('per-site choices: set, read, and back to "ask"', async () => {
   expect((await call('PUT', '/__api/vault/prefs', 'person', { origin: 'https://a.example', pref: null })).json.prefs).toEqual({});
 });
 
+// ---- VAULT2: named fields -----------------------------------------------------------------------------------------------
+
+test("the catalog is the owner's to upload and holds names only; a session reads it per site", async () => {
+  expect((await call('PUT', '/__api/vault/catalog', 'session', { entries: [] })).status).toBe(403);
+  expect((await call('GET', '/__api/vault/catalog', 'session')).status).toBe(403);
+  const put = await call('PUT', '/__api/vault/catalog', 'person', {
+    entries: [
+      { id: 'e1', title: 'Dana', origin: 'https://bank.example', username: 'dana@example.com', fields: [{ name: 'card_number', type: 'number', value: '4111111111111111' }, 'password', { name: 'Title' }, { name: 'password' }], password: 'leak-1' },
+      { id: 'e2', title: 'Other', origin: 'https://other.example', fields: [{ name: 'pin', type: 'secret' }] },
+      { id: '', origin: 'https://nope.example', fields: [] },
+    ],
+  });
+  expect(put.json).toMatchObject({ ok: true, entries: 2 });
+  const file = fs.readFileSync(path.join(dir, 'user', 'vault', 'catalog.json'), 'utf8');
+  for (const leak of ['4111', 'leak-1', 'dana@example.com', 'value']) expect(file).not.toContain(leak);
+  expect(fs.statSync(path.join(dir, 'user', 'vault', 'catalog.json')).mode & 0o077).toBe(0);
+  const r = await call('GET', `/__api/sessions/${sid}/vault/fields?site=www.bank.example`, 'session');
+  expect(r.status).toBe(200);
+  expect(r.json.entries).toEqual([{ id: 'e1', title: 'Dana', origin: 'https://bank.example', fields: [{ name: 'card_number', type: 'number' }, { name: 'password', type: 'secret' }] }]);
+  expect((await call('GET', `/__api/sessions/${sid}/vault/fields?site=nothing.example`, 'session')).json.entries).toEqual([]);
+  expect((await call('GET', `/__api/sessions/${sid}/vault/fields`, 'session')).status).toBe(400);
+});
+
+test('vault_collect: a secure form card the session cannot answer; the owner\'s "saved" hands back names only', async () => {
+  const pending = call('POST', `/__api/sessions/${sid}/vault/collect`, 'session', { site: 'bank.example', title: 'Dana', reason: 'verify the card', fields: [{ name: 'card_number', type: 'number', label: 'Card number' }, { name: 'expiry', type: 'date' }, 'cvv'] });
+  const card = await until(async () => (await call('GET', `/__api/sessions/${sid}`, 'person')).json.credentialRequest);
+  expect(card).toMatchObject({ kind: 'form', host: 'bank.example', origin: 'https://bank.example', fields: ['card_number', 'expiry', 'cvv'], entry: 'Dana', reason: 'verify the card', pref: 'ask' });
+  expect(card.spec).toEqual([{ name: 'card_number', type: 'number', label: 'Card number' }, { name: 'expiry', type: 'date' }, { name: 'cvv', type: 'secret' }]);
+  expect(JSON.stringify(card)).not.toMatch(/value/);
+  // the session cannot answer its own form; a form is not filled into a page
+  expect((await call('POST', `/__api/sessions/${sid}/credentials/answer`, 'session', { requestId: card.requestId, choice: 'saved', entry: { fields: ['card_number'] } })).status).toBe(403);
+  expect((await call('POST', `/__api/sessions/${sid}/credentials/fill`, 'person', { requestId: card.requestId, values: { cvv: '123' } })).status).toBe(400);
+  // "saved" is a form's answer only; what the cockpit sends beyond names is dropped
+  const ok = await call('POST', `/__api/sessions/${sid}/credentials/answer`, 'person', { requestId: card.requestId, choice: 'saved', entry: { id: 'e9', title: 'Dana', fields: ['card_number', 'expiry', { name: 'cvv', value: '123' }], values: { cvv: '123' } } });
+  expect(ok.json).toEqual({ ok: true, saved: 3 });
+  const r = await pending;
+  expect(r.json).toMatchObject({ status: 'saved', host: 'bank.example', entry: { id: 'e9', title: 'Dana', fields: ['card_number', 'expiry', 'cvv'] } });
+  expect(r.json.next).toMatch(/vault_fill/);
+  expect(JSON.stringify(r.json)).not.toContain('123');
+  expect((await call('GET', `/__api/sessions/${sid}`, 'person')).json.credentialRequest ?? null).toBeNull();
+  const chat = await call('GET', `/__api/sessions/${sid}/chat`, 'person');
+  expect(JSON.stringify(chat.json)).toMatch(/Saved 3 detail/);
+  expect(JSON.stringify(chat.json)).not.toContain('123');
+});
+
+test('vault_collect: the owner\'s Cancel comes back as one reason; a bad ask is refused before any card', async () => {
+  const pending = call('POST', `/__api/sessions/${sid}/vault/collect`, 'session', { site: 'bank.example', fields: ['pin'] });
+  const card = await until(async () => (await call('GET', `/__api/sessions/${sid}`, 'person')).json.credentialRequest);
+  // "saved" on a sign-in card is not a thing either — only a form is saved
+  expect((await call('POST', `/__api/sessions/${sid}/credentials/answer`, 'person', { requestId: card.requestId, choice: 'cancel' })).status).toBe(200);
+  const r = await pending;
+  expect(r.json).toMatchObject({ status: 'cancelled', host: 'bank.example' });
+  expect(r.json.reason).toMatch(/cancelled/);
+  for (const [body, re] of [
+    [{ site: 'bank.example', fields: [] }, /fields required/],
+    [{ site: 'bank.example', fields: [{ name: 'Title' }] }, /reserved/],
+    [{ site: 'bank.example', fields: ['x'.repeat(65)] }, /too long/],
+    [{ site: 'not a site', fields: ['pin'] }, /site required/],
+  ] as const) {
+    const bad = await call('POST', `/__api/sessions/${sid}/vault/collect`, 'session', body);
+    expect(bad.json.status).toBe('blocked');
+    expect(bad.json.reason).toMatch(re);
+  }
+  expect((await call('GET', `/__api/sessions/${sid}`, 'person')).json.credentialRequest ?? null).toBeNull();
+});
+
+test('vault_fill without a page: one blocked reason and what to do, no card; a sign-in card is never answered "saved"', async () => {
+  const r = await call('POST', `/__api/sessions/${sid}/vault/fill`, 'session', { site: 'bank.example', field: 'card_number' });
+  expect(r.json).toMatchObject({ status: 'blocked', field: 'card_number' });
+  expect(r.json.reason).toMatch(/no open page/);
+  expect(r.json.next).toMatch(/browser_open/);
+  expect((await call('POST', `/__api/sessions/${sid}/vault/fill`, 'session', { site: 'bank.example', field: '' })).json.reason).toMatch(/field required/);
+  expect((await call('POST', `/__api/sessions/${sid}/vault/fill`, 'session', { site: 'bank.example', field: 'Title' })).json.reason).toMatch(/field required/);
+  expect((await call('GET', `/__api/sessions/${sid}`, 'person')).json.credentialRequest ?? null).toBeNull();
+});
+
 // ---- SSO1: SSO in My browser -------------------------------------------------------------------------------------------
 
 test('SSO: the session asks, the owner answers — the session can neither answer nor plant the card', async () => {

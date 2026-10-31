@@ -7,6 +7,7 @@
 import * as kdbxweb from 'kdbxweb';
 import { argon2id, argon2d } from 'hash-wasm';
 import { totpSpec, totp } from './totp.js';
+import { TYPES_FIELD, fieldsOf, kdbxKey, cleanName, cleanType, isProtectedType, typesToStore, parseTypes, catalogOf, entryMatches, entryAllowedFor } from './vault-schema.js';
 
 kdbxweb.CryptoEngine.setArgon2Impl((password, salt, memory, iterations, length, parallelism, type) =>
   (type === kdbxweb.CryptoEngine.Argon2TypeArgon2id ? argon2id : argon2d)({
@@ -67,7 +68,45 @@ function entries() {
 }
 const text = (v) => (v instanceof kdbxweb.ProtectedValue ? v.getText() : String(v ?? ''));
 const entryOrigin = (e) => text(e.fields.get(ORIGIN_FIELD)) || originOf(text(e.fields.get('URL')));
-const describe = (e) => ({ id: e.uuid.id, title: text(e.fields.get('Title')), origin: entryOrigin(e), username: text(e.fields.get('UserName')) });
+// VAULT2: the entry's fields by name and type — never a value (vault-schema.js)
+const entryFields = (e) => fieldsOf([...e.fields.entries()].map(([key, v]) => ({ key, protected: v instanceof kdbxweb.ProtectedValue, empty: !text(v) })), parseTypes(text(e.fields.get(TYPES_FIELD))));
+const describe = (e) => ({ id: e.uuid.id, title: text(e.fields.get('Title')), origin: entryOrigin(e), username: text(e.fields.get('UserName')), fields: entryFields(e) });
+const hasField = (e, name) => entryFields(e).some((f) => f.name.toLowerCase() === String(name).toLowerCase());
+/** The value of one named field of an entry (a one-time code is computed from its secret). Stays in this worker. */
+async function fieldValue(e, name) {
+  const n = String(name).toLowerCase();
+  if (n === 'otp') {
+    const spec = totpSpec(Object.fromEntries([...e.fields.keys()].filter((k) => /^(otp|TOTP Seed|TOTP Settings)$/i.test(k)).map((k) => [k, text(e.fields.get(k))])));
+    if (!spec) throw new Error('this entry holds no one-time-code secret — type the code on the card');
+    return totp(spec);
+  }
+  const key = [...e.fields.keys()].find((k) => k === kdbxKey(name) || k.toLowerCase() === n) ;
+  const v = key ? text(e.fields.get(key)) : '';
+  if (!v) throw new Error(`this entry has no "${name}"`);
+  return v;
+}
+/** Put named values on an entry: protected unless the type is text; the types that need saying go in one JSON field. */
+function setFields(e, fields) {
+  const types = { ...parseTypes(text(e.fields.get(TYPES_FIELD))), ...typesToStore(fields) };
+  for (const f of fields) {
+    const name = cleanName(f.name) || (/^(username|password|otp)$/i.test(f.name) ? f.name.toLowerCase() : null);
+    if (!name || typeof f.value !== 'string') continue;
+    const key = kdbxKey(name);
+    const type = f.type || (name === 'password' || name === 'otp' ? 'secret' : name === 'username' ? 'text' : 'secret');
+    e.fields.set(key, isProtectedType(cleanType(type)) || key === 'Password' ? kdbxweb.ProtectedValue.fromString(f.value) : f.value);
+    if (key === 'UserName') delete types[name];
+  }
+  if (Object.keys(types).length) e.fields.set(TYPES_FIELD, JSON.stringify(types));
+  else e.fields.delete(TYPES_FIELD);
+}
+/** The catalog (names only) to the host after a save, so vault_fields can answer without the owner. Best-effort. */
+async function pushCatalog() {
+  try {
+    await fetch('/__api/vault/catalog', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(catalogOf(entries().map(describe))) });
+  } catch {
+    /* the next save tries again */
+  }
+}
 
 /** Entries for this origin: the exact origin first, then the same site on another host (login.x.com for x.com). */
 function matches(origin) {
@@ -103,6 +142,14 @@ async function save(change) {
   }
   if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `saving the vault failed (HTTP ${r.status})`);
   etag = r.headers.get('ETag') || (await r.json().catch(() => ({}))).etag || null;
+  await pushCatalog();
+}
+
+/** The entry an agent's hint (id / title / username) picks among those of an origin — or the only one, or none. A named field: exact origin only. */
+function pickEntry(origin, hint, field) {
+  const all = entries().filter((e) => entryAllowedFor(entryOrigin(e), origin, field));
+  const hit = hint ? all.filter((e) => entryMatches(describe(e), hint)) : all;
+  return hit.length === 1 ? hit[0] : null;
 }
 
 function upsert(origin, username, password) {
@@ -151,6 +198,8 @@ const ops = {
     }
     etag = f.etag;
     used();
+    // entries from before the catalog existed become known to vault_fields on the first unlock, not the first save
+    await pushCatalog();
     return ops.status();
   },
   async lock() {
@@ -180,6 +229,103 @@ const ops = {
     });
     used();
     return entries().map(describe);
+  },
+  // ---- VAULT2: named fields ----------------------------------------------------------------------------------------
+  /** One entry, by id: title, origin, username and its fields (names and types) — no value. */
+  async entry({ id }) {
+    if (!db) throw new Error('the vault is locked');
+    const e = entries().find((x) => x.uuid.id === id);
+    if (!e) throw new Error('that entry is gone');
+    used();
+    return describe(e);
+  },
+  /**
+   * Create or update an entry with named fields (the secure form, the Passwords page). `fields` = [{name, type, value}];
+   * `remove` = names to drop. Returns the entry's description — names only.
+   */
+  async saveFields({ id, origin, title, username, fields, remove }) {
+    if (!db) throw new Error('the vault is locked');
+    const o = originOf(origin || '');
+    if (!id && !o) throw new Error('the site is missing');
+    let out = null;
+    await save((d) => {
+      let e = id ? entries().find((x) => x.uuid.id === id) : null;
+      if (id && !e) throw new Error('that entry is gone');
+      if (!e) {
+        e = d.createEntry(d.getDefaultGroup());
+        e.fields.set('Title', (title || '').trim() || new URL(o).hostname);
+        e.fields.set('URL', o);
+        e.fields.set(ORIGIN_FIELD, o);
+        e.fields.set('UserName', username || '');
+      } else {
+        e.pushHistory();
+        if (typeof title === 'string' && title.trim()) e.fields.set('Title', title.trim());
+        if (typeof username === 'string') e.fields.set('UserName', username);
+      }
+      setFields(e, Array.isArray(fields) ? fields : []);
+      for (const n of Array.isArray(remove) ? remove : []) {
+        const key = [...e.fields.keys()].find((k) => k === kdbxKey(n) || k.toLowerCase() === String(n).toLowerCase());
+        if (key && !['Title', 'URL', ORIGIN_FIELD].includes(key)) e.fields.delete(key);
+      }
+      e.times.update();
+      out = describe(e);
+    });
+    used();
+    return out;
+  },
+  /** The owner looks at one value (the Passwords page's Reveal / Copy). Only ever asked for by the owner's own click. */
+  async reveal({ id, name }) {
+    if (!db) throw new Error('the vault is locked');
+    const e = entries().find((x) => x.uuid.id === id);
+    if (!e) throw new Error('that entry is gone');
+    used();
+    return { value: await fieldValue(e, name) };
+  },
+  /**
+   * Entries that may serve a named field on this origin, narrowed by the agent's entry hint (id / title / username).
+   * A sign-in role: the site's entries as on the sign-in card. Any other name: the EXACT origin's entries only.
+   */
+  async matchField({ origin, field, entry }) {
+    if (!db) return [];
+    used();
+    return matches(origin)
+      .filter((m) => entryAllowedFor(m.origin, origin, field))
+      .filter((m) => entryMatches(m, entry))
+      .filter((m) => hasField(entries().find((e) => e.uuid.id === m.id), field));
+  },
+  /**
+   * Fill ONE named field of a pending request — from an entry (entryId) or from what the owner typed (value), which
+   * `save` keeps on the entry it names (saveTo), the only entry of the site, or a new one. The value goes to the host's
+   * fill route and nowhere else.
+   */
+  async fillField({ sessionId, requestId, origin, field, entryId, value, save: keep, saveTo, title, remember, auto }) {
+    let v;
+    if (entryId) {
+      if (!db) throw new Error('the vault is locked');
+      const e = entries().find((x) => x.uuid.id === entryId);
+      if (!e) throw new Error('that entry is gone');
+      // a named field goes only to the exact origin its entry was saved for; a sign-in role keeps the site rule
+      if (!entryAllowedFor(entryOrigin(e), origin, field)) throw new Error(`that entry is for another ${/^(username|password|otp)$/i.test(field) ? 'site' : 'origin'}`);
+      v = await fieldValue(e, field);
+    } else {
+      if (typeof value !== 'string' || !value) throw new Error('nothing to fill');
+      v = value;
+    }
+    const r = await fetch(`/__api/sessions/${encodeURIComponent(sessionId)}/credentials/fill`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ requestId, values: { [field]: v }, remember: !!remember, auto: !!auto }),
+    });
+    const out = await r.json().catch(() => ({}));
+    if (!r.ok) throw Object.assign(new Error(out.error || `HTTP ${r.status}`), { status: r.status });
+    let saved = false;
+    if (keep && !entryId && db && field.toLowerCase() !== 'otp') {
+      const target = (saveTo && entries().find((x) => x.uuid.id === saveTo)) || pickEntry(origin, title, field);
+      await ops.saveFields({ id: target?.uuid.id, origin, title, fields: [{ name: field, value: v }] });
+      saved = true;
+    }
+    if (db) used();
+    return { ...out, saved };
   },
   /**
    * Fill one pending sign-in: from an entry (entryId) or from what the owner typed on the card (values). The values
