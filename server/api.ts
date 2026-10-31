@@ -7252,6 +7252,8 @@ export async function handle(
     }
     // ---- VAULT2: the owner's named details (lib/credentials.ts) — names the agent may know, a secure form, a field fill
     if (sub === 'vault/fields' && m === 'GET') {
+      // the agent's allowlist (A3) is checked here too, not only in the MCP tool list and the PreToolUse hook
+      if (!policy.toolAllowed(policy.policyFor(sessionAgent(s)), 'vault_fields')) return json(res, { error: "vault_fields is not in this agent's allowlist" }, 403);
       const site = String(u.searchParams.get('site') || '').trim();
       if (!site) return badRequest(res, 'site required');
       const cr = await import('./lib/credentials.js');

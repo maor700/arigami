@@ -76,6 +76,7 @@ export const he = {
   'vault.fieldCard.title': '{field} עבור {host}',
   'vault.fieldCard.private': 'רק אתה רואה את זה: הערך עובר ישר לשדה האחד הזה בדף. הסוכן והצ׳אט לא מקבלים אותו.',
   'vault.fieldCard.fillFrom': 'מלא {field} מ-{entry}',
+  'vault.fieldCard.into': 'לשדה בדף “{label}” ({kind})',
   'vault.fieldCard.save': 'שמור בכספת ({entry})',
   'vault.type.text': 'טקסט',
   'vault.type.secret': 'סוד',

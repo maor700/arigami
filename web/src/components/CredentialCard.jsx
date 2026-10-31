@@ -107,7 +107,9 @@ function FormCardView({ sessionId, request }) {
     await api.post(`/sessions/${encodeURIComponent(sessionId)}/credentials/answer`, { requestId: request.requestId, choice: 'saved', entry: { id: entry.id, title: entry.title, fields: entry.fields.map((f) => f.name) } });
   });
   const cancel = () => run(() => api.post(`/sessions/${encodeURIComponent(sessionId)}/credentials/answer`, { requestId: request.requestId, choice: 'cancel' }));
-  const label = (f) => f.label || (/^(username|password|otp)$/.test(f.name) ? t(`vault.field.${f.name}`) : f.name);
+  // the agent's label is shown WITH the stored name when they differ, so a label cannot dress one field up as another
+  const stored = (f) => (/^(username|password|otp)$/.test(f.name) ? t(`vault.field.${f.name}`) : f.name);
+  const label = (f) => (f.label && f.label.trim().toLowerCase() !== f.name.toLowerCase() ? `${f.label} · ${f.name}` : stored(f));
 
   return (
     <CardFrame tone="accent" live data-credential-request={request.requestId} data-cred-kind="form" label={t('vault.form.title', { host: request.host })}>
@@ -169,7 +171,6 @@ function FieldCardView({ sessionId, request }) {
   const [typing, setTyping] = useState(false);
   const [value, setValue] = useState('');
   const [save, setSave] = useState(true);
-  const [remember, setRemember] = useState(false);
   const [master, setMaster] = useState('');
   const [master2, setMaster2] = useState('');
   const [busy, setBusy] = useState(false);
@@ -177,6 +178,9 @@ function FieldCardView({ sessionId, request }) {
   const supported = vaultSupported();
   const isRole = /^(username|password|otp)$/.test(field);
   const name = isRole ? t(`vault.field.${field}`) : field;
+  // WHERE on the page the value goes (the host read the element): the owner judges the target, not only the site
+  const page = request.page || null;
+  const pageKind = page ? [page.tag, page.type].filter(Boolean).filter((x, i, a) => a.indexOf(x) === i).join(' · ') : '';
 
   useEffect(() => {
     let alive = true;
@@ -190,7 +194,8 @@ function FieldCardView({ sessionId, request }) {
     setErr(null);
     try { await fn(); } catch (e) { setErr(errText(e)); setBusy(false); }
   };
-  const base = { sessionId, requestId: request.requestId, origin: request.origin, field, remember };
+  // no "remember this choice" here: a named field is never filled without a tap (the per-site auto choice is a sign-in's)
+  const base = { sessionId, requestId: request.requestId, origin: request.origin, field };
   const fillFrom = (m) => run(() => fillVaultField({ ...base, entryId: m.id }));
   const fillTyped = () => run(async () => {
     const keep = save && supported && field !== 'otp';
@@ -198,7 +203,7 @@ function FieldCardView({ sessionId, request }) {
     await fillVaultField({ ...base, value, save: keep, title: request.entry });
   });
   const unlock = () => run(async () => { await unlockVault({ password: master }); setMaster(''); setBusy(false); });
-  const answer = (choice) => run(() => api.post(`/sessions/${encodeURIComponent(sessionId)}/credentials/answer`, { requestId: request.requestId, choice, remember: choice === 'manual' && remember }));
+  const answer = (choice) => run(() => api.post(`/sessions/${encodeURIComponent(sessionId)}/credentials/answer`, { requestId: request.requestId, choice }));
   const onEnter = (fn) => (e) => { if (e.key === 'Enter' && !busy) { e.preventDefault(); fn(); } };
   const showSaved = vault.unlocked && matches.length > 0 && !typing;
   const shared = request.target === 'shared';
@@ -207,6 +212,12 @@ function FieldCardView({ sessionId, request }) {
     <CardFrame tone="accent" live data-credential-request={request.requestId} data-cred-kind="field" label={t('vault.fieldCard.title', { field: name, host: request.host })}>
       {request.reason && <Prose className="mt-2">{request.reason}</Prose>}
       {shared && <Prose dim className="mt-1" data-cred-shared>{t('vault.card.shared', { account: request.account || 'Chrome' })}</Prose>}
+      {page && (
+        <Prose className="mt-1" data-cred-target>
+          {t('vault.fieldCard.into', { label: page.label || page.tag, kind: pageKind })}
+          <span className="text-xs text-[var(--term-accent-dim)]"> · {request.origin.replace(/^https?:\/\//, '')}</span>
+        </Prose>
+      )}
       <Prose dim className="mt-1">{t('vault.fieldCard.private')}</Prose>
       {showSaved ? (
         <div className="mt-2.5 flex flex-wrap items-center gap-2">
@@ -232,7 +243,6 @@ function FieldCardView({ sessionId, request }) {
         </>
       )}
       <div className="mt-2.5 flex flex-wrap items-center justify-end gap-2">
-        <Check checked={remember} onChange={setRemember}>{t('vault.card.remember', { host: request.host })}</Check>
         <span className="flex-1" />
         <Btn variant="quiet" disabled={busy} onClick={() => answer('cancel')}>{t('vault.card.cancel')}</Btn>
         <Btn variant="secondary" disabled={busy} data-cred-manual onClick={() => answer('manual')}>{t('vault.card.manual')}</Btn>
@@ -384,7 +394,7 @@ export const CredentialCardDef = defineHostComponent({
   description: 'Host: request_credentials — fill a sign-in from the owner\'s vault, or hand it to take-over',
   props: loose({
     sessionId: z.string(),
-    request: loose({ requestId: str, origin: str, host: str, fields: any, reason: any, pref: any, target: any, account: any, kind: any, spec: any, entry: any }),
+    request: loose({ requestId: str, origin: str, host: str, fields: any, reason: any, pref: any, target: any, account: any, kind: any, spec: any, entry: any, page: any }),
   }),
   component: CredentialCardView,
 });

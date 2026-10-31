@@ -57,13 +57,27 @@ export async function humanGate(sessionId: string): Promise<HumanGate> {
   }
 }
 
-function findClickableJs(text: string): string {
+// VAULT2: a field's VALUE is never what a click-by-text matches. It used to be (`el.innerText || el.value`), which made
+// browser_click({text:'4'}), ({text:'41'})… a prefix oracle on anything the host had filled into an input or textarea
+// (a password before, any named detail now). A text field is found by its aria-label / placeholder (or its <label>,
+// which is a node of its own here); a button-like input by its caption; a select by its options' text; and a masked
+// field (type=password, or drawn as dots after a vault fill) is not a click target by text at all.
+export function findClickableJs(text: string): string {
   return `(() => {
     const needle = ${JSON.stringify(String(text))}.toLowerCase();
     const nodes = document.querySelectorAll('a,button,[role="button"],input,label,summary,[onclick],select,textarea');
     let best = null, bestLen = Infinity;
     for (const el of nodes) {
-      const t = (el.innerText || el.value || el.getAttribute('aria-label') || el.placeholder || '').trim().toLowerCase();
+      const tag = el.tagName;
+      const type = (el.type || '').toLowerCase();
+      const buttonLike = tag === 'INPUT' && ['button', 'submit', 'reset', 'image'].includes(type);
+      let t;
+      if ((tag === 'INPUT' && !buttonLike) || tag === 'TEXTAREA') {
+        if (type === 'password' || (getComputedStyle(el).webkitTextSecurity || 'none') !== 'none') continue;
+        t = el.getAttribute('aria-label') || el.placeholder || '';
+      } else if (tag === 'SELECT') t = el.innerText || el.getAttribute('aria-label') || '';
+      else t = el.innerText || el.value || el.getAttribute('aria-label') || el.placeholder || '';
+      t = String(t).trim().toLowerCase();
       if (t && t.includes(needle) && t.length < bestLen) { best = el; bestLen = t.length; }
     }
     if (!best) return null;

@@ -95,6 +95,8 @@ export interface CredentialRequest {
   spec?: FieldSpec[];
   /** 'form': the entry the details belong to (an account name); 'field': the entry the agent asked for, if it named one. */
   entry?: string;
+  /** 'field': the page element the value goes into, so the owner sees WHERE on the card — its tag, type and label words. */
+  page?: { tag: string; type: string; label: string };
 }
 
 interface Pending {
@@ -447,8 +449,18 @@ export function targetJs(requestId: string, target: string | null): string {
     }
     for (const o of document.querySelectorAll('[data-arigami-fill]')) o.removeAttribute('data-arigami-fill');
     el.setAttribute('data-arigami-fill', id);
-    return { origin: location.origin, found: true, tag: el.tagName.toLowerCase(), type: (el.type || '').toLowerCase() };
+    const type = (el.type || '').toLowerCase();
+    const label = (labelOf(el).trim() || el.getAttribute('aria-label') || el.placeholder || el.name || el.id || '').replace(/\\s+/g, ' ').trim().slice(0, 80);
+    // a search box or a free-text area prints what it gets back on the page: not a place for a secret
+    const searchy = type === 'search' || (el.getAttribute('role') || '').toLowerCase() === 'searchbox' || /\\bsearch\\b|חיפוש|חפש/.test(words(el));
+    return { origin: location.origin, found: true, tag: el.tagName.toLowerCase(), type, label, searchy, textarea: el.tagName === 'TEXTAREA' };
   })()`;
+}
+
+/** Pure: the agent's `site` names the page's host — exactly, or up to a leading `www.` (no "same site" list here). */
+export function sameHost(a: string, b: string): boolean {
+  const n = (h: string) => String(h || '').toLowerCase().replace(/^www\./, '');
+  return !!n(a) && n(a) === n(b);
 }
 
 /** The fill of ONE named field, inside the page: the origin is re-checked in the same tick, and only the marked element gets the value. */
@@ -465,9 +477,15 @@ export function fillFieldJs(origin: string, requestId: string, value: string): s
     setter.call(el, value);
     el.dispatchEvent(new Event('input', { bubbles: true }));
     el.dispatchEvent(new Event('change', { bubbles: true }));
-    // what the agent's screenshots (browser_snapshot / capture_screen) show of this field from now on is dots: the value
-    // stays in the field for the page to submit, but a plain text input or textarea is drawn like a password field
-    if (el.tagName !== 'SELECT') el.style.setProperty('-webkit-text-security', 'disc', 'important');
+    // what the agent's screenshots (browser_snapshot / capture_screen) show of this field from now on: dots for a text
+    // input or textarea (drawn like a password field), and for the input types Chrome does not dot (number, date…) an
+    // invisible value — in both the value stays in the field for the page to submit
+    const t = (el.type || '').toLowerCase();
+    if (el.tagName === 'INPUT' && /^(number|date|month|week|time|datetime-local|range)$/.test(t)) {
+      el.style.setProperty('color', 'transparent', 'important');
+      el.style.setProperty('-webkit-text-fill-color', 'transparent', 'important');
+      el.style.setProperty('caret-color', 'transparent', 'important');
+    } else if (el.tagName !== 'SELECT') el.style.setProperty('-webkit-text-security', 'disc', 'important');
     return { ok: true };
   })()`;
 }
@@ -492,7 +510,7 @@ export async function requestField(
     return { status: 'error', error: (e as Error).message, next: 'open the page that has the field with browser_open / browser_navigate, click into the field (or pass target), then call vault_fill again' };
   }
   const requestId = 'cred_' + crypto.randomBytes(9).toString('base64url');
-  let r: { origin: string; found: boolean; why?: string; tag?: string; type?: string };
+  let r: { origin: string; found: boolean; why?: string; tag?: string; type?: string; label?: string; searchy?: boolean; textarea?: boolean };
   try {
     r = await evalOn(tab, targetJs(requestId, o.target || null));
   } catch (e) {
@@ -501,16 +519,22 @@ export async function requestField(
   const origin = String(r?.origin || '');
   if (!/^https?:\/\//.test(origin)) return { status: 'error', error: `the front tab is not a web page (${origin || 'blank'})`, next: 'open the page first' };
   const host = hostOf(origin);
-  if (o.site) {
-    const want = registrable(hostOf(o.site));
-    if (want && want !== registrable(host)) return { status: 'error', error: `the front tab is on ${host}, not ${hostOf(o.site)}`, next: 'open that site first — a value goes only to the site it belongs to' };
-  }
+  // the agent's site must be this very host (www. aside) — no "same site" list decides where a value may go
+  if (o.site && !sameHost(hostOf(o.site), host)) return { status: 'error', error: `the front tab is on ${host}, not ${hostOf(o.site)}`, next: 'open that page first — a value goes only to the host it belongs to' };
   if (!r.found) return { status: 'error', error: r.why || 'no field', next: 'click into the field with browser_click, or pass target: words of its label / name / placeholder' };
+  // a search box or a free-text area echoes its content back on the page (results, a posted comment): a detail that is
+  // not plain text by its saved type (secret, a number, a code — or one the catalog does not know) never goes there
+  const types = new Set(catalogFor(origin).flatMap((e) => e.fields.filter((f) => f.name.toLowerCase() === o.field.toLowerCase()).map((f) => f.type)));
+  const plain = o.field.toLowerCase() === 'username' || (types.size > 0 && [...types].every((t) => t === 'text' || t === 'multiline' || t === 'email' || t === 'phone'));
+  if (!plain && (r.textarea || r.searchy))
+    return { status: 'error', error: `${JSON.stringify(o.field)} is not put into a ${r.textarea ? 'free-text area' : 'search box'} (${r.label || r.tag}) — such a field shows what it gets back on the page`, next: 'aim at the field made for it (a labelled input), or ask the owner with sign_in({site, human}) / request_screen' };
   const pref = prefFor(origin);
   if (pref === 'manual') return { status: 'manual', origin, host };
   for (const [id, p] of pending) if (p.sessionId === sessionId) { pending.delete(id); settle(id, 'cancel'); }
   const request: CredentialRequest = {
-    requestId, at: new Date().toISOString(), origin, host, fields: [o.field], pref, kind: 'field',
+    // a named field is never filled without a tap: the sign-in card's "auto" choice for this origin does not reach here
+    requestId, at: new Date().toISOString(), origin, host, fields: [o.field], pref: 'ask', kind: 'field',
+    page: { tag: String(r.tag || ''), type: String(r.type || ''), label: String(r.label || '') },
     ...(o.entry ? { entry: String(o.entry).slice(0, 120) } : {}),
     ...(o.reason ? { reason: String(o.reason).slice(0, 200) } : {}),
   };
@@ -585,11 +609,11 @@ export function readCatalog(): CatalogEntry[] {
   }
 }
 
-/** The entries of ONE site (its registrable domain) — what an agent may learn: names, never values. */
+/** The entries of ONE host (exactly, `www.` aside — no "same site" list) — what an agent may learn: names, never values. */
 export function catalogFor(site: string): CatalogEntry[] {
-  const want = registrable(hostOf(String(site || '')));
+  const want = hostOf(String(site || ''));
   if (!want) return [];
-  return readCatalog().filter((e) => registrable(hostOf(e.origin)) === want);
+  return readCatalog().filter((e) => sameHost(hostOf(e.origin), want));
 }
 
 export function getPending(sessionId: string, requestId: string): Pending | null {

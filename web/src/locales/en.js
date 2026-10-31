@@ -77,6 +77,7 @@ export const en = {
   'vault.fieldCard.title': '{field} for {host}',
   'vault.fieldCard.private': 'Only you see this: it goes straight into that one field on the page. The agent and the chat never get it.',
   'vault.fieldCard.fillFrom': 'Fill {field} from {entry}',
+  'vault.fieldCard.into': 'Into the page field “{label}” ({kind})',
   'vault.fieldCard.save': 'Keep it in the vault ({entry})',
   'vault.type.text': 'text',
   'vault.type.secret': 'secret',

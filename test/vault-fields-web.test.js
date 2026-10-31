@@ -133,7 +133,7 @@ test('a form (vault_collect) renders every field with its label and type, an acc
   expect(html).toContain('Details for bank.example');
   expect(html).toContain('verify the card');
   for (const f of spec) expect(html).toContain(`data-cred-field="${f.name}"`);
-  expect(html).toContain('Card number');
+  expect(html).toContain('Card number · card_number'); // an agent's label never hides the stored name
   expect(html).toMatch(/inputmode="numeric"/i);
   expect(html).toMatch(/inputmode="email"/i);
   expect(html).toContain('value="Dana"'); // the account the agent named, editable
@@ -142,24 +142,32 @@ test('a form (vault_collect) renders every field with its label and type, an acc
   expect(html).not.toContain('data-cred-manual'); // nothing to type into a page
   expect(html).not.toMatch(/type="password"/);
   // a required field is marked; an optional one is not
-  expect(html).toMatch(/Card number \*/);
+  expect(html).toMatch(/Card number · card_number \*/);
   expect(html).not.toMatch(/email \*/);
   // a multi-line field is a textarea (plain, several rows); the others are single-line inputs
   expect(html).toMatch(/<textarea[^>]*data-cred-field="notes"/);
   expect((html.match(/<textarea/g) || []).length).toBe(1);
 });
 
-test('one named field (vault_fill) renders a single dotted input, keep-in-vault, I\'ll type it myself, and the shared-desktop note when typed there', () => {
-  const html = render(h(CredentialCard, { sessionId: 's1', request: { ...base, kind: 'field', fields: ['card_number'], entry: 'Dana', reason: 'verify' } }));
+test('one named field (vault_fill) renders WHERE it goes, a single dotted input, keep-in-vault, I\'ll type it myself — and no "remember" (never automatic)', async () => {
+  const html = render(h(CredentialCard, { sessionId: 's1', request: { ...base, kind: 'field', fields: ['card_number'], entry: 'Dana', reason: 'verify', page: { tag: 'input', type: 'text', label: 'Card number' } } }));
   expect(html).toContain('data-cred-kind="field"');
   expect(html).toContain('card_number for bank.example');
+  expect(html).toContain('data-cred-target');
+  expect(html).toContain('Into the page field “Card number” (input · text)');
+  expect(html).toContain('bank.example');
   expect(html).toContain('data-cred-field="card_number"');
   expect((html.match(/data-cred-field=/g) || []).length).toBe(1);
   expect(html).toContain('-webkit-text-security:disc');
   expect(html).toContain('Keep it in the vault (Dana)');
   expect(html).toContain('data-cred-manual');
+  expect(html).not.toContain('Remember this choice'); // the per-site auto choice is a sign-in's, not a grant for named fields
   expect(html).not.toContain('data-cred-shared');
   expect(html).not.toMatch(/type="password"/);
+  // the cockpit never auto-fills a form or a named field: only a plain sign-in request (no kind) under the auto choice
+  const auto = await Bun.file(web('components/VaultAutoFill.jsx')).text();
+  expect(auto).toContain('|| r.kind ||');
+  expect(auto).not.toMatch(/fillVaultField|matchVaultField/);
   const shared = render(h(CredentialCard, { sessionId: 's1', request: { ...base, kind: 'field', fields: ['id_number'], target: 'shared', account: 'work.example' } }));
   expect(shared).toContain('data-cred-shared');
   expect(shared).toContain('work.example');

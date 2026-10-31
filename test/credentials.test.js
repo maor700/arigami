@@ -136,12 +136,15 @@ test('VAULT2: the catalog keeps ids, titles, origins and field names — whateve
       "{id:'e2',title:'',origin:'https://login.bank.example',fields:[]}," +
       "{id:'e3',title:'Other',origin:'https://other.example',fields:['pin']}," +
       "{origin:'https://noid.example',fields:['pin']},{id:'e5',title:'bad',origin:'javascript:alert(1)',fields:[]},{id:'e6',title:'path',origin:'https://x.example/path',fields:[]}]});" +
-      "emit({n,all:cr.readCatalog(),bank:cr.catalogFor('https://www.bank.example/x'),other:cr.catalogFor('other.example'),none:cr.catalogFor(''),file:require('node:fs').readFileSync(cr.CATALOG_FILE(),'utf8')});"
+      "emit({n,all:cr.readCatalog(),bank:cr.catalogFor('https://www.bank.example/x'),login:cr.catalogFor('login.bank.example'),other:cr.catalogFor('other.example'),none:cr.catalogFor(''),same:[cr.sameHost('www.bank.example','bank.example'),cr.sameHost('login.bank.example','bank.example'),cr.sameHost('',''),cr.sameHost('a.vercel.app','b.vercel.app')],file:require('node:fs').readFileSync(cr.CATALOG_FILE(),'utf8')});"
   );
   expect(out.n).toEqual({ entries: 3 });
   expect(out.all[0]).toEqual({ id: 'e1', title: 'Dana', origin: 'https://bank.example', fields: [{ name: 'card_number', type: 'number' }, { name: 'password', type: 'secret' }, { name: 'otp', type: 'otp' }] });
   expect(out.all[1].title).toBe('login.bank.example');
-  expect(out.bank.map((e) => e.id)).toEqual(['e1', 'e2']);
+  // one host (www. aside), never a "same site" list: login.bank.example is not bank.example, a.vercel.app is not b.vercel.app
+  expect(out.bank.map((e) => e.id)).toEqual(['e1']);
+  expect(out.login.map((e) => e.id)).toEqual(['e2']);
+  expect(out.same).toEqual([true, false, false, false]);
   expect(out.other).toEqual([{ id: 'e3', title: 'Other', origin: 'https://other.example', fields: [{ name: 'pin', type: 'secret' }] }]);
   expect(out.none).toEqual([]);
   for (const leak of ['4111', 'dana@example.com', 'notes', 'value', 'username']) expect(out.file).not.toContain(leak);

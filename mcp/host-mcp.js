@@ -1062,7 +1062,8 @@ export async function createArigamiServer(env = process.env) {
       description:
         'Have the host put ONE saved detail from the owner\'s vault into a field of the page in your browser — you never see the value. ' +
         'Click into the field first (browser_click), or pass target: words of its label / name / placeholder, then vault_fill({site, field}). ' +
-        'The owner approves on a card (or has approved the site before); the host types it into that one field on that site, draws the field as dots, and answers {status:"filled"} — then press the page\'s own button yourself and check with browser_snapshot. ' +
+        'The owner sees on a card which page field it goes into and taps (a named field is never automatic); the host types it into that one field on that host, draws the field as dots, and answers {status:"filled"} — then press the page\'s own button yourself and check with browser_snapshot. ' +
+        'A secret is never put into a search box or a free-text area (blocked) — aim at the field made for it. ' +
         'Only in YOUR session browser: while you are driving a sign-in in the owner\'s Chrome it is refused (finish with sign_in({site, done:true}) first, or hand the step to the owner with sign_in({site, human})). ' +
         '{status:"manual", next} — the owner types it themselves (request_screen); {status:"blocked"|"cancelled"|"expired", reason} — stop and report that one reason. ' +
         'The field names: vault_fields({site}); a missing one: vault_collect.',

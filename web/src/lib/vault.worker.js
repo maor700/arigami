@@ -198,6 +198,8 @@ const ops = {
     }
     etag = f.etag;
     used();
+    // entries from before the catalog existed become known to vault_fields on the first unlock, not the first save
+    await pushCatalog();
     return ops.status();
   },
   async lock() {
