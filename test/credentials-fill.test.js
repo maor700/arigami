@@ -71,20 +71,39 @@ test.skipIf(!chrome)('the host finds the sign-in fields, fills only them on the 
   expect(o.yearFill).toMatchObject({ filled: ['expiry'] });
   expect(o.selected).toEqual(['3', '27']); // "03" ↔ option "3"; "2027" ↔ option "27"
   expect(o.bogus).toMatchObject({ status: 409 });
-  expect(o.bogus.message).toMatch(/none of the 2 options of cmbBogus matches the saved expiry year — nothing was chosen/);
+  expect(o.bogus.message).toMatch(/none of the 2 enabled options of cmbBogus matches the saved expiry year — nothing was chosen/);
   expect(o.bogus.message).not.toContain('2027');
   expect(o.bogusValue).toBe('a');
-  // F-2: the part's shape is checked by the host before any fill — a stale client's whole expiry never lands as a month
+  // F-2: the part's shape is checked by the host before any fill; a stale client's WHOLE expiry is split in the route's
+  // memory into the asked part (compatibility), garbage is refused, the message never carries what was sent
   expect(o.staleShape).toMatchObject({ status: 400 });
   expect(o.staleShape.message).toMatch(/not a two-digit month \(01–12\).*reload it.*nothing was filled/);
-  expect(o.staleShape.message).not.toContain('03/27');
+  expect(o.staleShape.message).not.toContain('next year');
   expect(o.staleShapeValue).toBe('');
   expect(o.staleShapeOk).toEqual(['expiry']);
-  expect(o.staleShapeOkValue).toBe('03');
+  expect(o.staleShapeOkValue).toBe('03'); // "03/27" under part=month → "03", never the whole expiry
   expect(o.staleShapeSelect).toMatchObject({ status: 400 });
   expect(o.staleShapeSelect.message).toMatch(/not a four-digit year \(20YY\)/);
   expect(o.staleShapeSelect.message).not.toContain('27');
   expect(o.staleShapeSelectValue).toBe('27'); // unchanged from the earlier, well-shaped fill
+  expect(o.staleWholeSelect).toEqual(['expiry']);
+  expect(o.staleWholeSelectValue).toBe('28'); // "12/2028" under part=year → 2028 → option "28"
+  // F-5 / F-4 / F-3
+  expect(o.retryMiss).toBe(409);
+  expect(o.retryMarked).toBe(true); // the field stays marked after a miss
+  expect(o.retryHit).toEqual(['expiry']);
+  expect(o.retryValue).toBe('27');
+  expect(o.disabledOpt).toMatchObject({ status: 409 });
+  expect(o.disabledOpt.message).toMatch(/none of the 2 enabled options of cmbDis matches the saved expiry year/);
+  expect(o.disabledGroup).toBe(409);
+  expect(o.disabledOk).toEqual(['expiry']);
+  expect(o.disabledValue).toBe('27');
+  expect(o.monthNot2003).toMatchObject({ status: 409 }); // "03" is a month: never "2003"
+  expect(o.monthNot2003Value).toBe('');
+  expect(o.ambiguous).toMatchObject({ status: 409 });
+  expect(o.ambiguous.message).toMatch(/2 of the 3 enabled options of cmbAmb match the saved expiry month — nothing was chosen/);
+  expect(o.ambiguousValue).toBe('');
+  expect(o.reasonLine).toBe('month of the saved expiry → select cmbAmb'); // the line every card generation shows
   expect(o.selectHidden).toEqual([['rgba(0, 0, 0, 0)', 'none', '-1', '1', true, true], ['rgba(0, 0, 0, 0)', 'none', '-1', '1', true, true]]);
   // F-1: inert — the label is no click target, a real click on it and a programmatic focus leave the select unfocused,
   // ArrowDown / Space / F4 / ArrowUp change nothing, the pixels are the same, and the form still carries the choice
@@ -96,7 +115,7 @@ test.skipIf(!chrome)('the host finds the sign-in fields, fills only them on the 
   expect(o.inertValueAfter).toEqual(['3', '27']);
   expect(o.inertPixelsSame).toBe(true);
   expect(o.inertFormData).toEqual(['3', '27']);
-  expect(o.selectOracle).toEqual({ byText03: null, byText2027: null, guardOnSelect: true, guardOnButton: false, gate: 'filled', payButton: true });
+  expect(o.selectOracle).toEqual({ byText11: null, byText2029: null, guardOnSelect: true, guardOnButton: false, gate: 'filled', payButton: true });
   expect(o.selectPixelsSame).toBe(true);
   expect(o.plainSelectPixelsSame).toBe(false);
   expect(o.paid).toEqual({ n: '4111111111111111', m: '11', y: '29' }); // the masked input and the hidden selects all submit

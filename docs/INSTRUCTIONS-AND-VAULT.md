@@ -243,12 +243,18 @@ Three tools, all riding with the `browser` family (`server/agent-policy.ts`), no
   `MM/YYYY`, `YYYY-MM`, `MMYY`…): the **vault worker** splits it (`expiryPart`, month → two digits, year → four, a
   two-digit year is 20YY) and sends only that part; the host and the agent never see the whole value, and a value in
   an unknown format is reported as "not an expiry in a known format" without the value. The host checks the part's
-  shape itself before touching the page (`partShape`: month exactly `01`–`12`, year exactly `20YY`) — a cockpit tab
-  older than the host, which ignores `part` and sends the whole expiry, gets a 400 with a reload hint and nothing
-  filled, never a whole expiry in a month field. The card shows the source as
-  `expiry · month` and the target as `select · cmbExpiryMonth`. A `<select>` target gets the option that matches by
-  value or text, as the same number (`03` ↔ `3`) or a year by its last two digits (`2027` ↔ `27`); no match → nothing
-  chosen, the error names the select and its option count only. Every filled element is marked `data-arigami-filled`
+  shape itself before touching the page (`partShape`: month exactly `01`–`12`, year exactly `20YY`). Compatibility
+  for a cockpit tab older than the host, which ignores `part` and sends the whole expiry: the fill route splits it in
+  its own memory (`expiryPartOf`, the worker's rule) into the part that was asked for — never a whole expiry in a
+  month field; anything that is neither a well-shaped part nor a whole expiry gets a 400 with a reload hint, nothing
+  filled, and no message carries what was sent. The request's `reason` line, which every card generation shows,
+  says `month of the saved expiry → select cmbExpiryMonth`, so the target is clear on an old card too. The new card
+  shows the source as `expiry · month` and the target as `select · cmbExpiryMonth`. A `<select>` target gets the ONE
+  enabled option that matches by value or text or as the same number (`03` ↔ `3`); a year (part `year`) also by its
+  last two digits (`2027` ↔ `27`) — a month `03` never picks `2003`; disabled options and disabled optgroups are
+  skipped (they would not be submitted); two candidates are no choice. No match → nothing chosen, the request stays
+  open and the field keeps its mark so the owner can try again from the same card; the error names the select and
+  its enabled-option count only. Every filled element is marked `data-arigami-filled`
   and, for a select, drawn transparent and made **`inert`** (plus `pointer-events: none`, `tabindex=-1`): no click —
   not through its `<label>` either — no focus (programmatic or Tab) and no key reaches it, so the native dropdown can
   never open, while the value stays in the form's submission (unlike `disabled`). `browser_click` refuses its spot and
@@ -256,6 +262,9 @@ Three tools, all riding with the `browser` family (`server/agent-policy.ts`), no
   (`humanGate` reason `filled`), and two different choices render byte-identical screenshots (pinned in
   `test/credentials-fill.test.js`: label click, programmatic focus, ArrowDown / Space / F4 via CDP — the value, the
   focus and the pixels unchanged, FormData still carrying it). Residual: the option list itself is public (months, years).
+  **Intentional hardening (review F-6):** the same mark is on every filled input and textarea too — `browser_click`
+  refuses a filled field and its `<label>`, click-by-text skips both, `browser_type` refuses while a filled field has
+  the focus. An agent presses the page's own buttons; it never touches a filled field again.
 - **The owner's side** — Settings › Connections › Passwords lists each entry's fields by name and type; the owner can add
   a field (name, type, value), replace one, **Reveal** / **Copy** a value (their own click, in their own tab, shown for
   20 s), remove one, and add an entry by hand (site, account name, username). The worker's `reveal` op is the one op

@@ -31,6 +31,10 @@ const PAGES: Record<string, string> = {
     <label for="cmbBogus">Bogus</label><select id="cmbBogus" name="cmbBogus"><option value="a">A</option><option value="b">B</option></select>
     <label for="cmbPlain">Plain</label><select id="cmbPlain" name="cmbPlain"><option value="x">X</option><option value="y">Y</option></select>
     <label for="txtExpiry">Expiry (text)</label><input id="txtExpiry" name="txtExpiry">
+    <label for="cmbRetry">Retry</label><select id="cmbRetry" name="cmbRetry"><option value="">--</option><option value="26">2026</option><option value="27">2027</option></select>
+    <label for="cmbDis">Disabled</label><select id="cmbDis" name="cmbDis"><option value="">--</option><option value="26" disabled>2026</option><optgroup label="old" disabled><option value="28">2028</option></optgroup><option value="27">2027</option></select>
+    <label for="cmbY03">Years with 2003</label><select id="cmbY03" name="cmbY03"><option value="">--</option><option value="2003">2003</option><option value="2027">2027</option></select>
+    <label for="cmbAmb">Ambiguous</label><select id="cmbAmb" name="cmbAmb"><option value="">--</option><option value="3">March</option><option value="03">03</option></select>
     <button id="paySubmit" type="submit">Pay</button></form>`,
 };
 const server = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: (req) => new Response(`<!doctype html><title>t</title>${PAGES[new URL(req.url).pathname] || ''}`, { headers: { 'content-type': 'text/html' } }) });
@@ -208,18 +212,49 @@ try {
   if (fBog.status !== 'pending') throw new Error('no bogus request: ' + JSON.stringify(fBog));
   out.bogus = await cr.fill(sid, fBog.request.requestId, { expiry: '2027' }).then(() => 'filled', (e) => ({ message: e.message, status: e.status }));
   out.bogusValue = await ev("document.querySelector('#cmbBogus').value");
-  // F-2: an older cockpit that ignores `part` sends the WHOLE expiry — into an input under part=month it is refused before
-  // the page is touched, the field stays empty, the message carries no value; a well-shaped month lands
+  // F-5: a miss leaves the request open and the field marked — the next try on the same card lands
+  const fR = await cr.requestField(sid, { field: 'expiry', part: 'year', target: 'retry' });
+  if (fR.status !== 'pending') throw new Error('no retry request: ' + JSON.stringify(fR));
+  out.retryMiss = await cr.fill(sid, fR.request.requestId, { expiry: '2031' }).then(() => 'filled', (e) => e.status);
+  out.retryMarked = await ev("document.querySelector('#cmbRetry').getAttribute('data-arigami-fill') !== null");
+  out.retryHit = await cr.fill(sid, fR.request.requestId, { expiry: '2027' }).then((r) => r.filled, (e) => e.message);
+  out.retryValue = await ev("document.querySelector('#cmbRetry').value");
+  // F-4: a disabled option, or one inside a disabled optgroup, is never chosen (it would not be submitted)
+  const fD = await cr.requestField(sid, { field: 'expiry', part: 'year', target: 'disabled' });
+  if (fD.status !== 'pending') throw new Error('no disabled request: ' + JSON.stringify(fD));
+  out.disabledOpt = await cr.fill(sid, fD.request.requestId, { expiry: '2026' }).then(() => 'filled', (e) => ({ message: e.message, status: e.status }));
+  out.disabledGroup = await cr.fill(sid, fD.request.requestId, { expiry: '2028' }).then(() => 'filled', (e) => e.status);
+  out.disabledOk = await cr.fill(sid, fD.request.requestId, { expiry: '2027' }).then((r) => r.filled, (e) => e.message);
+  out.disabledValue = await ev("document.querySelector('#cmbDis').value");
+  // F-3: the 2↔4-digit rule is a YEAR rule — a month "03" never picks "2003"; two candidates are no choice
+  const fY03 = await cr.requestField(sid, { field: 'expiry', part: 'month', target: 'years with 2003' });
+  if (fY03.status !== 'pending') throw new Error('no y03 request: ' + JSON.stringify(fY03));
+  out.monthNot2003 = await cr.fill(sid, fY03.request.requestId, { expiry: '03' }).then(() => 'filled', (e) => ({ message: e.message, status: e.status }));
+  out.monthNot2003Value = await ev("document.querySelector('#cmbY03').value");
+  const fAmb = await cr.requestField(sid, { field: 'expiry', part: 'month', target: 'ambiguous' });
+  if (fAmb.status !== 'pending') throw new Error('no ambiguous request: ' + JSON.stringify(fAmb));
+  out.ambiguous = await cr.fill(sid, fAmb.request.requestId, { expiry: '03' }).then(() => 'filled', (e) => ({ message: e.message, status: e.status }));
+  out.ambiguousValue = await ev("document.querySelector('#cmbAmb').value");
+  out.reasonLine = fAmb.request.reason;
+  // F-2: an older cockpit that ignores `part` sends the WHOLE expiry — the host splits it in this route's memory into
+  // the part that was asked for (never a whole expiry in a month field); garbage is refused before the page is touched,
+  // the field stays empty and the message carries no value
   const fS = await cr.requestField(sid, { field: 'expiry', part: 'month', target: 'txtExpiry' });
   if (fS.status !== 'pending') throw new Error('no txtExpiry request: ' + JSON.stringify(fS));
-  out.staleShape = await cr.fill(sid, fS.request.requestId, { expiry: '03/27' }).then(() => 'filled', (e) => ({ message: e.message, status: e.status }));
+  out.staleShape = await cr.fill(sid, fS.request.requestId, { expiry: 'next year' }).then(() => 'filled', (e) => ({ message: e.message, status: e.status }));
   out.staleShapeValue = await ev("document.querySelector('#txtExpiry').value");
-  out.staleShapeOk = await cr.fill(sid, fS.request.requestId, { expiry: '03' }).then((r) => r.filled, (e) => e.message);
+  out.staleShapeOk = await cr.fill(sid, fS.request.requestId, { expiry: '03/27' }).then((r) => r.filled, (e) => e.message);
   out.staleShapeOkValue = await ev("document.querySelector('#txtExpiry').value");
   const fS2 = await cr.requestField(sid, { field: 'expiry', part: 'year', target: 'cmbExpiryYear' });
   if (fS2.status !== 'pending') throw new Error('no year-shape request: ' + JSON.stringify(fS2));
   out.staleShapeSelect = await cr.fill(sid, fS2.request.requestId, { expiry: '27' }).then(() => 'filled', (e) => ({ message: e.message, status: e.status }));
   out.staleShapeSelectValue = await ev("document.querySelector('#cmbExpiryYear').value");
+  out.staleWholeSelect = await cr.fill(sid, fS2.request.requestId, { expiry: '12/2028' }).then((r) => r.filled, (e) => e.message);
+  out.staleWholeSelectValue = await ev("document.querySelector('#cmbExpiryYear').value");
+  // put the year back to what the inert checks below expect
+  const fS3 = await cr.requestField(sid, { field: 'expiry', part: 'year', target: 'cmbExpiryYear' });
+  if (fS3.status !== 'pending') throw new Error('no year-restore request: ' + JSON.stringify(fS3));
+  await cr.fill(sid, fS3.request.requestId, { expiry: '2027' });
   // hidden and off-limits: transparent text, no pointer events, not in the Tab order, marked; both selects
   out.selectHidden = await ev("['#cmbExpiryMonth','#cmbExpiryYear'].map((s) => { const el = document.querySelector(s); const cs = getComputedStyle(el); return [cs.color, cs.pointerEvents, el.getAttribute('tabindex'), el.getAttribute('data-arigami-filled'), el.inert, el.hasAttribute('inert')]; })");
   // F-1: the select is INERT — its <label>, a programmatic focus and real keys (what desktop_keyboard sends) can neither
@@ -263,8 +298,9 @@ try {
   await cr.fill(sid, fN2.request.requestId, { card_number: '4111111111111111' });
   await ev("document.querySelector('#txtNumber').focus()");
   out.selectOracle = {
-    byText03: await ev(ba2.findClickableJs('03')),
-    byText2027: await ev(ba2.findClickableJs('2027')),
+    // option texts that exist only in the FILLED selects ('03' / '2027' also sit in the unfilled test selects, which stay clickable)
+    byText11: await ev(ba2.findClickableJs('11')),
+    byText2029: await ev(ba2.findClickableJs('2029')),
     guardOnSelect: await ev(ba2.clickGuardJs(mx, my)),
     guardOnButton: await ev(ba2.clickGuardJs(bx, by)),
     gate: (await ba2.humanGate(sid)).reason || null,

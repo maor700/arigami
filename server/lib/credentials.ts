@@ -107,6 +107,26 @@ export interface CredentialRequest {
 export type FieldPart = 'value' | 'month' | 'year';
 export const FIELD_PARTS: FieldPart[] = ['value', 'month', 'year'];
 export const fieldPart = (raw: unknown): FieldPart | null => (raw === undefined || raw === null || raw === '' ? 'value' : FIELD_PARTS.includes(raw as FieldPart) ? (raw as FieldPart) : null);
+/**
+ * Pure: the part of a whole expiry — the worker's rule, kept here only for a cockpit tab older than the host that sends
+ * the whole value (MM/YY, MM/YYYY, M/YY, MM-YY, MM.YY, MMYY, YYYY-MM, YYYY/MM); month → two digits, year → four. Null
+ * for anything else. Runs in the fill route's memory and nowhere else.
+ */
+export function expiryPartOf(value: string, part: FieldPart): string | null {
+  if (part === 'value') return value;
+  const s = String(value ?? '').trim();
+  let mm: string | null = null, yy: string | null = null, m: RegExpExecArray | null;
+  if ((m = /^(\d{1,2})\s*[/\-. ]\s*(\d{2}|\d{4})$/.exec(s))) { mm = m[1]; yy = m[2]; }
+  else if ((m = /^(\d{4})\s*[/\-. ]\s*(\d{1,2})$/.exec(s))) { yy = m[1]; mm = m[2]; }
+  else if ((m = /^(\d{2})(\d{2})$/.exec(s))) { mm = m[1]; yy = m[2]; }
+  else return null;
+  const month = Number(mm);
+  if (!(month >= 1 && month <= 12)) return null;
+  const year = yy.length === 2 ? 2000 + Number(yy) : Number(yy);
+  if (!(year >= 2000 && year <= 2099)) return null;
+  return part === 'month' ? String(month).padStart(2, '0') : String(year);
+}
+
 /** Pure: what the worker may send for a part — a month is exactly two digits 01–12, a year exactly 20YY. Returns the complaint (never the value) or null. */
 export function partShape(part: FieldPart | undefined, value: string): string | null {
   if (!part || part === 'value') return null;
@@ -480,27 +500,34 @@ export function sameHost(a: string, b: string): boolean {
 }
 
 /** The fill of ONE named field, inside the page: the origin is re-checked in the same tick, and only the marked element gets the value. */
-export function fillFieldJs(origin: string, requestId: string, value: string): string {
+export function fillFieldJs(origin: string, requestId: string, value: string, part: FieldPart = 'value'): string {
   return `(() => {
     if (location.origin !== ${JSON.stringify(origin)}) return { error: 'origin', origin: location.origin };
     const el = document.querySelector('[data-arigami-fill=' + JSON.stringify(${JSON.stringify(requestId)}) + ']');
     if (!el) return { error: 'gone' };
-    el.removeAttribute('data-arigami-fill');
     const value = ${JSON.stringify(value)};
-    // the element is marked as holding a vault value: the browser tools refuse to click, type into or match it from now on
-    const hide = (props) => { for (const [k, v] of props) el.style.setProperty(k, v, 'important'); el.setAttribute('data-arigami-filled', '1'); };
+    const part = ${JSON.stringify(part)};
+    // the element is marked as holding a vault value: the browser tools refuse to click, type into or match it from now
+    // on; the request's own mark goes only once the fill succeeded, so a miss (no option) leaves the card retryable
+    const hide = (props) => { for (const [k, v] of props) el.style.setProperty(k, v, 'important'); el.removeAttribute('data-arigami-fill'); el.setAttribute('data-arigami-filled', '1'); };
     if (el.tagName === 'SELECT') {
-      // a <select>: the option that matches what the worker sent — by value or text, as the same number ("03" ↔ "3"),
-      // or a year by its last two digits ("2027" ↔ "27"); the selection is never reported back, only that one matched
+      // a <select>: the ONE enabled option that matches what the worker sent — by value or text, or as the same number
+      // ("03" ↔ "3"); a year (part "year") also by its last two digits ("2027" ↔ "27"). Two candidates = no choice.
+      // The selection is never reported back, only that one matched
       const norm = (s) => String(s ?? '').trim();
       const digits = (s) => /^\\d+$/.test(s);
-      const opts = [...el.options];
+      const enabled = (o) => !o.disabled && !(o.parentElement && o.parentElement.tagName === 'OPTGROUP' && o.parentElement.disabled);
+      const opts = [...el.options].filter(enabled);
       const want = norm(value);
-      const match = opts.find((o) => norm(o.value) === want || norm(o.text) === want)
-        || (digits(want) ? opts.find((o) => (digits(norm(o.value)) && Number(norm(o.value)) === Number(want)) || (digits(norm(o.text)) && Number(norm(o.text)) === Number(want))) : null)
-        || (digits(want) && want.length === 4 ? opts.find((o) => norm(o.value) === want.slice(2) || norm(o.text) === want.slice(2)) : null)
-        || (digits(want) && want.length === 2 ? opts.find((o) => (/^\\d{4}$/.test(norm(o.value)) && norm(o.value).slice(2) === want) || (/^\\d{4}$/.test(norm(o.text)) && norm(o.text).slice(2) === want)) : null);
-      if (!match) return { error: 'nomatch', options: opts.length };
+      const hits = new Set();
+      for (const o of opts) {
+        const v = norm(o.value), t = norm(o.text);
+        if (v === want || t === want) hits.add(o);
+        else if (digits(want) && ((digits(v) && Number(v) === Number(want)) || (digits(t) && Number(t) === Number(want)))) hits.add(o);
+        else if (part === 'year' && digits(want) && want.length === 4 && (v === want.slice(2) || t === want.slice(2))) hits.add(o);
+      }
+      if (hits.size !== 1) return { error: 'nomatch', options: opts.length, candidates: hits.size };
+      const match = [...hits][0];
       Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'selectedIndex').set.call(el, match.index);
       el.dispatchEvent(new Event('input', { bubbles: true }));
       el.dispatchEvent(new Event('change', { bubbles: true }));
@@ -577,7 +604,11 @@ export async function requestField(
     page: { tag: String(r.tag || ''), type: String(r.type || ''), label: String(r.label || ''), ...(r.id ? { id: String(r.id) } : {}), ...(r.name ? { name: String(r.name) } : {}) },
     ...(o.part && o.part !== 'value' ? { part: o.part } : {}),
     ...(o.entry ? { entry: String(o.entry).slice(0, 120) } : {}),
-    ...(o.reason ? { reason: String(o.reason).slice(0, 200) } : {}),
+    // the reason is the one line every card generation shows: a part and its target go in it too, so a cockpit tab
+    // that predates `part` / `page.name` still says "month of the saved expiry → select cmbExpiryMonth"
+    ...(o.part && o.part !== 'value'
+      ? { reason: `${o.part} of the saved ${o.field} → ${r.tag} ${r.name || r.id || r.label || ''}`.trim().slice(0, 120) + (o.reason ? ` — ${String(o.reason).slice(0, 80)}` : '') }
+      : o.reason ? { reason: String(o.reason).slice(0, 200) } : {}),
   };
   pending.set(requestId, { sessionId, origin, tabId: tab.id, fields: [o.field], at: Date.now(), request });
   return { status: 'pending', request };
@@ -588,17 +619,21 @@ async function fillField(sessionId: string, requestId: string, p: Pending, value
   const value = values[name];
   if (typeof value !== 'string') throw new FillError(`the card was for ${JSON.stringify(name)}, and no value for it was given`, 400);
   // the part's shape is the contract, checked here before anything touches the page: a cockpit tab older than this
-  // host ignores `part` and sends the whole expiry — it must never land as a "month" in an input; the message never
-  // carries what was sent
-  const shape = partShape(p.request.part, value);
-  if (shape) throw new FillError(`${shape} — the cockpit tab may be older than the host: reload it (Ctrl+Shift+R); nothing was filled`, 400);
+  // host ignores `part` and sends the whole expiry. Compatibility, in this route's memory only: a whole expiry in a
+  // known format is split here (the same rule as the worker's) into the part that was asked for; anything else is
+  // refused, and no message ever carries what was sent
+  const part = p.request.part || 'value';
+  const sent = partShape(part, value) ? expiryPartOf(value, part) : value;
+  if (sent === null || partShape(part, sent)) throw new FillError(`${partShape(part, value)} — the cockpit tab may be older than the host: reload it (Ctrl+Shift+R); nothing was filled`, 400);
   const tab = (await listTabs(sessionId)).find((t) => t.id === p.tabId && t.webSocketDebuggerUrl);
   if (!tab) throw new FillError('the tab with the field was closed', 410);
-  const r = (await evalOn(tab, fillFieldJs(p.origin, requestId, value))) as { error?: string; ok?: boolean; options?: number };
+  const r = (await evalOn(tab, fillFieldJs(p.origin, requestId, sent, part))) as { error?: string; ok?: boolean; options?: number; candidates?: number };
   if (r?.error === 'origin') throw new FillError(`the tab is no longer on ${hostOf(p.origin)} — nothing was filled`);
   if (r?.error === 'gone') throw new FillError('the field is no longer on the page — nothing was filled', 410);
-  // a <select> with no option for the saved value: nothing is chosen, and nothing about the value is said
-  if (r?.error === 'nomatch') throw new FillError(`none of the ${r.options ?? 0} options of ${p.request.page?.name || p.request.page?.id || 'the select'} matches the saved ${name}${p.request.part && p.request.part !== 'value' ? ` ${p.request.part}` : ''} — nothing was chosen`, 409);
+  // a <select> with no (or more than one) enabled option for the saved value: nothing is chosen, the card stays up for
+  // another try, and nothing about the value is said
+  if (r?.error === 'nomatch')
+    throw new FillError(`${r.candidates ? `${r.candidates} of the` : 'none of the'} ${r.options ?? 0} enabled options of ${p.request.page?.name || p.request.page?.id || 'the select'} match${r.candidates ? '' : 'es'} the saved ${name}${part !== 'value' ? ` ${part}` : ''} — nothing was chosen`, 409);
   pending.delete(requestId);
   settle(requestId, 'filled');
   return { filled: [name], submitted: false, origin: p.origin };
