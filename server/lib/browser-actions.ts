@@ -57,6 +57,9 @@ export function clickGuardJs(x: number, y: number): string {
     const x = ${Number(x)}, y = ${Number(y)};
     const el = document.elementFromPoint(x, y);
     if (el && el.closest && el.closest('[data-arigami-filled]')) return true;
+    // the <label> of a filled field: a click on it would focus the field
+    const label = el && el.closest && el.closest('label');
+    if (label && ((label.control && label.control.closest('[data-arigami-filled]')) || label.querySelector('[data-arigami-filled]'))) return true;
     return [...document.querySelectorAll('[data-arigami-filled]')].some((f) => { const r = f.getBoundingClientRect(); return r.width > 0 && r.height > 0 && x >= r.left && x <= r.right && y >= r.top && y <= r.bottom; });
   })()`;
 }
@@ -88,6 +91,8 @@ export function findClickableJs(text: string): string {
     let best = null, bestLen = Infinity;
     for (const el of nodes) {
       if (el.closest && el.closest('[data-arigami-filled]')) continue; // a field the host filled from the vault, or its label-less wrapper
+      // a <label> of a filled field focuses it when clicked: not a target either
+      if (el.tagName === 'LABEL' && ((el.control && el.control.closest('[data-arigami-filled]')) || el.querySelector('[data-arigami-filled]'))) continue;
       const tag = el.tagName;
       const type = (el.type || '').toLowerCase();
       const buttonLike = tag === 'INPUT' && ['button', 'submit', 'reset', 'image'].includes(type);

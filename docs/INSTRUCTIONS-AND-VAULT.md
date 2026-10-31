@@ -246,11 +246,13 @@ Three tools, all riding with the `browser` family (`server/agent-policy.ts`), no
   `expiry · month` and the target as `select · cmbExpiryMonth`. A `<select>` target gets the option that matches by
   value or text, as the same number (`03` ↔ `3`) or a year by its last two digits (`2027` ↔ `27`); no match → nothing
   chosen, the error names the select and its option count only. Every filled element is marked `data-arigami-filled`
-  and, for a select, drawn transparent, `pointer-events: none`, `tabindex=-1`: `browser_click` refuses its spot
-  (`clickGuardJs`), click-by-text skips it, `browser_type` refuses while it has the focus (`humanGate` reason
-  `filled`), and two different choices render byte-identical screenshots (pinned in `test/credentials-fill.test.js`,
-  with the page's submit still carrying the choice). Residuals: a native dropdown opened by the owner's own keyboard on
-  the session desktop would show the choice; the option list itself is public (months, years).
+  and, for a select, drawn transparent and made **`inert`** (plus `pointer-events: none`, `tabindex=-1`): no click —
+  not through its `<label>` either — no focus (programmatic or Tab) and no key reaches it, so the native dropdown can
+  never open, while the value stays in the form's submission (unlike `disabled`). `browser_click` refuses its spot and
+  its label's (`clickGuardJs`), click-by-text skips both, `browser_type` refuses while a filled field has the focus
+  (`humanGate` reason `filled`), and two different choices render byte-identical screenshots (pinned in
+  `test/credentials-fill.test.js`: label click, programmatic focus, ArrowDown / Space / F4 via CDP — the value, the
+  focus and the pixels unchanged, FormData still carrying it). Residual: the option list itself is public (months, years).
 - **The owner's side** — Settings › Connections › Passwords lists each entry's fields by name and type; the owner can add
   a field (name, type, value), replace one, **Reveal** / **Copy** a value (their own click, in their own tab, shown for
   20 s), remove one, and add an entry by hand (site, account name, username). The worker's `reveal` op is the one op

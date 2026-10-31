@@ -497,10 +497,13 @@ export function fillFieldJs(origin: string, requestId: string, value: string): s
       Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'selectedIndex').set.call(el, match.index);
       el.dispatchEvent(new Event('input', { bubbles: true }));
       el.dispatchEvent(new Event('change', { bubbles: true }));
-      // the chosen option's text is drawn transparent, the control cannot be opened by a click or reached by Tab (a
-      // native dropdown would show the selection highlighted); the value stays for the page to submit
+      // the chosen option's text is drawn transparent, and the control is made INERT: no click (not even through its
+      // <label>), no focus (programmatic or by Tab) and no key reaches it, so a native dropdown — which would show the
+      // selection highlighted — can never open. Unlike 'disabled', inert keeps the value in the form's submission.
       hide([['color', 'transparent'], ['-webkit-text-fill-color', 'transparent'], ['pointer-events', 'none']]);
       el.setAttribute('tabindex', '-1');
+      el.inert = true;
+      el.setAttribute('inert', '');
       el.blur();
       return { ok: true };
     }

@@ -177,7 +177,8 @@ try {
     valueDigit: await ev(ba.findClickableJs('4')),
     note: await ev(ba.findClickableJs('SECRET-NOTE')),
     number: await ev(ba.findClickableJs('1234')),
-    label: (await ev(ba.findClickableJs('Card number'))) !== null,
+    label: (await ev(ba.findClickableJs('Card number'))) !== null, // the label of a FILLED field: skipped (F-1)
+    labelFree: (await ev(ba.findClickableJs('Expiry'))) !== null, // the label of a field not filled: still a target
     button: (await ev(ba.findClickableJs('Verify'))) !== null,
     placeholder: (await ev(ba.findClickableJs('Search'))) !== null,
   };
@@ -207,12 +208,47 @@ try {
   out.bogus = await cr.fill(sid, fBog.request.requestId, { expiry: '2027' }).then(() => 'filled', (e) => ({ message: e.message, status: e.status }));
   out.bogusValue = await ev("document.querySelector('#cmbBogus').value");
   // hidden and off-limits: transparent text, no pointer events, not in the Tab order, marked; both selects
-  out.selectHidden = await ev("['#cmbExpiryMonth','#cmbExpiryYear'].map((s) => { const el = document.querySelector(s); const cs = getComputedStyle(el); return [cs.color, cs.pointerEvents, el.getAttribute('tabindex'), el.getAttribute('data-arigami-filled')]; })");
+  out.selectHidden = await ev("['#cmbExpiryMonth','#cmbExpiryYear'].map((s) => { const el = document.querySelector(s); const cs = getComputedStyle(el); return [cs.color, cs.pointerEvents, el.getAttribute('tabindex'), el.getAttribute('data-arigami-filled'), el.inert, el.hasAttribute('inert')]; })");
+  // F-1: the select is INERT — its <label>, a programmatic focus and real keys (what desktop_keyboard sends) can neither
+  // focus, change nor open it; the value is still what the owner approved, the pixels unchanged, the form still submits it
+  const labelCentre = await ev("(() => { const r = document.querySelector('label[for=\"cmbExpiryMonth\"]').getBoundingClientRect(); return [Math.round(r.x + r.width / 2), Math.round(r.y + r.height / 2)]; })()");
+  const page = (await cdp.listTabs(sid)).find((t) => t.type === 'page' && t.webSocketDebuggerUrl)!;
+  const key = async (k: string, code: string, vk: number) => {
+    for (const type of ['keyDown', 'keyUp']) await cdp.cdpCall(page.webSocketDebuggerUrl!, 'Input.dispatchKeyEvent', { type, key: k, code, windowsVirtualKeyCode: vk });
+  };
+  await ev('document.activeElement && document.activeElement.blur()');
+  await sleep(100);
+  const inertBefore = await cdp.pageScreenshot(sid);
+  out.inertLabelByText = await ev(ba2.findClickableJs('Expiry month'));
+  out.inertLabelGuard = await ev(ba2.clickGuardJs(labelCentre[0], labelCentre[1]));
+  await cdp.pageClick(sid, labelCentre[0], labelCentre[1]); // a real click on the label
+  await sleep(100);
+  out.inertAfterLabelClick = await ev("document.activeElement ? (document.activeElement.id || document.activeElement.tagName) : null");
+  await key('ArrowDown', 'ArrowDown', 40);
+  await key(' ', 'Space', 32);
+  await key('F4', 'F4', 115);
+  await ev("document.querySelector('#cmbExpiryMonth').focus()"); // programmatic focus
+  out.inertAfterFocus = await ev("document.activeElement ? (document.activeElement.id || document.activeElement.tagName) : null");
+  await key('ArrowDown', 'ArrowDown', 40);
+  await key(' ', 'Space', 32);
+  await ev("document.querySelector('label[for=\"cmbExpiryMonth\"]').click()"); // a scripted label click
+  await key('ArrowUp', 'ArrowUp', 38);
+  await sleep(150);
+  out.inertValueAfter = await ev("[document.querySelector('#cmbExpiryMonth').value, document.querySelector('#cmbExpiryYear').value]");
+  out.inertFocusAfter = await ev("document.activeElement ? (document.activeElement.id || document.activeElement.tagName) : null");
+  await ev('document.activeElement && document.activeElement.blur()');
+  await sleep(100);
+  out.inertPixelsSame = inertBefore.equals(await cdp.pageScreenshot(sid));
+  out.inertFormData = await ev("(() => { const fd = new FormData(document.querySelector('#pay')); return [fd.get('cmbExpiryMonth'), fd.get('cmbExpiryYear')]; })()");
   // no oracle: the selects' option texts match nothing by click-text, the click guard refuses their spot, typing into a focused one is refused
   const centre = (s: string) => ev(`(() => { const r = document.querySelector('${s}').getBoundingClientRect(); return [Math.round(r.x + r.width / 2), Math.round(r.y + r.height / 2)]; })()`);
   const [mx, my] = await centre('#cmbExpiryMonth');
   const [bx, by] = await centre('#paySubmit');
-  await ev("document.querySelector('#cmbExpiryMonth').focus()");
+  // the gate: an inert select cannot take the focus at all; a filled INPUT can, and typing into it is refused (reason 'filled')
+  const fN2 = await cr.requestField(sid, { site: '127.0.0.1', field: 'card_number', target: 'txtNumber' });
+  if (fN2.status !== 'pending') throw new Error('no txtNumber request: ' + JSON.stringify(fN2));
+  await cr.fill(sid, fN2.request.requestId, { card_number: '4111111111111111' });
+  await ev("document.querySelector('#txtNumber').focus()");
   out.selectOracle = {
     byText03: await ev(ba2.findClickableJs('03')),
     byText2027: await ev(ba2.findClickableJs('2027')),
