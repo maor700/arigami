@@ -1024,6 +1024,58 @@ export async function createArigamiServer(env = process.env) {
         ...(a.fill ? { fill: a.fill } : {}), ...(a.human ? { human: a.human } : {}), ...(a.done === true ? { done: true } : {}),
       }),
     },
+    // VAULT2: the owner's named details beyond a sign-in — a card number, an ID number, a customer code. Names and
+    // outcomes reach the model; a value goes cockpit → host → the page, never through a tool result.
+    {
+      name: 'vault_fields',
+      description:
+        "Which details the owner's vault holds for a site — entries (accounts) with their FIELD NAMES and types, never a value. " +
+        'Call it before vault_fill to learn the names, and before vault_collect to see what is missing. ' +
+        'Standard names: username, password, otp; anything else is a name the owner or an agent gave (e.g. "card_number", "id_number", "expiry").',
+      inputSchema: obj({
+        site: { type: 'string', description: 'The site the details belong to (a domain or url)' },
+        ...SID_PROP,
+      }, ['site']),
+      run: (a) => api('GET', `/__api/sessions/${sid(a)}/vault/fields?site=${encodeURIComponent(a.site)}`),
+    },
+    {
+      name: 'vault_collect',
+      description:
+        'Ask the human for private details you need for a site (card number and expiry, an ID number, a customer code…) on a SECURE FORM only they see: the cockpit encrypts what they type straight into their vault; ' +
+        'you get back {status:"saved", entry:{id, title, fields:[names]}} and never a value. Then vault_fill puts a field into a page. ' +
+        'Never ask for such details in the chat. {status:"cancelled"|"expired", reason} — stop and tell the human that one reason. It waits for the human (up to 30 minutes).',
+      inputSchema: obj({
+        site: { type: 'string', description: 'The site the details are for (a domain) — the entry is matched to it on fill' },
+        fields: {
+          type: 'array',
+          description: 'The fields to ask for, in order. type shapes the input only: secret (default, dots) | text | multiline (notes) | number | date | email | phone | otp (a TOTP secret / otpauth:// URI)',
+          items: { type: 'object', properties: { name: { type: 'string', description: 'The field name you will fill by (≤ 64 chars, any language)' }, type: { type: 'string', enum: ['secret', 'text', 'multiline', 'number', 'date', 'email', 'phone', 'otp'] }, label: { type: 'string', description: 'What the human sees on the form (the name when absent)' }, required: { type: 'boolean' } }, required: ['name'] },
+        },
+        title: { type: 'string', description: 'The entry (account) these belong to, when the owner has more than one for the site — e.g. a person\'s name' },
+        reason: { type: 'string', description: 'One short line the human sees: what you need these for' },
+        ...SID_PROP,
+      }, ['site', 'fields']),
+      run: (a) => blockingCall(`/__api/sessions/${sid(a)}/vault/collect`, { site: a.site, fields: a.fields, ...(a.title ? { title: a.title } : {}), ...(a.reason ? { reason: a.reason } : {}) }),
+    },
+    {
+      name: 'vault_fill',
+      description:
+        'Have the host put ONE saved detail from the owner\'s vault into a field of the page in your browser — you never see the value. ' +
+        'Click into the field first (browser_click), or pass target: words of its label / name / placeholder, then vault_fill({site, field}). ' +
+        'The owner approves on a card (or has approved the site before); the host types it into that one field on that site, draws the field as dots, and answers {status:"filled"} — then press the page\'s own button yourself and check with browser_snapshot. ' +
+        'Only in YOUR session browser: while you are driving a sign-in in the owner\'s Chrome it is refused (finish with sign_in({site, done:true}) first, or hand the step to the owner with sign_in({site, human})). ' +
+        '{status:"manual", next} — the owner types it themselves (request_screen); {status:"blocked"|"cancelled"|"expired", reason} — stop and report that one reason. ' +
+        'The field names: vault_fields({site}); a missing one: vault_collect.',
+      inputSchema: obj({
+        site: { type: 'string', description: 'The site the detail belongs to (a domain or url) — it is filled only on that site' },
+        field: { type: 'string', description: 'The saved field\'s name (username | password | otp, or a name from vault_fields / vault_collect)' },
+        entry: { type: 'string', description: 'Which entry (account) when the owner has several for the site: its title or id from vault_fields' },
+        target: { type: 'string', description: 'Words of the page field\'s label / name / placeholder, instead of clicking into it first' },
+        reason: { type: 'string', description: 'One short line the owner sees on the card' },
+        ...SID_PROP,
+      }, ['site', 'field']),
+      run: (a) => blockingCall(`/__api/sessions/${sid(a)}/vault/fill`, { site: a.site, field: a.field, ...(a.entry ? { entry: a.entry } : {}), ...(a.target ? { target: a.target } : {}), ...(a.reason ? { reason: a.reason } : {}) }),
+    },
     {
       name: 'browser_logins',
       description:

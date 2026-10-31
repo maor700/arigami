@@ -74,6 +74,16 @@ export const matchVault = (origin) => call('match', { origin });
 export const removeVaultEntry = (id) => call('remove', { id });
 /** Fill a pending sign-in request: `{sessionId, requestId, origin, fields, entryId?|values?, save, remember, auto}`. */
 export const fillFromVault = (args) => call('fill', args);
+// VAULT2: named fields. None of these returns a value to the page except `revealVaultField`, which the owner asks for
+// by a click of their own on the Passwords page.
+export const vaultEntry = (id) => call('entry', { id });
+/** Create or update an entry: `{id?, origin, title?, username?, fields:[{name,type,value}], remove?:[names]}` → its description (names only). */
+export const saveVaultFields = (args) => call('saveFields', args);
+export const revealVaultField = (id, name) => call('reveal', { id, name });
+/** Entries of the origin that hold `field`, narrowed by the agent's `entry` hint. */
+export const matchVaultField = (origin, field, entry) => call('matchField', { origin, field, entry });
+/** Fill ONE named field of a pending request: `{sessionId, requestId, origin, field, entryId?|value?, save, saveTo?, title?, remember, auto}`. */
+export const fillVaultField = (args) => call('fillField', args);
 
 export function useVault() {
   return useSyncExternalStore(

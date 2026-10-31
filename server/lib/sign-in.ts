@@ -198,6 +198,27 @@ export function sharedFillGuard(f: FillFacts): FillGate {
   return { ok: true, origin: u.origin, host: u.hostname };
 }
 
+// ---- VAULT2: where a named vault value may be typed (pure) -----------------------------------------------------------
+
+export type VaultFillTarget = { target: 'session-browser' } | { target: 'refused'; reason: string; next: string };
+
+/**
+ * Pure: vault_fill (a named detail — a card number, an ID number) types only into the session's own browser, where the
+ * host masks the filled field before the agent's next screenshot. The owner's Chrome on the shared desktop has no DOM for
+ * the host, so a value typed there would stand as plain text in desktop_screenshot: while this session drives a sign-in
+ * there, the call is refused before a card goes up or a value moves. sign_in({fill}) for the sign-in roles is untouched.
+ */
+export function vaultFillTarget(f: { signInRunning: boolean; holdsShared: boolean; site: string | null }): VaultFillTarget {
+  if (f.signInRunning && f.holdsShared) {
+    return {
+      target: 'refused',
+      reason: `vault_fill types only in your own session browser (where the host masks the field); the owner's Chrome on the shared desktop would show a named value as plain text, so nothing was requested or typed there${f.site ? ` (${f.site} sign-in in progress)` : ''}`,
+      next: 'finish the sign-in first — sign_in({site, done:true}) brings the login into your browser — then open the page there and call vault_fill again; a field only the owner should type on the shared desktop is sign_in({site, human:"<what to type where>"}).',
+    };
+  }
+  return { target: 'session-browser' };
+}
+
 // ---- did THIS sign-in land? (pure) ------------------------------------------------------------------------------------
 
 /**

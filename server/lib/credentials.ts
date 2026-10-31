@@ -23,19 +23,78 @@ export type CredRole = 'username' | 'password' | 'otp';
 export const ROLES: CredRole[] = ['username', 'password', 'otp'];
 export type LoginPref = 'auto' | 'ask' | 'manual';
 
+// ---- VAULT2: named fields -------------------------------------------------------------------------------------------
+// An entry holds more than a sign-in: a card number, an ID number, a customer code — any field the owner names, with a
+// type that only shapes the cockpit's input (digits, a date…). The host knows the NAMES and types (the catalog the
+// cockpit uploads, below) and types a value into a page on the owner's say-so; it never holds, logs or returns one.
+
+export type FieldType = 'text' | 'secret' | 'number' | 'date' | 'email' | 'phone' | 'otp' | 'multiline';
+export const FIELD_TYPES: FieldType[] = ['text', 'secret', 'number', 'date', 'email', 'phone', 'otp', 'multiline'];
+export interface FieldSpec {
+  name: string;
+  type: FieldType;
+  /** What the owner sees on the form (the name when absent). */
+  label?: string;
+  required?: boolean;
+}
+export const FIELD_NAME_MAX = 64;
+export const FIELDS_MAX = 24;
+/** KDBX keys an agent may not name as a field: they are the entry's own. */
+const RESERVED_FIELD = /^(title|url|notes|arigami( |_).*)$/i;
+
+/** Pure: a field name as the vault stores it — trimmed, one space between words, no control characters, ≤ 64. */
+export function fieldName(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  // eslint-disable-next-line no-control-regex
+  const s = raw.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!s || s.length > FIELD_NAME_MAX || RESERVED_FIELD.test(s)) return null;
+  return s;
+}
+
+export const fieldType = (raw: unknown): FieldType => (FIELD_TYPES.includes(raw as FieldType) ? (raw as FieldType) : 'secret');
+
+/** Pure: what an agent asked the owner for, cleaned — or why it cannot be asked. */
+export function normalizeFieldSpecs(raw: unknown): { fields: FieldSpec[] } | { error: string } {
+  const list = Array.isArray(raw) ? raw : [];
+  if (!list.length) return { error: 'fields required: [{name, type?, label?}]' };
+  if (list.length > FIELDS_MAX) return { error: `at most ${FIELDS_MAX} fields on one form` };
+  const out: FieldSpec[] = [];
+  const seen = new Set<string>();
+  for (const f of list) {
+    const o = typeof f === 'string' ? { name: f } : f && typeof f === 'object' ? (f as Record<string, unknown>) : {};
+    const name = fieldName(o.name);
+    if (!name) return { error: `a field name is missing, too long (> ${FIELD_NAME_MAX}) or reserved: ${JSON.stringify(String(o.name ?? '')).slice(0, 80)}` };
+    const key = name.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const spec: FieldSpec = { name, type: fieldType(o.type) };
+    if (typeof o.label === 'string' && o.label.trim()) spec.label = o.label.replace(/\s+/g, ' ').trim().slice(0, 80);
+    if (o.required === false) spec.required = false;
+    out.push(spec);
+  }
+  return { fields: out };
+}
+
 /** What the session's card shows — no values, ever. */
 export interface CredentialRequest {
   requestId: string;
   at: string;
   origin: string;
   host: string;
-  fields: CredRole[];
+  /** Sign-in roles (username / password / otp) — or, with `kind`, the names of the owner's own fields. */
+  fields: string[];
   reason?: string;
   pref: LoginPref;
   /** 'shared' = the field is in the owner's Chrome on the shared desktop (sign_in); typed there with real keys. */
   target?: 'shared';
   /** The Chrome profile it is typed into, for the card ("work.example"). */
   account?: string;
+  /** VAULT2: 'form' = the owner fills these fields on a secure form (nothing goes to a page); 'field' = one named field is typed into the session browser. Absent = a sign-in. */
+  kind?: 'form' | 'field';
+  /** 'form': the fields with their types and labels. */
+  spec?: FieldSpec[];
+  /** 'form': the entry the details belong to (an account name); 'field': the entry the agent asked for, if it named one. */
+  entry?: string;
 }
 
 interface Pending {
@@ -43,7 +102,7 @@ interface Pending {
   origin: string;
   /** The session-browser tab (target 'session'); '' for the shared desktop. */
   tabId: string;
-  fields: CredRole[];
+  fields: string[];
   at: number;
   /** what the card shows — the session's copy is a mirror of this, never read back */
   request: CredentialRequest;
@@ -52,8 +111,18 @@ interface Pending {
 }
 
 /** How a request ended — what a host-side waiter (sign_in) hears. Never a value. */
-export type Settled = 'filled' | 'manual' | 'cancel' | 'expired';
+export type Settled = 'filled' | 'manual' | 'cancel' | 'expired' | 'saved';
 const settleWaiters = new Map<string, (s: Settled) => void>();
+// VAULT2: what the owner saved on a form — the entry's id, title and field NAMES, for the agent's next vault_fill.
+const settleDetails = new Map<string, unknown>();
+export function setSettleDetail(requestId: string, detail: unknown): void {
+  settleDetails.set(requestId, detail);
+}
+export function takeSettleDetail(requestId: string): unknown {
+  const d = settleDetails.get(requestId);
+  settleDetails.delete(requestId);
+  return d;
+}
 
 /** Wait for a request to be answered (filled / the owner types it / cancelled), at most `timeoutMs`. */
 export function waitSettled(requestId: string, timeoutMs = REQUEST_TTL_MS): Promise<Settled> {
@@ -304,7 +373,7 @@ export async function request(sessionId: string, opts: { site?: string; reason?:
  */
 export function requestShared(
   sessionId: string,
-  o: { origin: string; field: CredRole; reason?: string; account?: string; recheck: () => Promise<string | null> }
+  o: { origin: string; field: string; reason?: string; account?: string; entry?: string; recheck: () => Promise<string | null> }
 ): { status: 'pending'; request: CredentialRequest } | { status: 'manual'; origin: string; host: string } {
   const host = hostOf(o.origin);
   const pref = prefFor(o.origin);
@@ -313,10 +382,214 @@ export function requestShared(
   const requestId = 'cred_' + crypto.randomBytes(9).toString('base64url');
   const request: CredentialRequest = {
     requestId, at: new Date().toISOString(), origin: o.origin, host, fields: [o.field], pref, target: 'shared',
+    // (only sign_in({fill}) reaches this with a role; a named field on the shared desktop is refused upstream — api.ts vaultFill)
+    ...(ROLES.includes(o.field as CredRole) ? {} : { kind: 'field' as const }),
+    ...(o.entry ? { entry: o.entry.slice(0, 120) } : {}),
     ...(o.account ? { account: o.account.slice(0, 120) } : {}), ...(o.reason ? { reason: String(o.reason).slice(0, 200) } : {}),
   };
   pending.set(requestId, { sessionId, origin: o.origin, tabId: '', fields: [o.field], at: Date.now(), request, recheck: o.recheck });
   return { status: 'pending', request };
+}
+
+// ---- VAULT2: a secure form, a named field in the session browser, and the catalog ----------------------------------
+
+/** The origin a site name stands for in the vault (`bituach.example` → `https://bituach.example`). */
+export function siteOrigin(site: string): string | null {
+  const host = hostOf(String(site || '').trim());
+  if (!host || !/^[a-z0-9.-]+$/i.test(host) || !host.includes('.')) return null;
+  return `https://${host.toLowerCase()}`;
+}
+
+/**
+ * vault_collect: the agent asks the owner for named details of a site. No page is involved — the cockpit encrypts what
+ * the owner types straight into the vault and tells the host only the names it saved (answer → 'saved').
+ */
+export function requestForm(
+  sessionId: string,
+  o: { site: string; fields: FieldSpec[]; title?: string; reason?: string }
+): { status: 'pending'; request: CredentialRequest } | { status: 'error'; error: string } {
+  const origin = siteOrigin(o.site);
+  if (!origin) return { status: 'error', error: 'site required: a domain the details belong to (e.g. bank.example)' };
+  if (!o.fields.length) return { status: 'error', error: 'fields required' };
+  for (const [id, p] of pending) if (p.sessionId === sessionId) { pending.delete(id); settle(id, 'cancel'); }
+  const requestId = 'cred_' + crypto.randomBytes(9).toString('base64url');
+  const request: CredentialRequest = {
+    requestId, at: new Date().toISOString(), origin, host: hostOf(origin), fields: o.fields.map((f) => f.name), pref: 'ask', kind: 'form', spec: o.fields,
+    ...(o.title ? { entry: String(o.title).replace(/\s+/g, ' ').trim().slice(0, 120) } : {}),
+    ...(o.reason ? { reason: String(o.reason).slice(0, 200) } : {}),
+  };
+  pending.set(requestId, { sessionId, origin, tabId: '', fields: request.fields, at: Date.now(), request });
+  return { status: 'pending', request };
+}
+
+// The field the agent means, found inside the page and marked with the request's id — so the fill, later, can go only
+// to that one element on that one origin. `target` = words of its label / name / placeholder; none = the focused field.
+const WORDS_JS = `
+  const vis = (el) => { const r = el.getBoundingClientRect(); const cs = getComputedStyle(el); return r.width > 0 && r.height > 0 && cs.visibility !== 'hidden' && cs.display !== 'none' && !el.disabled && !el.readOnly; };
+  const editable = (el) => el && ((el.tagName === 'INPUT' && !['hidden', 'submit', 'button', 'checkbox', 'radio', 'file', 'image', 'reset', 'range', 'color'].includes((el.type || '').toLowerCase())) || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT');
+  const labelOf = (el) => { let t = ''; if (el.labels) for (const l of el.labels) t += ' ' + (l.innerText || ''); const by = el.getAttribute('aria-labelledby'); if (by) for (const id of by.split(/\\s+/)) { const n = document.getElementById(id); if (n) t += ' ' + (n.innerText || ''); } return t; };
+  const words = (el) => ((el.name || '') + ' ' + (el.id || '') + ' ' + (el.placeholder || '') + ' ' + (el.getAttribute('aria-label') || '') + ' ' + (el.autocomplete || '') + labelOf(el)).replace(/\\s+/g, ' ').toLowerCase();
+`;
+
+export function targetJs(requestId: string, target: string | null): string {
+  return `(() => {${WORDS_JS}
+    const id = ${JSON.stringify(requestId)};
+    const want = ${JSON.stringify((target || '').toLowerCase().replace(/\s+/g, ' ').trim())};
+    let el = null;
+    if (want) {
+      const pool = [...document.querySelectorAll('input,textarea,select')].filter((e) => editable(e) && vis(e));
+      let best = Infinity;
+      for (const e of pool) { const w = words(e); if (w.includes(want) && w.length < best) { el = e; best = w.length; } }
+      if (!el) return { origin: location.origin, found: false, why: 'no field matches ' + JSON.stringify(want) };
+    } else {
+      el = document.activeElement;
+      if (!editable(el) || !vis(el)) return { origin: location.origin, found: false, why: 'no field has the focus' };
+    }
+    for (const o of document.querySelectorAll('[data-arigami-fill]')) o.removeAttribute('data-arigami-fill');
+    el.setAttribute('data-arigami-fill', id);
+    return { origin: location.origin, found: true, tag: el.tagName.toLowerCase(), type: (el.type || '').toLowerCase() };
+  })()`;
+}
+
+/** The fill of ONE named field, inside the page: the origin is re-checked in the same tick, and only the marked element gets the value. */
+export function fillFieldJs(origin: string, requestId: string, value: string): string {
+  return `(() => {
+    if (location.origin !== ${JSON.stringify(origin)}) return { error: 'origin', origin: location.origin };
+    const el = document.querySelector('[data-arigami-fill=' + JSON.stringify(${JSON.stringify(requestId)}) + ']');
+    if (!el) return { error: 'gone' };
+    el.removeAttribute('data-arigami-fill');
+    const value = ${JSON.stringify(value)};
+    el.focus();
+    const proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : el.tagName === 'SELECT' ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
+    const setter = Object.getOwnPropertyDescriptor(proto, 'value').set;
+    setter.call(el, value);
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+    // what the agent's screenshots (browser_snapshot / capture_screen) show of this field from now on is dots: the value
+    // stays in the field for the page to submit, but a plain text input or textarea is drawn like a password field
+    if (el.tagName !== 'SELECT') el.style.setProperty('-webkit-text-security', 'disc', 'important');
+    return { ok: true };
+  })()`;
+}
+
+export type FieldOutcome =
+  | { status: 'pending'; request: CredentialRequest }
+  | { status: 'manual'; origin: string; host: string }
+  | { status: 'error'; error: string; next?: string };
+
+/**
+ * vault_fill in the session's own browser: find the field the agent means on the front tab, mark it, and put a card up
+ * for that one named value. The fill (fill → fillField) types it only into the marked element, only on this origin.
+ */
+export async function requestField(
+  sessionId: string,
+  o: { site?: string; field: string; entry?: string; target?: string; reason?: string }
+): Promise<FieldOutcome> {
+  let tab: ChromeTab;
+  try {
+    tab = await frontPage(sessionId);
+  } catch (e) {
+    return { status: 'error', error: (e as Error).message, next: 'open the page that has the field with browser_open / browser_navigate, click into the field (or pass target), then call vault_fill again' };
+  }
+  const requestId = 'cred_' + crypto.randomBytes(9).toString('base64url');
+  let r: { origin: string; found: boolean; why?: string; tag?: string; type?: string };
+  try {
+    r = await evalOn(tab, targetJs(requestId, o.target || null));
+  } catch (e) {
+    return { status: 'error', error: (e as Error).message };
+  }
+  const origin = String(r?.origin || '');
+  if (!/^https?:\/\//.test(origin)) return { status: 'error', error: `the front tab is not a web page (${origin || 'blank'})`, next: 'open the page first' };
+  const host = hostOf(origin);
+  if (o.site) {
+    const want = registrable(hostOf(o.site));
+    if (want && want !== registrable(host)) return { status: 'error', error: `the front tab is on ${host}, not ${hostOf(o.site)}`, next: 'open that site first — a value goes only to the site it belongs to' };
+  }
+  if (!r.found) return { status: 'error', error: r.why || 'no field', next: 'click into the field with browser_click, or pass target: words of its label / name / placeholder' };
+  const pref = prefFor(origin);
+  if (pref === 'manual') return { status: 'manual', origin, host };
+  for (const [id, p] of pending) if (p.sessionId === sessionId) { pending.delete(id); settle(id, 'cancel'); }
+  const request: CredentialRequest = {
+    requestId, at: new Date().toISOString(), origin, host, fields: [o.field], pref, kind: 'field',
+    ...(o.entry ? { entry: String(o.entry).slice(0, 120) } : {}),
+    ...(o.reason ? { reason: String(o.reason).slice(0, 200) } : {}),
+  };
+  pending.set(requestId, { sessionId, origin, tabId: tab.id, fields: [o.field], at: Date.now(), request });
+  return { status: 'pending', request };
+}
+
+async function fillField(sessionId: string, requestId: string, p: Pending, values: Record<string, string>): Promise<{ filled: string[]; submitted: boolean; origin: string }> {
+  const name = p.fields[0];
+  const value = values[name];
+  if (typeof value !== 'string') throw new FillError(`the card was for ${JSON.stringify(name)}, and no value for it was given`, 400);
+  const tab = (await listTabs(sessionId)).find((t) => t.id === p.tabId && t.webSocketDebuggerUrl);
+  if (!tab) throw new FillError('the tab with the field was closed', 410);
+  const r = (await evalOn(tab, fillFieldJs(p.origin, requestId, value))) as { error?: string; ok?: boolean };
+  if (r?.error === 'origin') throw new FillError(`the tab is no longer on ${hostOf(p.origin)} — nothing was filled`);
+  if (r?.error === 'gone') throw new FillError('the field is no longer on the page — nothing was filled', 410);
+  pending.delete(requestId);
+  settle(requestId, 'filled');
+  return { filled: [name], submitted: false, origin: p.origin };
+}
+
+// ---- the catalog: which entries and FIELD NAMES the vault holds — never a value, never a username -------------------
+// The cockpit (the only place the vault is open) uploads it after every save, so an agent can ask "what does the vault
+// know for this site?" (vault_fields) without the owner at the keyboard. Cleaned on the way in: whatever the shape of
+// the upload, only ids, titles, origins, field names and types are kept — a value can't be smuggled into this file.
+
+export const CATALOG_FILE = () => path.join(VAULT_DIR(), 'catalog.json');
+export const CATALOG_MAX_ENTRIES = 500;
+export interface CatalogEntry {
+  id: string;
+  title: string;
+  origin: string;
+  fields: { name: string; type: FieldType }[];
+}
+
+export function cleanCatalog(raw: unknown): CatalogEntry[] {
+  const list = Array.isArray(raw) ? raw : raw && typeof raw === 'object' && Array.isArray((raw as any).entries) ? (raw as any).entries : [];
+  const out: CatalogEntry[] = [];
+  for (const e of list.slice(0, CATALOG_MAX_ENTRIES)) {
+    if (!e || typeof e !== 'object') continue;
+    const id = String((e as any).id || '').slice(0, 64);
+    const origin = String((e as any).origin || '');
+    if (!id || !/^https?:\/\/[^/\s]+$/.test(origin)) continue;
+    const fields: CatalogEntry['fields'] = [];
+    const seen = new Set<string>();
+    for (const f of Array.isArray((e as any).fields) ? (e as any).fields.slice(0, FIELDS_MAX * 4) : []) {
+      const name = fieldName(typeof f === 'string' ? f : f?.name) || (ROLES.includes(f?.name) ? f.name : null);
+      if (!name || seen.has(name.toLowerCase())) continue;
+      seen.add(name.toLowerCase());
+      fields.push({ name, type: fieldType(typeof f === 'object' ? f?.type : undefined) });
+    }
+    out.push({ id, title: String((e as any).title || hostOf(origin)).replace(/\s+/g, ' ').trim().slice(0, 120), origin, fields });
+  }
+  return out;
+}
+
+export function writeCatalog(raw: unknown): { entries: number } {
+  const entries = cleanCatalog(raw);
+  fs.mkdirSync(VAULT_DIR(), { recursive: true, mode: 0o700 });
+  ensureIgnored();
+  const tmp = CATALOG_FILE() + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify({ entries }, null, 2) + '\n', { mode: 0o600 });
+  fs.renameSync(tmp, CATALOG_FILE());
+  return { entries: entries.length };
+}
+
+export function readCatalog(): CatalogEntry[] {
+  try {
+    return cleanCatalog(JSON.parse(fs.readFileSync(CATALOG_FILE(), 'utf8')));
+  } catch {
+    return [];
+  }
+}
+
+/** The entries of ONE site (its registrable domain) — what an agent may learn: names, never values. */
+export function catalogFor(site: string): CatalogEntry[] {
+  const want = registrable(hostOf(String(site || '')));
+  if (!want) return [];
+  return readCatalog().filter((e) => registrable(hostOf(e.origin)) === want);
 }
 
 export function getPending(sessionId: string, requestId: string): Pending | null {
@@ -354,13 +627,17 @@ export async function fill(
   requestId: string,
   raw: Record<string, unknown>,
   opts: { submit?: boolean; waitMs?: number } = {}
-): Promise<{ filled: CredRole[]; submitted: boolean; origin: string }> {
+): Promise<{ filled: string[]; submitted: boolean; origin: string }> {
   const p = getPending(sessionId, requestId);
   if (!p) throw new FillError('this sign-in request is no longer open', 404);
-  const values: Partial<Record<CredRole, string>> = {};
-  for (const r of ROLES) if (typeof raw[r] === 'string' && (raw[r] as string).length && (raw[r] as string).length <= 1024) values[r] = raw[r] as string;
+  if (p.request.kind === 'form') throw new FillError('a form card is saved in the cockpit, not filled into a page', 400);
+  // only the keys the card announced (a sign-in's roles, or the one named field) are read out of the body
+  const allowed = p.request.kind === 'field' ? p.fields : ROLES;
+  const values: Record<string, string> = {};
+  for (const r of allowed) if (typeof raw[r] === 'string' && (raw[r] as string).length && (raw[r] as string).length <= 1024) values[r] = raw[r] as string;
   if (!Object.keys(values).length) throw new FillError('nothing to fill', 400);
   if (p.request.target === 'shared') return fillShared(requestId, p, values);
+  if (p.request.kind === 'field') return fillField(sessionId, requestId, p, values);
   const tab = (await listTabs(sessionId)).find((t) => t.id === p.tabId && t.webSocketDebuggerUrl);
   if (!tab) throw new FillError('the sign-in tab was closed', 410);
   const submit = opts.submit !== false;
@@ -395,7 +672,7 @@ export async function fill(
  * The shared desktop: type the ONE field the card was for, with real keys, into the field that has the focus — after
  * the page is checked again. Nothing is submitted: the agent presses Enter / the button, as a person would.
  */
-async function fillShared(requestId: string, p: Pending, values: Partial<Record<CredRole, string>>): Promise<{ filled: CredRole[]; submitted: boolean; origin: string }> {
+async function fillShared(requestId: string, p: Pending, values: Record<string, string>): Promise<{ filled: string[]; submitted: boolean; origin: string }> {
   const role = p.fields[0];
   const value = values[role];
   if (typeof value !== 'string') throw new FillError(`the card was for the ${role}, and none was given`, 400);

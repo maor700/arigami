@@ -93,6 +93,16 @@ a new sign-in uses the profile signed in to the owner's identity (Google SSO wor
   Tailscale, MCP vendors) is handed over with `sign_in({site, url})`: it opens that page in the identity's profile, the
   agent picks the account and allows, `done` gives the desktop back, and the playbook keeps polling its own result.
 
+## Beyond the sign-in: the owner's other details
+
+A page that asks for something the owner keeps but that is not a sign-in — a card number and expiry on a payment
+verification, an ID number, a customer code — is `vault_fill({site, field})`: the host fills that one named field from
+the vault in the session's own browser and draws it as dots; the agent never sees the value. It does not type into the
+owner's Chrome (no DOM to mask there): while `driving` a sign-in it is refused — finish with `done`, then fill in the
+session browser. The names come from `vault_fields({site})`; a detail the vault does not have yet is asked for with
+`vault_collect({site, fields})` — a secure form only the owner sees, saved straight into the vault. Never in the chat.
+How the fields are stored and filled: `docs/INSTRUCTIONS-AND-VAULT.md` (VAULT2).
+
 ## The tools that became internal
 
 `browser_logins`, `request_login`, `request_credentials`, `sso_login` / `sso_look` / `sso_click` / `sso_navigate` /

@@ -221,6 +221,14 @@ open_tab({type:'url'|'content'|'ext', title, url?, format?, body?, badge?, ext?,
 update_tab({tab_id, …same fields…})   close_tab({tab_id})   activate_tab({tab_id})
 request_action({prompt, buttons:[{label,value,style?}], session_id?})
 request_screen({prompt, reason?, hint?, session_id?}) → {ok, takenOver, note?}
+// VAULT2 (docs/INSTRUCTIONS-AND-VAULT.md): the owner's named details — names and outcomes only, never a value
+vault_fields({site}) → {site, entries:[{id, title, origin, fields:[{name, type}]}]}     // GET /sessions/:id/vault/fields?site=
+vault_collect({site, fields:[{name, type?, label?, required?}], title?, reason?})       // POST /sessions/:id/vault/collect (blocking)
+   → {status:'saved', host, entry:{id?, title?, fields:[names]}, next} | {status:'cancelled'|'expired', host, reason} | {status:'blocked', reason}
+vault_fill({site, field, entry?, target?, reason?})                                     // POST /sessions/:id/vault/fill (blocking)
+   → {status:'filled', field, host, where:'session-browser', next} | {status:'manual', next} | {status:'blocked'|'cancelled'|'expired', reason}
+   // session browser only: refused (blocked + next) while the session drives a sign-in in the owner's Chrome
+   // owner only: PUT/GET /__api/vault/catalog (names-only catalog the cockpit uploads after each save)
    // reason: 'login'|'2fa'|'captcha'|'payment'|'other' (unknown → 'other')
    // hint: what exactly the human should complete. See "Screen share" below.
 capture_screen({caption?, session_id?}) → {ok, url, ts, width?, height?} | {ok:false, error}

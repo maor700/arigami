@@ -266,6 +266,61 @@ test('vault fill gating: "always type it myself" for a site skips the card; Goog
   cr.forgetSession('sess-c');
 });
 
+test('VAULT2: a named field on the shared desktop is one card of kind "field"; only that name is read; a form is never filled into a page', async () => {
+  const typed: string[] = [];
+  cr._setSharedTyper(async (v) => { typed.push(v); return { ok: true }; });
+  const req = cr.requestShared('sess-f', { origin: 'https://bank.example', field: 'card_number', entry: 'Dana', reason: 'verify', recheck: async () => null });
+  expect(req.status).toBe('pending');
+  const r = (req as any).request as cr.CredentialRequest;
+  expect(r).toMatchObject({ kind: 'field', fields: ['card_number'], entry: 'Dana', target: 'shared', host: 'bank.example' });
+  const w = cr.waitSettled(r.requestId, 5000);
+  // the cockpit sends more than the card asked for: only the card's one field is typed
+  const out = await cr.fill('sess-f', r.requestId, { password: 'nope', card_number: '4111 1111 1111 1111' });
+  expect(out).toEqual({ filled: ['card_number'], submitted: false, origin: 'https://bank.example' });
+  expect(typed).toEqual(['4111 1111 1111 1111']);
+  expect(await w).toBe('filled');
+  // a sign-in role keeps its plain shape (no kind), so an older cockpit renders it as before
+  const req2 = (cr.requestShared('sess-f', { origin: 'https://bank.example', field: 'password', recheck: async () => null }) as any).request;
+  expect(req2.kind).toBeUndefined();
+  cr.forgetSession('sess-f');
+  // a form: no page, no fill — the owner's "saved" reaches the waiter with the names, once
+  const form = cr.requestForm('sess-g', { site: 'https://bank.example/login', fields: [{ name: 'cvv', type: 'secret' }], title: 'Dana', reason: 'verify the card' });
+  expect(form.status).toBe('pending');
+  const f = (form as any).request as cr.CredentialRequest;
+  expect(f).toMatchObject({ kind: 'form', origin: 'https://bank.example', host: 'bank.example', fields: ['cvv'], spec: [{ name: 'cvv', type: 'secret' }], entry: 'Dana', pref: 'ask' });
+  await expect(cr.fill('sess-g', f.requestId, { cvv: '123' })).rejects.toThrow(/form card is saved in the cockpit/);
+  expect(typed).toHaveLength(1);
+  const w2 = cr.waitSettled(f.requestId, 5000);
+  cr.setSettleDetail(f.requestId, { id: 'e1', fields: ['cvv'] });
+  cr.forget(f.requestId, 'saved');
+  expect(await w2).toBe('saved');
+  expect(cr.takeSettleDetail(f.requestId)).toEqual({ id: 'e1', fields: ['cvv'] });
+  expect(cr.takeSettleDetail(f.requestId)).toBeUndefined();
+  expect(cr.requestForm('sess-g', { site: 'nope', fields: [{ name: 'cvv', type: 'secret' }] }).status).toBe('error');
+});
+
+test("VAULT2: vault_fill never types into the owner's Chrome — refused before a card or a value, with the way on", () => {
+  expect(si.vaultFillTarget({ signInRunning: false, holdsShared: false, site: null })).toEqual({ target: 'session-browser' });
+  // a sign-in that finished (no job) or lost the desktop: the session browser is the target as usual
+  expect(si.vaultFillTarget({ signInRunning: false, holdsShared: true, site: 'bank.example' })).toEqual({ target: 'session-browser' });
+  expect(si.vaultFillTarget({ signInRunning: true, holdsShared: false, site: 'bank.example' })).toEqual({ target: 'session-browser' });
+  const r = si.vaultFillTarget({ signInRunning: true, holdsShared: true, site: 'bank.example' });
+  expect(r.target).toBe('refused');
+  expect((r as any).reason).toMatch(/only in your own session browser.*plain text.*nothing was requested or typed/);
+  expect((r as any).next).toMatch(/sign_in\(\{site, done:true\}\).*sign_in\(\{site, human/);
+  // the route: vaultFill asks the target first and never reaches requestShared (the shared-desktop typer) itself
+  const api = read('server/api.ts');
+  const fn = api.slice(api.indexOf('async function vaultFill('), api.indexOf('/** sign_in({fill})'));
+  expect(fn.length).toBeGreaterThan(500);
+  expect(fn).toContain('si.vaultFillTarget(');
+  expect(fn).not.toContain('requestShared');
+  expect(fn).not.toContain('sharedGateFor');
+  expect(fn.indexOf('vaultFillTarget')).toBeLessThan(fn.indexOf('cr.requestField('));
+  // and the one shared typer is reached only by sign_in({fill}), which takes the three roles only
+  expect(api.match(/cr\.requestShared\(/g)!.length).toBe(1);
+  expect(api).toContain('if (!si.FILL_FIELDS.includes(field as any)) return si.blocked(');
+});
+
 test('never a secret in a result, a log line or an argv', async () => {
   const lines: string[] = [];
   const orig = { log: console.log, error: console.error, warn: console.warn };
