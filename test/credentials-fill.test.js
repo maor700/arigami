@@ -74,6 +74,17 @@ test.skipIf(!chrome)('the host finds the sign-in fields, fills only them on the 
   expect(o.bogus.message).toMatch(/none of the 2 options of cmbBogus matches the saved expiry year — nothing was chosen/);
   expect(o.bogus.message).not.toContain('2027');
   expect(o.bogusValue).toBe('a');
+  // F-2: the part's shape is checked by the host before any fill — a stale client's whole expiry never lands as a month
+  expect(o.staleShape).toMatchObject({ status: 400 });
+  expect(o.staleShape.message).toMatch(/not a two-digit month \(01–12\).*reload it.*nothing was filled/);
+  expect(o.staleShape.message).not.toContain('03/27');
+  expect(o.staleShapeValue).toBe('');
+  expect(o.staleShapeOk).toEqual(['expiry']);
+  expect(o.staleShapeOkValue).toBe('03');
+  expect(o.staleShapeSelect).toMatchObject({ status: 400 });
+  expect(o.staleShapeSelect.message).toMatch(/not a four-digit year \(20YY\)/);
+  expect(o.staleShapeSelect.message).not.toContain('27');
+  expect(o.staleShapeSelectValue).toBe('27'); // unchanged from the earlier, well-shaped fill
   expect(o.selectHidden).toEqual([['rgba(0, 0, 0, 0)', 'none', '-1', '1', true, true], ['rgba(0, 0, 0, 0)', 'none', '-1', '1', true, true]]);
   // F-1: inert — the label is no click target, a real click on it and a programmatic focus leave the select unfocused,
   // ArrowDown / Space / F4 / ArrowUp change nothing, the pixels are the same, and the form still carries the choice

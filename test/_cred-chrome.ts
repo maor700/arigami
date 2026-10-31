@@ -30,6 +30,7 @@ const PAGES: Record<string, string> = {
     <label for="cmbExpiryYear">Expiry year</label><select id="cmbExpiryYear" name="cmbExpiryYear"><option value="">--</option>${Array.from({ length: 6 }, (_, i) => `<option value="${26 + i}">${2026 + i}</option>`).join('')}</select>
     <label for="cmbBogus">Bogus</label><select id="cmbBogus" name="cmbBogus"><option value="a">A</option><option value="b">B</option></select>
     <label for="cmbPlain">Plain</label><select id="cmbPlain" name="cmbPlain"><option value="x">X</option><option value="y">Y</option></select>
+    <label for="txtExpiry">Expiry (text)</label><input id="txtExpiry" name="txtExpiry">
     <button id="paySubmit" type="submit">Pay</button></form>`,
 };
 const server = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: (req) => new Response(`<!doctype html><title>t</title>${PAGES[new URL(req.url).pathname] || ''}`, { headers: { 'content-type': 'text/html' } }) });
@@ -207,6 +208,18 @@ try {
   if (fBog.status !== 'pending') throw new Error('no bogus request: ' + JSON.stringify(fBog));
   out.bogus = await cr.fill(sid, fBog.request.requestId, { expiry: '2027' }).then(() => 'filled', (e) => ({ message: e.message, status: e.status }));
   out.bogusValue = await ev("document.querySelector('#cmbBogus').value");
+  // F-2: an older cockpit that ignores `part` sends the WHOLE expiry — into an input under part=month it is refused before
+  // the page is touched, the field stays empty, the message carries no value; a well-shaped month lands
+  const fS = await cr.requestField(sid, { field: 'expiry', part: 'month', target: 'txtExpiry' });
+  if (fS.status !== 'pending') throw new Error('no txtExpiry request: ' + JSON.stringify(fS));
+  out.staleShape = await cr.fill(sid, fS.request.requestId, { expiry: '03/27' }).then(() => 'filled', (e) => ({ message: e.message, status: e.status }));
+  out.staleShapeValue = await ev("document.querySelector('#txtExpiry').value");
+  out.staleShapeOk = await cr.fill(sid, fS.request.requestId, { expiry: '03' }).then((r) => r.filled, (e) => e.message);
+  out.staleShapeOkValue = await ev("document.querySelector('#txtExpiry').value");
+  const fS2 = await cr.requestField(sid, { field: 'expiry', part: 'year', target: 'cmbExpiryYear' });
+  if (fS2.status !== 'pending') throw new Error('no year-shape request: ' + JSON.stringify(fS2));
+  out.staleShapeSelect = await cr.fill(sid, fS2.request.requestId, { expiry: '27' }).then(() => 'filled', (e) => ({ message: e.message, status: e.status }));
+  out.staleShapeSelectValue = await ev("document.querySelector('#cmbExpiryYear').value");
   // hidden and off-limits: transparent text, no pointer events, not in the Tab order, marked; both selects
   out.selectHidden = await ev("['#cmbExpiryMonth','#cmbExpiryYear'].map((s) => { const el = document.querySelector(s); const cs = getComputedStyle(el); return [cs.color, cs.pointerEvents, el.getAttribute('tabindex'), el.getAttribute('data-arigami-filled'), el.inert, el.hasAttribute('inert')]; })");
   // F-1: the select is INERT — its <label>, a programmatic focus and real keys (what desktop_keyboard sends) can neither

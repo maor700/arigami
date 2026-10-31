@@ -242,7 +242,10 @@ Three tools, all riding with the `browser` family (`server/agent-policy.ts`), no
 - **VAULT3 — an expiry into two selects.** `vault_fill({…, part: "month" | "year"})` on a saved expiry (`MM/YY`,
   `MM/YYYY`, `YYYY-MM`, `MMYY`…): the **vault worker** splits it (`expiryPart`, month → two digits, year → four, a
   two-digit year is 20YY) and sends only that part; the host and the agent never see the whole value, and a value in
-  an unknown format is reported as "not an expiry in a known format" without the value. The card shows the source as
+  an unknown format is reported as "not an expiry in a known format" without the value. The host checks the part's
+  shape itself before touching the page (`partShape`: month exactly `01`–`12`, year exactly `20YY`) — a cockpit tab
+  older than the host, which ignores `part` and sends the whole expiry, gets a 400 with a reload hint and nothing
+  filled, never a whole expiry in a month field. The card shows the source as
   `expiry · month` and the target as `select · cmbExpiryMonth`. A `<select>` target gets the option that matches by
   value or text, as the same number (`03` ↔ `3`) or a year by its last two digits (`2027` ↔ `27`); no match → nothing
   chosen, the error names the select and its option count only. Every filled element is marked `data-arigami-filled`

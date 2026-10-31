@@ -299,6 +299,28 @@ test('VAULT2: a named field on the shared desktop is one card of kind "field"; o
   expect(cr.requestForm('sess-g', { site: 'nope', fields: [{ name: 'cvv', type: 'secret' }] }).status).toBe('error');
 });
 
+test('VAULT3: the host checks the shape of a part before any page is touched — a whole expiry never lands as a "month"', async () => {
+  expect(cr.partShape('month', '03')).toBe(null);
+  expect(cr.partShape('month', '12')).toBe(null);
+  expect(cr.partShape('year', '2027')).toBe(null);
+  expect(cr.partShape('value', '03/27')).toBe(null);
+  expect(cr.partShape(undefined, 'anything')).toBe(null);
+  for (const v of ['03/27', '3', '13', '00', '2027', '', ' 03', '03 ']) expect(cr.partShape('month', v)).toMatch(/not a two-digit month/);
+  for (const v of ['27', '03/27', '1999', '2100', '20277', '']) expect(cr.partShape('year', v)).toMatch(/not a four-digit year/);
+  // through fill(): the complaint comes before the tab is even looked up, and never carries what was sent
+  const req: cr.CredentialRequest = { requestId: 'cred_shape', at: new Date().toISOString(), origin: 'https://bank.example', host: 'bank.example', fields: ['expiry'], pref: 'ask', kind: 'field', part: 'month', page: { tag: 'input', type: 'text', label: 'Expiry' } };
+  cr._setPending('cred_shape', { sessionId: 'sess-shape', origin: 'https://bank.example', tabId: 'tab-x', fields: ['expiry'], at: Date.now(), request: req } as any);
+  let msg = '';
+  await cr.fill('sess-shape', 'cred_shape', { expiry: '03/27' }).catch((e) => (msg = String((e as Error).message) + ' ' + (e as any).status));
+  expect(msg).toMatch(/not a two-digit month.*reload it.*nothing was filled 400/);
+  expect(msg).not.toContain('03/27');
+  // a well-shaped part gets past the check (and then fails on the missing tab — this test has no browser)
+  msg = '';
+  await cr.fill('sess-shape', 'cred_shape', { expiry: '03' }).catch((e) => (msg = String((e as Error).message)));
+  expect(msg).toMatch(/tab with the field was closed|no open page/);
+  cr.forgetSession('sess-shape');
+});
+
 test("VAULT2: vault_fill never types into the owner's Chrome — refused before a card or a value, with the way on", () => {
   expect(si.vaultFillTarget({ signInRunning: false, holdsShared: false, site: null })).toEqual({ target: 'session-browser' });
   // a sign-in that finished (no job) or lost the desktop: the session browser is the target as usual

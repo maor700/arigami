@@ -107,6 +107,13 @@ export interface CredentialRequest {
 export type FieldPart = 'value' | 'month' | 'year';
 export const FIELD_PARTS: FieldPart[] = ['value', 'month', 'year'];
 export const fieldPart = (raw: unknown): FieldPart | null => (raw === undefined || raw === null || raw === '' ? 'value' : FIELD_PARTS.includes(raw as FieldPart) ? (raw as FieldPart) : null);
+/** Pure: what the worker may send for a part — a month is exactly two digits 01–12, a year exactly 20YY. Returns the complaint (never the value) or null. */
+export function partShape(part: FieldPart | undefined, value: string): string | null {
+  if (!part || part === 'value') return null;
+  if (part === 'month') return /^(0[1-9]|1[0-2])$/.test(value) ? null : 'what was sent for the month is not a two-digit month (01–12)';
+  if (part === 'year') return /^20\d{2}$/.test(value) ? null : 'what was sent for the year is not a four-digit year (20YY)';
+  return 'unknown part';
+}
 
 interface Pending {
   sessionId: string;
@@ -580,6 +587,11 @@ async function fillField(sessionId: string, requestId: string, p: Pending, value
   const name = p.fields[0];
   const value = values[name];
   if (typeof value !== 'string') throw new FillError(`the card was for ${JSON.stringify(name)}, and no value for it was given`, 400);
+  // the part's shape is the contract, checked here before anything touches the page: a cockpit tab older than this
+  // host ignores `part` and sends the whole expiry — it must never land as a "month" in an input; the message never
+  // carries what was sent
+  const shape = partShape(p.request.part, value);
+  if (shape) throw new FillError(`${shape} — the cockpit tab may be older than the host: reload it (Ctrl+Shift+R); nothing was filled`, 400);
   const tab = (await listTabs(sessionId)).find((t) => t.id === p.tabId && t.webSocketDebuggerUrl);
   if (!tab) throw new FillError('the tab with the field was closed', 410);
   const r = (await evalOn(tab, fillFieldJs(p.origin, requestId, value))) as { error?: string; ok?: boolean; options?: number };
