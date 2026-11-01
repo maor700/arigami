@@ -1530,7 +1530,7 @@ type VaultFillOutcome =
   | { status: 'filled'; field: string; host: string; where: 'session-browser'; next: string }
   | { status: 'manual'; field: string; host: string; next: string }
   | { status: 'cancelled' | 'expired'; field: string; host: string; reason: string }
-  | { status: 'blocked'; field: string; reason: string; next?: string };
+  | { status: 'blocked'; field: string; host?: string; reason: string; next?: string };
 
 /**
  * vault_fill types ONLY into the session's own browser, where the host can mask the filled field (dots) before the
@@ -1571,9 +1571,14 @@ async function vaultFill(id: string, body: any): Promise<VaultFillOutcome> {
   if (settled === 'filled')
     return { status: 'filled', field, host: req.host, where: 'session-browser', next: `the host put the ${what} into the field (nobody saw it; the field is hidden from now on — do not click, type into or read it). Press the page's own button yourself and check with browser_snapshot.` };
   if (settled === 'manual') return { status: 'manual', field, host: req.host, next: `the owner types the ${field} themselves: call request_screen (say which field, and where) and wait` };
+  if (settled === 'failed') {
+    // the cockpit acknowledged a broken attempt (a filtered code → one fixed line): the tool ends now, blocked, not ten minutes later
+    const d = (cr.takeSettleDetail(req.requestId) || {}) as { reason?: string };
+    return { status: 'blocked', field, host: req.host, reason: `filling the ${what} failed in the owner's cockpit: ${d.reason || 'the attempt broke'}; nothing was filled`, next: `the owner has to unlock the vault again — then call vault_fill({site:"${req.host}", field:"${field}"}) once more on the same page (click into the field first); or ask them to type it with request_screen.` };
+  }
   cr.forget(req.requestId, settled === 'expired' ? 'expired' : 'cancel');
   if (settled === 'cancel') return { status: 'cancelled', field, host: req.host, reason: `the owner cancelled — do not ask for the ${field} again in this turn, and never in the chat` };
-  return { status: 'expired', field, host: req.host, reason: `nobody answered the ${req.host} card in ${SIGN_IN_WAIT_MS / 60_000} minutes (the vault may be locked in the cockpit)` };
+  return { status: 'expired', field, host: req.host, reason: `nobody answered the ${req.host} card in ${SIGN_IN_WAIT_MS / 60_000} minutes — the owner has to open the cockpit, unlock the vault and tap Fill (or allow automatic fills for this site in this session)` };
 }
 
 /** sign_in({fill}): the host types ONE vault value into the field the agent clicked, in the owner's Chrome. */
@@ -1613,6 +1618,10 @@ async function signInFill(id: string, field: string, reason: string): Promise<Si
   signInJobs.delete(id);
   sharedDesktop.get().release(id);
   if (settled === 'cancel') return si.blocked(job!.site, `the owner cancelled the ${req.host} sign-in`);
+  if (settled === 'failed') {
+    const d = (cr.takeSettleDetail(req.requestId) || {}) as { reason?: string };
+    return si.blocked(job!.site, `filling the ${field} failed in the owner's cockpit: ${d.reason || 'the attempt broke'} — nothing was typed; once they have unlocked the vault again, call sign_in({site, fill:"${field}"}) once more`);
+  }
   cr.forget(req.requestId, 'expired');
   return si.blocked(job!.site, `nobody answered the ${req.host} sign-in card in ${SIGN_IN_WAIT_MS / 60_000} minutes (the vault may be locked in the cockpit)`);
 }
@@ -3051,7 +3060,7 @@ sharedDesktop.wire({
   waitingOnHuman: (id) => {
     if (hasOpenScreenRequest(id)) return true;
     const s = state.getSession(id);
-    return !!(s && (s.action || s.claude?.state === 'awaiting-input'));
+    return !!(s && (s.action || s.claude?.state === 'awaiting-input' || s.credentialRequest));
   },
   changed: (st) => broadcast({ type: 'shared-desktop', lease: st }),
 });
@@ -7211,6 +7220,23 @@ export async function handle(
           claude.appendChat(id, { kind: 'system', text: `🔑 Saved ${names.length} detail(s) for ${card.host} in your vault — the agent did not see them.` });
           return json(res, { ok: true, saved: names.length });
         }
+        // VAULT4: the cockpit's fill ATTEMPT failed (the vault worker died, the host could not be reached…): the request is
+        // over for the agent too — it hears one reason now, not an "expired" ten minutes later; the owner may unlock again
+        if (body.choice === 'failed') {
+          // a filtered code only — free text from the page is not taken; an unknown code is a bad request, the card stays
+          const reason = cr.failReason(body.code);
+          if (!reason) return badRequest(res, `code is one of ${Object.keys(cr.FAIL_REASONS).join(' | ')}`);
+          const owned = cr.hasWaiter(card.requestId);
+          cr.setSettleDetail(card.requestId, { reason });
+          cr.forget(card.requestId, 'failed');
+          state.patchSession(id, { credentialRequest: null });
+          console.log(`[vault] ${new Date().toISOString()} ${id} ${card.kind || 'sign-in'} fill attempt failed in the cockpit: ${body.code} (${card.host})`);
+          claude.appendChat(id, { kind: 'system', text: `🔑 Filling ${card.kind === 'field' ? `your ${card.fields[0]}` : 'the sign-in'} for ${card.host} failed in your cockpit — ${reason}. Nothing was filled; the agent was told. Unlock the vault again and it will ask once more.` });
+          if (!owned) {
+            try { claude.sendMessage(id, `[host] Filling the ${card.host} sign-in failed in the owner's cockpit (${reason}). Nothing was filled. Call request_credentials again once they say the vault is unlocked, or request_screen.`); } catch (e) { return json(res, { error: (e as Error).message }, 500); }
+          }
+          return json(res, { ok: true });
+        }
         const choice = body.choice === 'manual' ? 'manual' : 'cancel';
         if (choice === 'manual' && body.remember === true) cr.setPref(card.origin, 'manual');
         const owned = cr.hasWaiter(card.requestId); // sign_in waits on it and tells the agent itself
@@ -7243,7 +7269,9 @@ export async function handle(
       state.patchSession(id, { credentialRequest: null });
       if (owned) {
         const where = card.target === 'shared' ? 'into your Chrome on the shared desktop' : "into the field on the agent's page";
-        claude.appendChat(id, { kind: 'system', text: `🔑 Typed your ${r.filled.join(', ')} for ${card.host} from your vault ${where}${body.auto === true ? ' (automatically)' : ''} — the agent did not see it.` });
+        const how = body.auto !== true ? '' : body.grant === true ? ' (automatically — your one-time approval for this site in this session)' : ' (automatically)';
+        claude.appendChat(id, { kind: 'system', text: `🔑 Typed your ${r.filled.join(', ')} for ${card.host} from your vault ${where}${how} — the agent did not see it.` });
+        if (body.auto === true) console.log(`[vault] ${new Date().toISOString()} ${id} ${card.kind === 'field' ? 'field' : 'sign-in'} filled automatically${body.grant === true ? ' under the owner\'s grant' : ''} (${card.host})`);
         return json(res, { ok: true, filled: r.filled, submitted: r.submitted });
       }
       claude.appendChat(id, { kind: 'system', text: `🔑 Signed in to ${card.host} from your vault${body.auto === true ? ' (automatically)' : ''} — the agent did not see the details.` });

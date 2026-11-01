@@ -99,6 +99,8 @@ export interface CredentialRequest {
   page?: { tag: string; type: string; label: string; id?: string; name?: string };
   /** 'field': which part of the saved value goes in — the whole value, or an expiry's month / full year (split in the vault worker, never here). */
   part?: FieldPart;
+  /** 'field': the catalog (names only) says an entry of this origin holds this field — so the card can say "unlock to fill it" instead of a dead end. */
+  saved?: boolean;
 }
 
 // VAULT3: a saved expiry ("MM/YY") lands in two selects on most payment forms. The agent names the part; the owner's
@@ -149,7 +151,17 @@ interface Pending {
 }
 
 /** How a request ended — what a host-side waiter (sign_in) hears. Never a value. */
-export type Settled = 'filled' | 'manual' | 'cancel' | 'expired' | 'saved';
+export type Settled = 'filled' | 'manual' | 'cancel' | 'expired' | 'saved' | 'failed';
+/** VAULT4: the cockpit's filtered codes for a fill attempt that broke on its side, and the one line each becomes. No free text crosses. */
+export const FAIL_REASONS: Record<string, string> = {
+  worker_dead: "the owner's vault worker stopped while filling",
+  worker_timeout: "the owner's vault did not answer in time",
+  worker_unreachable: "the owner's vault worker could not be reached",
+  host_timeout: "the owner's cockpit got no answer from the host in time",
+  host_unreachable: "the owner's cockpit could not reach the host",
+  host_error: 'the host failed while filling',
+};
+export const failReason = (code: unknown): string | null => (typeof code === 'string' && FAIL_REASONS[code]) || null;
 const settleWaiters = new Map<string, (s: Settled) => void>();
 // VAULT2: what the owner saved on a form — the entry's id, title and field NAMES, for the agent's next vault_fill.
 const settleDetails = new Map<string, unknown>();
@@ -600,7 +612,7 @@ export async function requestField(
   for (const [id, p] of pending) if (p.sessionId === sessionId) { pending.delete(id); settle(id, 'cancel'); }
   const request: CredentialRequest = {
     // a named field is never filled without a tap: the sign-in card's "auto" choice for this origin does not reach here
-    requestId, at: new Date().toISOString(), origin, host, fields: [o.field], pref: 'ask', kind: 'field',
+    requestId, at: new Date().toISOString(), origin, host, fields: [o.field], pref: 'ask', kind: 'field', saved: types.size > 0,
     page: { tag: String(r.tag || ''), type: String(r.type || ''), label: String(r.label || ''), ...(r.id ? { id: String(r.id) } : {}), ...(r.name ? { name: String(r.name) } : {}) },
     ...(o.part && o.part !== 'value' ? { part: o.part } : {}),
     ...(o.entry ? { entry: String(o.entry).slice(0, 120) } : {}),

@@ -95,7 +95,7 @@ try {
   // what the vault knows for this origin (names and types only): remarks is plain multi-line text, the others are not
   cr.writeCatalog({ entries: [{ id: 't1', title: 'Test', origin: base, fields: [{ name: 'remarks', type: 'multiline' }, { name: 'card_number', type: 'number' }, { name: 'cvv', type: 'secret' }] }] });
   const f1 = await cr.requestField(sid, { site: '127.0.0.1', field: 'card_number', target: 'card number', entry: 'Dana', reason: 'verify' });
-  out.cardReq = f1.status === 'pending' ? { kind: f1.request.kind, fields: f1.request.fields, entry: f1.request.entry, host: f1.request.host, pref: f1.request.pref, page: f1.request.page } : f1;
+  out.cardReq = f1.status === 'pending' ? { kind: f1.request.kind, fields: f1.request.fields, entry: f1.request.entry, host: f1.request.host, pref: f1.request.pref, page: f1.request.page, saved: f1.request.saved } : f1;
   if (f1.status !== 'pending') throw new Error('no field request: ' + JSON.stringify(f1));
   // the body names more than the card asked for: only the card's one field lands, in the marked element only
   out.cardFill = await cr.fill(sid, f1.request.requestId, { card_number: '4111 1111 1111 1111', cvv: '999', exp: '12/30' });
@@ -113,6 +113,7 @@ try {
   out.masked = await ev("[getComputedStyle(document.querySelector('#cn')).webkitTextSecurity, getComputedStyle(document.querySelector('#notes')).webkitTextSecurity, getComputedStyle(document.querySelector('#other')).webkitTextSecurity]");
   // the input types Chrome does not dot (number, date): the value is made invisible instead, and still submitted
   const fNum = await cr.requestField(sid, { field: 'amount', target: 'amount' });
+  out.savedUnknown = fNum.status === 'pending' ? fNum.request.saved : fNum; // VAULT4: the catalog has no "amount" — the card knows there is nothing to unlock for
   if (fNum.status !== 'pending') throw new Error('no number request: ' + JSON.stringify(fNum));
   out.numFill = await cr.fill(sid, fNum.request.requestId, { amount: '1234' });
   const fDob = await cr.requestField(sid, { field: 'dob', target: 'birth date' });

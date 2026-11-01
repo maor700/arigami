@@ -30,7 +30,8 @@ test.skipIf(!chrome)('the host finds the sign-in fields, fills only them on the 
   expect(o.inspectKeys.sort()).toEqual(['fields', 'origin', 'tab']);
   // VAULT2: a named field — by the words of its label, or the focused one; one marked element, one origin, once
   // the card learns WHERE the value goes (tag, type, label words) and is never automatic (pref 'ask' whatever the site's sign-in choice)
-  expect(o.cardReq).toEqual({ kind: 'field', fields: ['card_number'], entry: 'Dana', host: '127.0.0.1', pref: 'ask', page: { tag: 'input', type: 'text', label: 'Card number', id: 'cn', name: 'cardNumber' } });
+  expect(o.cardReq).toEqual({ kind: 'field', fields: ['card_number'], entry: 'Dana', host: '127.0.0.1', pref: 'ask', saved: true, page: { tag: 'input', type: 'text', label: 'Card number', id: 'cn', name: 'cardNumber' } });
+  expect(o.savedUnknown).toBe(false);
   expect(o.cardFill).toMatchObject({ filled: ['card_number'], submitted: false });
   expect(o.cardSeen).toEqual({ cn: '4111 1111 1111 1111', cvv: '', exp: '', other: '', marks: 0 });
   expect(o.cardReuse).toMatch(/no longer open/);
