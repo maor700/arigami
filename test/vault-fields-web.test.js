@@ -430,11 +430,29 @@ test('the card is settled by the HTTP answer, not the socket: after "filled" or 
     expect(seen).toEqual([{ code: 'worker_unreachable', grants: 1 }]); // the grant was still there for the hook
     expect(grants.grantCount()).toBe(0); // and gone right after
     expect(vaultLib._status().unlocked).toBe(false);
+    // the SILENT worker (never answers) reaches the same hook when its clock runs out — code worker_timeout, grant still present
+    seen.length = 0;
+    vaultLib._setVaultStatus({ exists: true, unlocked: true, count: 1 });
+    grants.grantAutoFill({ sessionId: 's1', origin: 'https://bank.example', entries: [{ id: 'e1', title: 'Dana', fields: ['cvv'] }] });
+    vaultLib._dropWorker();
+    vaultLib._setCallTimeout(40, 'matchField');
+    globalThis.Worker = class { postMessage() {} terminate() {} };
+    await vaultLib.matchVaultField('https://bank.example', 'cvv').catch(() => {});
+    expect(seen).toEqual([{ code: 'worker_timeout', grants: 1 }]);
+    expect(grants.grantCount()).toBe(0);
+    // a crash (onerror) too
+    seen.length = 0;
+    vaultLib._setVaultStatus({ exists: true, unlocked: true, count: 1 });
+    grants.grantAutoFill({ sessionId: 's1', origin: 'https://bank.example', entries: [{ id: 'e1', title: 'Dana', fields: ['cvv'] }] });
+    globalThis.Worker = class { constructor() { setTimeout(() => this.onerror?.({}), 2); } postMessage() {} terminate() {} };
+    await vaultLib.matchVaultField('https://bank.example', 'cvv').catch(() => {});
+    expect(seen).toEqual([{ code: 'worker_dead', grants: 1 }]);
     expect(auto).toContain("setFatalHook((code) => {");
     expect(auto).toContain("if (!r || !coversRequest(s.id, r)) continue;");
     expect(auto).toMatch(/choice: 'failed', code \}\)\.catch/);
   } finally {
     grants.setFatalHook(null);
+    vaultLib._setCallTimeout(60_000, 'matchField');
     globalThis.Worker = RealWorker2;
     vaultLib._setVaultStatus({ exists: false, unlocked: false, error: null });
   }
