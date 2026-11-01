@@ -139,13 +139,14 @@ try {
   e.fields.set('Title', 'Dana');
   e.fields.set('URL', pageBase);
   e.fields.set('Arigami origin', pageBase);
-  e.fields.set('UserName', '');
+  e.fields.set('UserName', 'dana');
+  e.fields.set('Password', (kdbxweb as any).ProtectedValue.fromString('s3cret-never-auto'));
   e.fields.set('id_number', (kdbxweb as any).ProtectedValue.fromString(ID_VALUE));
   e.fields.set('phone', (kdbxweb as any).ProtectedValue.fromString(PHONE_VALUE));
   e.fields.set('Arigami field types', JSON.stringify({ phone: 'phone' }));
   const file = Buffer.from(await db.save());
   out.vaultPut = (await fetch(base + '/__api/vault/file', { method: 'PUT', headers: { cookie, 'content-type': 'application/octet-stream', 'if-match': '*' }, body: file })).status;
-  out.catalogPut = (await person('PUT', '/__api/vault/catalog', { entries: [{ id: e.uuid.id, title: 'Dana', origin: pageBase, fields: [{ name: 'id_number', type: 'secret' }, { name: 'phone', type: 'phone' }] }] })).status;
+  out.catalogPut = (await person('PUT', '/__api/vault/catalog', { entries: [{ id: e.uuid.id, title: 'Dana', origin: pageBase, fields: [{ name: 'username', type: 'text' }, { name: 'password', type: 'secret' }, { name: 'id_number', type: 'secret' }, { name: 'phone', type: 'phone' }] }] })).status;
 
   at('session chrome');
   // ---- the session browser on the page ---------------------------------------------------------------------------------
@@ -258,9 +259,23 @@ try {
     out.card3 = await card();
     out.fill3Early = await race(fill3, 10);
     void c3;
-    await click('button[data-variant="quiet"]'); // Cancel
+    await click('[data-cred-cancel]');
     out.fill3 = await race(fill3, 15000);
     out.page3 = await evS("document.querySelector('#idn').value");
+
+    // ---- 4b. G-1: a sign-in role under the grant — never automatic, whatever the entry holds; the card waits ----------------------
+    at('role under grant');
+    await cdp.pageNavigate(sid, `${pageBase}/form`);
+    await until(async () => evS("!!document.querySelector('#idn')"), 15000);
+    await evS("document.querySelector('#idn').focus(); 1");
+    const fillPw = agent(`/__api/sessions/${sid}/vault/fill`, { site: '127.0.0.1', field: 'password', reason: 'e2e role' });
+    await until(card, 30000);
+    await sleep(2000);
+    out.cardRole = await card();
+    out.fillPwEarly = await race(fillPw, 10);
+    out.pageRole = await evS("document.querySelector('#idn').value");
+    await click('[data-cred-cancel]');
+    out.fillPw = await race(fillPw, 15000);
 
     // ---- 5. a field the grant does not name (saved later, or never): the card waits; Stop revokes the grant ------------------
     at('unlisted field + Stop');
@@ -275,7 +290,7 @@ try {
     if (out.card5?.grantOn) await click('[data-cred-grant-on] button'); // Stop
     await sleep(300);
     out.card5AfterStop = await card();
-    await click('button[data-variant="quiet"]'); // Cancel
+    await click('[data-cred-cancel]');
     out.fill5 = await race(fill5, 15000);
 
     // ---- 6. a second cockpit tab; tab A loses its socket; B answers the card; A's copy is stale → the host says so ------------

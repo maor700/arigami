@@ -193,7 +193,7 @@ test('one named field (vault_fill) renders WHERE it goes, a single dotted input,
   // VAULT4: a named field is automatic only under this tab's grant (session + exact origin); a sign-in's "remember"
   // choice still reaches only a request without a kind, and a form is never automatic
   const auto = await Bun.file(web('components/VaultAutoFill.jsx')).text();
-  expect(auto).toContain("if (!coversRequest(s.id, r)) continue;");
+  expect(auto).toContain("if (isRoleField(field) || !coversRequest(s.id, r)) continue;");
   expect(auto).toContain("if (r.pref !== 'auto' || r.kind) continue;");
   expect(auto).toContain('auto: true, grant: true');
   const shared = render(h(CredentialCard, { sessionId: 's1', request: { ...base, kind: 'field', fields: ['id_number'], target: 'shared', account: 'work.example' } }));
@@ -257,7 +257,7 @@ test('a locked vault: the card says so (and that the saved field is there to unl
   vaultLib._setVaultStatus({ exists: false, unlocked: false, error: null });
 });
 
-test('a grant: one session, one exact origin, one entry, the field names it holds now, a bounded time; gone on lock, on the session\'s end, never for a sign-in, a form or the owner\'s Chrome', () => {
+test('a grant: one session, one exact origin, one entry, the field names it holds now (never a sign-in role), a bounded time; gone on lock, on the session\'s end, never for a sign-in, a form or the owner\'s Chrome', async () => {
   const t0 = 1_000_000;
   const g = { sessionId: 's1', origin: 'https://bank.example', entryId: 'e1', fields: [{ name: 'id_number' }, { name: 'Phone' }, 'phone'] };
   expect(grants.grantAutoFill({ ...g, minutes: 10 }, t0)).toEqual({ until: t0 + 600_000, entryId: 'e1', fields: ['id_number', 'phone'] });
@@ -270,6 +270,18 @@ test('a grant: one session, one exact origin, one entry, the field names it hold
   expect(grants.coversRequest('s1', field, t0 + 1)).toBe(true);
   expect(grants.coversRequest('s1', { ...field, fields: ['PHONE'] }, t0 + 1)).toBe(true);
   expect(grants.coversRequest('s1', { ...field, fields: ['email'] }, t0 + 1)).toBe(false); // a field the owner did not approve — saved later or on another entry
+  // G-1: a sign-in role is never a grant's — not into the list (whatever the case), not covered, so matchField's same-site rule for roles is never reached without a tap
+  const roles = grants.grantAutoFill({ ...g, fields: ['id_number', 'Password', 'USERNAME', 'otp', { name: 'OTP' }], minutes: 10 }, t0);
+  expect(roles.fields).toEqual(['id_number']);
+  for (const r of ['password', 'Password', 'username', 'otp']) expect(grants.coversRequest('s1', { ...field, fields: [r] }, t0 + 1)).toBe(false);
+  expect(grants.grantAutoFill({ ...g, fields: ['password', 'username'] }, t0)).toBeNull(); // only roles → no grant at all
+  expect(grants.isRoleField('Otp')).toBe(true);
+  expect(grants.isRoleField('id_number')).toBe(false);
+  grants.grantAutoFill({ ...g, minutes: 10 }, t0);
+  expect(grants.coversRequest('s1', { ...field, origin: 'https://login.bank.example' }, t0 + 1)).toBe(false); // the same site on another host: not covered (an entry serves its exact address)
+  const auto = Bun.file(web('components/VaultAutoFill.jsx')).text();
+  expect(await auto).toContain('if (isRoleField(field) || !coversRequest(s.id, r)) continue;');
+  expect(await auto).toContain('x.id === g?.entryId && x.origin === r.origin');
   expect(grants.coversRequest('s2', field, t0 + 1)).toBe(false); // another session
   expect(grants.coversRequest('s1', { ...field, origin: 'https://login.bank.example' }, t0 + 1)).toBe(false); // another origin
   expect(grants.coversRequest('s1', { ...field, origin: 'http://bank.example' }, t0 + 1)).toBe(false);

@@ -18,7 +18,7 @@ import { api } from '../lib/api.js';
 import { useT } from '../lib/i18n.js';
 import { useVault, matchVault, unlockVault, createVault, fillFromVault, vaultSupported, matchVaultField, fillVaultField, saveVaultFields } from '../lib/vault.js';
 import { inputPropsFor } from '../lib/vault-schema.js';
-import { grantAutoFill, grantFor, revokeGrant, autoNote, subscribeGrants, grantsVersion, GRANT_MINUTES_DEFAULT } from '../lib/vault-grants.js';
+import { grantAutoFill, grantFor, isRoleField, revokeGrant, autoNote, subscribeGrants, grantsVersion, GRANT_MINUTES_DEFAULT } from '../lib/vault-grants.js';
 import { useStore } from '../lib/store.js';
 import { sessionLabel } from './ui.jsx';
 import { defineHostComponent, loose, str, any, z } from '../openui/define.js';
@@ -241,7 +241,7 @@ function FieldCardView({ sessionId, request }) {
   // the grant the tick would give: THIS session, THIS exact origin, the entry the owner taps, the field names it holds now
   const { sessions } = useStore();
   const sessionName = sessionLabel(sessions?.find((x) => x.id === sessionId)) || sessionId;
-  const fieldNames = (m) => (m.fields || []).map((f) => f.name);
+  const fieldNames = (m) => (m.fields || []).map((f) => f.name).filter((n) => !isRoleField(n)); // a sign-in role is never offered
   const fillFrom = (m) => run(async () => {
     await fillVaultField({ ...base, entryId: m.id });
     if (grantNext && !shared) grantAutoFill({ sessionId, origin: request.origin, entryId: m.id, fields: fieldNames(m), minutes: GRANT_MINUTES_DEFAULT });
@@ -290,7 +290,7 @@ function FieldCardView({ sessionId, request }) {
             ))}
             <Btn variant="quiet" disabled={busy} onClick={() => setTyping(true)}>{t('vault.card.other')}</Btn>
           </div>
-          {!shared && !grant && (
+          {!shared && !grant && !isRole && (matches.length !== 1 || fieldNames(matches[0]).length > 0) && (
             <div className="mt-2">
               <Check checked={grantNext} onChange={setGrantNext} data-cred-grant>
                 {t('vault.fieldCard.grant', { host: request.host, session: sessionName, minutes: GRANT_MINUTES_DEFAULT, fields: matches.length === 1 ? fieldNames(matches[0]).join(', ') : t('vault.fieldCard.grantFieldsOfTapped') })}
@@ -315,7 +315,7 @@ function FieldCardView({ sessionId, request }) {
       {!done && (
         <div className="mt-2.5 flex flex-wrap items-center justify-end gap-2">
           <span className="flex-1" />
-          <Btn variant="quiet" disabled={busy} onClick={() => answer('cancel')}>{t('vault.card.cancel')}</Btn>
+          <Btn variant="quiet" disabled={busy} data-cred-cancel onClick={() => answer('cancel')}>{t('vault.card.cancel')}</Btn>
           <Btn variant="secondary" disabled={busy} data-cred-manual onClick={() => answer('manual')}>{t('vault.card.manual')}</Btn>
           {!showSaved && (
             <Btn variant="primary" data-cred-fill disabled={busy} onClick={fillTypedOrSay}>
@@ -451,7 +451,7 @@ function SignInCardView({ sessionId, request }) {
         <div className="mt-2.5 flex flex-wrap items-center justify-end gap-2">
           <Check checked={remember} onChange={setRemember}>{t('vault.card.remember', { host: request.host })}</Check>
           <span className="flex-1" />
-          <Btn variant="quiet" disabled={busy} onClick={() => answer('cancel')}>{t('vault.card.cancel')}</Btn>
+          <Btn variant="quiet" disabled={busy} data-cred-cancel onClick={() => answer('cancel')}>{t('vault.card.cancel')}</Btn>
           <Btn variant="secondary" disabled={busy} data-cred-manual onClick={() => answer('manual')}>{t('vault.card.manual')}</Btn>
           {!showSaved && (
             <Btn variant="primary" data-cred-fill disabled={busy} onClick={() => (fields.some((r) => values[r]) ? fillTyped() : setErr(t('vault.card.needValue')))}>

@@ -11,6 +11,10 @@ export const GRANT_MINUTES_MAX = 60;
 export const GRANT_MINUTES_DEFAULT = 30;
 
 const key = (sessionId, origin) => `${sessionId}\n${origin}`;
+// a sign-in role is never a grant's: those keep sign_in / the sign-in card's own rules (incl. the same-site match)
+const ROLE = /^(username|password|otp)$/i;
+const norm = (f) => String(f?.name ?? f ?? '').trim().toLowerCase();
+export const isRoleField = (f) => ROLE.test(norm(f));
 function bump() {
   version++;
   for (const fn of subs) fn();
@@ -22,7 +26,7 @@ function bump() {
  */
 export function grantAutoFill({ sessionId, origin, entryId, fields, minutes = GRANT_MINUTES_DEFAULT }, now = Date.now()) {
   if (!sessionId || !/^https?:\/\//.test(String(origin || ''))) return null;
-  const names = [...new Set((Array.isArray(fields) ? fields : []).map((f) => String(f?.name ?? f ?? '').trim().toLowerCase()).filter(Boolean))];
+  const names = [...new Set((Array.isArray(fields) ? fields : []).map(norm).filter((n) => n && !ROLE.test(n)))];
   if (!entryId || !names.length) return null;
   const m = Math.max(1, Math.min(GRANT_MINUTES_MAX, Number(minutes) || GRANT_MINUTES_DEFAULT));
   const g = { until: now + m * 60_000, entryId: String(entryId), fields: names };
@@ -47,8 +51,10 @@ export function grantFor(sessionId, origin, now = Date.now()) {
 /** Does a grant cover this request — one of ITS field names (never a sign-in or a form) into the session browser (never the owner's Chrome)? */
 export function coversRequest(sessionId, req, now = Date.now()) {
   if (!req || req.kind !== 'field' || req.target === 'shared') return false;
+  const name = norm(req.fields?.[0]);
+  if (!name || ROLE.test(name)) return false;
   const g = grantFor(sessionId, req.origin, now);
-  return !!g && g.fields.includes(String(req.fields?.[0] || '').toLowerCase());
+  return !!g && g.fields.includes(name);
 }
 
 export function revokeGrant(sessionId, origin) {

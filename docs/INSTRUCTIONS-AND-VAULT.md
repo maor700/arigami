@@ -226,7 +226,8 @@ Three tools, all riding with the `browser` family (`server/agent-policy.ts`), no
   in that cockpit tab's memory only (`web/src/lib/vault-grants.js`), keyed by session + **exact origin**, for ONE entry
   and the field **names** it holds at that moment (the tick spells them out, with the session's name and the time), at
   most 60 minutes, off by default, gone when the vault locks, the session ends, the time is up or the owner taps Stop. A
-  field saved on the entry later is not covered. Under it `VaultAutoFill` fills a field card from that entry (`auto:true,
+  field saved on the entry later is not covered, and a sign-in role (`username` / `password` / `otp`, any case) never
+  is — those keep `sign_in` and the sign-in card's own rules (including the same-site match), grant or not. Under it `VaultAutoFill` fills a field card from that entry (`auto:true,
   grant:true` on the fill body; the chat line says so); a miss or an error leaves the card up with the reason. Never a
   form, never the owner's Chrome (`target:'shared'`), never another origin. A field card also carries `saved` (the
   catalog, names only, holds this field for the origin) so a locked vault says "unlock to fill the saved X" instead of

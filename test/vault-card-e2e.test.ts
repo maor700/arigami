@@ -57,6 +57,13 @@ test.skipIf(!chrome || !built)('the vault card: a locked vault is said and Fill 
   expect(o.fill3Early).toBe('pending');
   expect(o.fill3).toMatchObject({ status: 'cancelled', field: 'id_number', host: 'localhost' });
   expect(o.page3).toBe('');
+  // 4b. G-1: the entry also holds a sign-in (username + password); the grant's text does not list them, and a vault_fill
+  //     for `password` under the live grant is NOT automatic — the card waits with the saved entry's button, nothing lands
+  expect(o.grantText).not.toMatch(/password|username/);
+  expect(o.cardRole).toMatchObject({ fillFrom: ['Dana'], grantOn: true, autoError: null });
+  expect(o.fillPwEarly).toBe('pending');
+  expect(o.pageRole).toBe('');
+  expect(o.fillPw).toMatchObject({ status: 'cancelled', field: 'password' });
   // 5. a field the grant does not name (email — never on the entry): no automatic fill, the card waits and still shows the
   //    grant; Stop revokes it (the line goes); Cancel reaches the agent
   expect(o.card5).toMatchObject({ grantOn: true, fillFrom: [], state: 'noEntry' });
