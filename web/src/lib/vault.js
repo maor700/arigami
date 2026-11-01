@@ -8,16 +8,22 @@ import { revokeAllGrants } from './vault-grants.js';
 let worker = null;
 let seq = 0;
 const waiting = new Map();
-// VAULT4: a call to the worker always settles — an answer, the worker's death, or this clock (argon2 at 64 MiB takes
-// a second or two; a fill waits on the host for up to 30 s) — so no card ever sits on "busy" forever
-let CALL_TIMEOUT_MS = 60_000;
-/** Test seam. */
-export const _setCallTimeout = (ms) => { CALL_TIMEOUT_MS = ms; };
-const WORKER_DEAD = 'the vault worker stopped answering — reload the cockpit (Ctrl+Shift+R); nothing is known to have been filled';
+// VAULT4: a call to the worker always settles — an answer, the worker's death, or a clock per operation: opening or
+// creating the vault runs argon2 (64 MiB × 3) which a slow phone takes many seconds over; a fill waits on the host for
+// up to 30 s (the worker's own fetch clock) and must outlive it, so the host's reason — not a generic clock — is what
+// the owner reads. No card ever sits on "busy" forever, and a dropped worker's late answers are ignored.
+const CALL_TIMEOUTS = { default: 60_000, unlock: 180_000, create: 180_000, fill: 45_000, fillField: 45_000, saveFields: 90_000 };
+/** Test seam: one op's clock, or the default. */
+export const _setCallTimeout = (ms, op = 'default') => { CALL_TIMEOUTS[op] = ms; };
+const clockFor = (op) => CALL_TIMEOUTS[op] ?? CALL_TIMEOUTS.default;
+// fixed phrases: never the worker's own message, an event's text or anything that could carry a value
+const WORKER_DEAD = 'the vault worker stopped — unlock the vault again; nothing is known to have been filled';
+const WORKER_UNREACHABLE = 'the vault worker could not be reached — unlock the vault again; nothing is known to have been filled';
+const slow = (op, ms) => `the vault did not answer in ${Math.round(ms / 1000)} s (${op}) — unlock the vault again, or reload the cockpit; nothing is known to have been filled`;
 function failAll(error) {
   for (const [id, w] of waiting) { waiting.delete(id); clearTimeout(w.timer); w.reject(new Error(error)); }
 }
-/** The worker crashed or will not load: every waiting call fails, the vault counts as locked, the next call starts a new worker. */
+/** The worker crashed, froze or will not load: every waiting call fails, the vault counts as locked, the next call starts a new worker. */
 function workerDied(why) {
   try { worker?.terminate(); } catch { /* already gone */ }
   worker = null;
@@ -39,41 +45,47 @@ function setStatus(next) {
 export const _setVaultStatus = (s) => setStatus(s);
 export const _status = () => status;
 
+/** A message from worker `w` — taken only while `w` is still THE worker; a dropped worker's late word (even "unlocked") is not. */
+function onWorkerMessage(w, ev) {
+  if (w !== worker) return;
+  const msg = ev.data || {};
+  if (msg.type === 'status') {
+    const s = Object.fromEntries(Object.entries(msg.status || {}).filter(([, v]) => v !== undefined));
+    if (s.unlocked) s.exists = true;
+    return setStatus(s);
+  }
+  const p = waiting.get(msg.id);
+  if (!p) return;
+  waiting.delete(msg.id);
+  clearTimeout(p.timer);
+  if (msg.ok) p.resolve(msg.result);
+  else p.reject(Object.assign(new Error(msg.error), { status: msg.status }));
+}
+
 function getWorker() {
   if (worker) return worker;
-  worker = new Worker(new URL('./vault.worker.js', import.meta.url), { type: 'module' });
-  worker.onmessage = (ev) => {
-    const msg = ev.data || {};
-    if (msg.type === 'status') {
-      const s = Object.fromEntries(Object.entries(msg.status || {}).filter(([, v]) => v !== undefined));
-      if (s.unlocked) s.exists = true;
-      return setStatus(s);
-    }
-    const w = waiting.get(msg.id);
-    if (!w) return;
-    waiting.delete(msg.id);
-    clearTimeout(w.timer);
-    if (msg.ok) w.resolve(msg.result);
-    else w.reject(Object.assign(new Error(msg.error), { status: msg.status }));
-  };
-  worker.onerror = (ev) => workerDied(`${WORKER_DEAD}${ev?.message ? ` (${ev.message})` : ''}`);
-  worker.onmessageerror = () => workerDied(WORKER_DEAD);
+  const w = new Worker(new URL('./vault.worker.js', import.meta.url), { type: 'module' });
+  worker = w;
+  w.onmessage = (ev) => onWorkerMessage(w, ev);
+  w.onerror = () => { if (w === worker) workerDied(WORKER_DEAD); };
+  w.onmessageerror = () => { if (w === worker) workerDied(WORKER_DEAD); };
   const min = Number(localStorage.getItem(WINDOW_KEY));
-  if (min) worker.postMessage({ id: ++seq, op: 'setWindow', args: { minutes: min } });
-  return worker;
+  if (min) w.postMessage({ id: ++seq, op: 'setWindow', args: { minutes: min } });
+  return w;
 }
 
 function call(op, args) {
   return new Promise((resolve, reject) => {
     const id = ++seq;
+    const ms = clockFor(op);
     // a worker that does not answer is not kept: this call fails, and so does every other one waiting on it; the next call starts afresh
-    const timer = setTimeout(() => { if (waiting.has(id)) workerDied(`the vault did not answer in ${Math.round(CALL_TIMEOUT_MS / 1000)} s (${op}) — try again, or reload the cockpit`); }, CALL_TIMEOUT_MS);
+    const timer = setTimeout(() => { if (waiting.has(id)) workerDied(slow(op, ms)); }, ms);
     waiting.set(id, { resolve, reject, timer });
     try {
       getWorker().postMessage({ id, op, args });
-    } catch (e) {
+    } catch {
       // a worker that cannot be reached is gone: this call and every other one waiting fail, the vault counts as locked
-      workerDied(`the vault worker could not be reached (${e?.message || e}) — unlock the vault again; nothing is known to have been filled`);
+      workerDied(WORKER_UNREACHABLE);
     }
   });
 }

@@ -82,11 +82,16 @@ test.skipIf(!chrome || !built)('the vault card: a locked vault is said and Fill 
   //     stays busy, the card asks for the vault password again (the worker is gone, so the vault counts as locked), the
   //     owner unlocks and taps once more, the agent — still waiting — gets "filled"
   expect(o.workersKilled).toBeGreaterThan(0);
-  expect(o.cardWorkerDead.error).toMatch(/vault worker could not be reached.*unlock the vault again/);
-  expect(o.cardWorkerDead.unlockRow).toBe(true);
-  expect(o.busyAfterWorkerDeath).toEqual([false, false, false]); // Cancel, I'll type it myself, Fill — none stuck on busy
-  expect(o.fillWEarly).toBe('pending');
-  expect(o.fillW).toMatchObject({ status: 'filled', field: 'id_number' });
+  expect(o.cardWorkerDead.error).toMatch(/^the vault worker could not be reached — unlock the vault again/); // a fixed phrase: no raw error, no value
+  expect(o.cardWorkerDead.done).toBe('failed');
+  // the TOOL gets the outcome now, with the reason, not an "expired" ten minutes later
+  expect(o.fillW).toMatchObject({ status: 'failed', field: 'id_number', host: '127.0.0.1' });
+  expect(o.fillW.reason).toMatch(/failed in their cockpit: the vault worker could not be reached/);
+  expect(o.fillW.next).toMatch(/call vault_fill\(\{site:"127\.0\.0\.1", field:"id_number"\}\) once more/);
+  // the vault counts as locked in that tab; the agent's next request shows the unlock row; after the unlock nothing is stuck on busy; the tap fills
+  expect(o.cardWorkerRetry.unlockRow).toBe(true);
+  expect(o.busyAfterWorkerDeath).toEqual([false, false, false]); // Cancel, I'll type it myself, Fill from Dana
+  expect(o.fillW2).toMatchObject({ status: 'filled', field: 'id_number' });
   expect(o.pageW).toBe('123456782');
   // 6. two cockpit tabs; A's socket is cut, B fills: the agent is served once; A's stale copy, tapped, is told by the HTTP
   //    answer that the request is gone — outcome shown, nothing left to press, nothing filled twice

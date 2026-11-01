@@ -322,14 +322,20 @@ try {
     await until(async () => { const c = await card(); return c && c.fillFrom.length ? c : null; }, 30000);
     out.workersKilled = await A.killWorker();
     await click('[data-fill-from]');
-    out.cardWorkerDead = await until(async () => { const c = await card(); return c && c.error ? c : null; }, 10000);
-    out.fillWEarly = await race(fillW, 10);
-    // the action buttons are back (busy released); the Unlock button alone is disabled, for its empty password box, as always
-    out.busyAfterWorkerDeath = await evC("['[data-cred-cancel]', '[data-cred-manual]', '[data-cred-fill]'].map((q) => { const b = document.querySelector('[data-credential-request] ' + q); return b ? b.disabled : 'missing'; })");
-    await A.unlock();
+    out.cardWorkerDead = await until(async () => { const c = await card(); return c && (c.error || c.done) ? c : null; }, 10000);
+    // the agent is told at once — one reason, no ten-minute wait — and the card is over with nothing stuck on busy
+    out.fillW = await race(fillW, 15000);
+    out.vaultLockedAfterDeath = await until(async () => { const c = await card(); return !c || c.unlockRow || c.done ? (c || { gone: true }) : null; }, 10000);
+    // the agent asks again; the owner unlocks on the new card (a fresh worker) and taps — filled
+    await evS("document.querySelector('#idn').focus(); 1");
+    const fillW2 = agent(`/__api/sessions/${sid}/vault/fill`, { site: '127.0.0.1', field: 'id_number', target: 'id number', reason: 'e2e worker retry' });
+    const cW2 = await until(async () => { const c = await card(); return c && c.id !== out.cardWorkerDead.id ? c : null; }, 30000);
+    out.cardWorkerRetry = cW2;
+    if (cW2.unlockRow) await A.unlock();
     await until(async () => { const c = await card(); return c && c.fillFrom.length ? c : null; }, 30000);
+    out.busyAfterWorkerDeath = await evC("['[data-cred-cancel]', '[data-cred-manual]', '[data-fill-from]'].map((q) => { const b = document.querySelector('[data-credential-request] ' + q); return b ? b.disabled : 'missing'; })");
     await click('[data-fill-from]');
-    out.fillW = await race(fillW, 20000);
+    out.fillW2 = await race(fillW2, 20000);
     out.pageW = await evS("document.querySelector('#idn').value");
 
     // ---- 6. a second cockpit tab; tab A loses its socket; B answers the card; A's copy is stale → the host says so ------------

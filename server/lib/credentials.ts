@@ -151,7 +151,7 @@ interface Pending {
 }
 
 /** How a request ended — what a host-side waiter (sign_in) hears. Never a value. */
-export type Settled = 'filled' | 'manual' | 'cancel' | 'expired' | 'saved';
+export type Settled = 'filled' | 'manual' | 'cancel' | 'expired' | 'saved' | 'failed';
 const settleWaiters = new Map<string, (s: Settled) => void>();
 // VAULT2: what the owner saved on a form — the entry's id, title and field NAMES, for the agent's next vault_fill.
 const settleDetails = new Map<string, unknown>();

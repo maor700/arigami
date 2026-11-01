@@ -92,6 +92,7 @@ export const en = {
   'vault.card.done.filled': 'Filled from your vault — the agent continues; nothing left to do here.',
   'vault.card.done.cancel': 'Cancelled — the agent was told.',
   'vault.card.done.manual': 'You will type it yourself — the agent asks for the screen.',
+  'vault.card.done.failed': 'Filling failed in this tab — nothing was filled; the agent was told and will ask again once the vault is unlocked.',
   'vault.card.done.gone': 'This request is no longer open (answered elsewhere, or it expired) — nothing was filled from here.',
   'vault.fieldCard.grantStop': 'Stop',
   'vault.fieldCard.autoFailed': 'Not filled by itself: {error}',

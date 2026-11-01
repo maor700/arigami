@@ -91,6 +91,7 @@ export const he = {
   'vault.card.done.filled': 'מולא מהכספת — הסוכן ממשיך; אין מה לעשות כאן.',
   'vault.card.done.cancel': 'בוטל — הסוכן קיבל הודעה.',
   'vault.card.done.manual': 'תקליד בעצמך — הסוכן יבקש את המסך.',
+  'vault.card.done.failed': 'המילוי נכשל בלשונית הזו — לא מולא כלום; הסוכן קיבל הודעה ויבקש שוב כשהכספת תיפתח.',
   'vault.card.done.gone': 'הבקשה הזו כבר לא פתוחה (נענתה במקום אחר או פקעה) — לא מולא כלום מכאן.',
   'vault.fieldCard.grantStop': 'עצור',
   'vault.fieldCard.autoFailed': 'לא מולא לבד: {error}',

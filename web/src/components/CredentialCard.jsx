@@ -39,6 +39,10 @@ export function fieldInputProps(type) {
 const errText = (e) => String(e?.body?.error || e?.message || e).replace(/^HTTP \d+ — /, '');
 // VAULT4: the host says this request is gone (answered elsewhere, expired, the host restarted) — the card is over, whatever the socket shows
 const isGone = (e) => e?.status === 404 || e?.status === 410 || /no longer open/i.test(errText(e));
+// a fill ATTEMPT that broke on this side (the vault worker died or did not answer, the host could not be reached or answered 5xx):
+// the host hears "failed" so the agent gets one reason now instead of waiting the card out; the owner may unlock and the agent asks again
+const isBroken = (e) => !isGone(e) && (/vault worker|did not answer|could not be reached|host did not answer/i.test(errText(e)) || (e?.status >= 500));
+const reportFailed = (sessionId, requestId, e) => api.post(`/sessions/${encodeURIComponent(sessionId)}/credentials/answer`, { requestId, choice: 'failed', reason: errText(e).slice(0, 200) }).catch(() => {});
 
 /** The card after its one outcome: what happened, and nothing to press — the HTTP answer settles it, not the socket. */
 function DoneLine({ t, done }) {
@@ -218,6 +222,7 @@ function FieldCardView({ sessionId, request }) {
     } catch (e) {
       setErr(errText(e));
       if (isGone(e)) setDone('gone');
+      else if (outcome === 'filled' && isBroken(e)) { setDone('failed'); await reportFailed(sessionId, request.requestId, e); }
     }
     setBusy(false);
   };
@@ -287,7 +292,7 @@ function FieldCardView({ sessionId, request }) {
       {done ? (
         <>
           <DoneLine t={t} done={done} />
-          {err && done === 'gone' && <div data-cred-error dir="auto" className="mt-1.5 text-end text-xs font-medium text-destructive">{err}</div>}
+          {err && (done === 'gone' || done === 'failed') && <div data-cred-error dir="auto" className="mt-1.5 text-end text-xs font-medium text-destructive">{err}</div>}
         </>
       ) : showSaved ? (
         <>
@@ -373,6 +378,7 @@ function SignInCardView({ sessionId, request }) {
     } catch (e) {
       setErr(errText(e));
       if (isGone(e)) setDone('gone');
+      else if (outcome === 'filled' && isBroken(e)) { setDone('failed'); await reportFailed(sessionId, request.requestId, e); }
     }
     setBusy(false);
   };
@@ -403,7 +409,7 @@ function SignInCardView({ sessionId, request }) {
       {done ? (
         <>
           <DoneLine t={t} done={done} />
-          {err && done === 'gone' && <div data-cred-error dir="auto" className="mt-1.5 text-end text-xs font-medium text-destructive">{err}</div>}
+          {err && (done === 'gone' || done === 'failed') && <div data-cred-error dir="auto" className="mt-1.5 text-end text-xs font-medium text-destructive">{err}</div>}
         </>
       ) : showSaved ? (
         <div className="mt-2.5 flex flex-wrap items-center gap-2">

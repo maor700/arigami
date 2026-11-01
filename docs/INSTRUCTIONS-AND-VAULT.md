@@ -239,7 +239,12 @@ Three tools, all riding with the `browser` family (`server/agent-policy.ts`), no
 - **The HTTP answer settles the card, the socket only tidies it.** A tap's outcome (`filled` / `cancel` / `manual`, or
   `404 no longer open` for a request another tab or the clock already settled) is shown on the card itself with nothing
   left to press, so a cockpit tab whose socket died never shows a live card for a dead request. A call into the vault
-  worker always settles too (60 s clock, the worker's crash): a silent worker is dropped and restarted on the next call.
+  worker always settles too — a clock per operation (unlock/create 180 s for argon2 on a slow device, a fill 45 s so the
+  worker's own 30 s host fetch speaks first, 60 s otherwise), the worker's crash or an unreachable worker: every waiting
+  call fails with a fixed phrase (never the worker's words), the worker is dropped (its late word is ignored), the vault
+  counts as locked and the grants go. A fill ATTEMPT that broke on the cockpit's side is answered to the host as
+  `credentials/answer {choice:'failed', reason}`: the agent's `vault_fill` returns `{status:'failed', reason, next}` at
+  once (sign_in({fill}) → blocked) instead of expiring ten minutes later, the chat says so, and the owner unlocks again.
   All of it runs end to end in `test/vault-card-e2e.test.ts` — a real host, a real session Chrome, a real cockpit tab.
 - **The card says where.** A field card carries `page: {tag, type, label}` read from the element the host marked, and
   shows "Into the page field “Card number” (input · text) · bank.example" — the owner judges the target, not only the

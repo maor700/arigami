@@ -339,37 +339,53 @@ test('a grant is a names-only snapshot: every field saved on the exact origin in
   vaultLib._setVaultStatus({ exists: false, unlocked: false, error: null });
 });
 
-test('a call to the vault worker always settles: the clock runs out, or the worker dies — every waiting call fails, the vault counts as locked, grants go', async () => {
+test('a call to the vault worker always settles: a clock per operation (long for argon2, longer than the fill bridge), or the worker dies — every waiting call fails with a fixed phrase, the vault counts as locked, grants go, a late word is ignored', async () => {
   const RealWorker = globalThis.Worker;
   try {
-    // a worker that never answers
+    // the clocks: opening/creating the vault gets argon2 time on a slow phone; a fill outlives the worker's 30 s host fetch
+    const src = await Bun.file(web('lib/vault.js')).text();
+    expect(src).toContain("const CALL_TIMEOUTS = { default: 60_000, unlock: 180_000, create: 180_000, fill: 45_000, fillField: 45_000, saveFields: 90_000 };");
+    expect(src).toMatch(/signal: AbortSignal\.timeout\(FILL_TIMEOUT_MS\)/.test(await Bun.file(web('lib/vault.worker.js')).text()) ? /fill: 45_000/ : /never/);
+    // a worker that never answers: the op's clock fails it — with the op named, never the worker's words
     globalThis.Worker = class { postMessage() {} terminate() {} };
-    vaultLib._setCallTimeout(60);
-    await expect(vaultLib.listVault()).rejects.toThrow(/did not answer in 0 s \(list\)/);
-    // a worker that crashes: the two calls in flight fail at once with one reason, the status says locked, the grant is gone
+    vaultLib._setCallTimeout(60, 'list');
+    await expect(vaultLib.listVault()).rejects.toThrow(/did not answer in 0 s \(list\).*unlock the vault again/);
+    // the unlock clock is its own (not the one just shortened)
+    vaultLib._setCallTimeout(40, 'unlock');
+    const t0 = Date.now();
+    await expect(vaultLib.unlockVault({ password: 'x' })).rejects.toThrow(/did not answer in 0 s \(unlock\)/);
+    expect(Date.now() - t0).toBeLessThan(2000);
+    // a worker that crashes: both calls in flight fail at once with the fixed phrase (the event's own text is NOT repeated), status locked, grant gone
     vaultLib._setVaultStatus({ exists: true, unlocked: true, count: 1 });
     grants.grantAutoFill({ sessionId: 's1', origin: 'https://bank.example', entries: [{ id: 'e1', title: 'Dana', fields: ['id_number'] }] });
-    globalThis.Worker = class { constructor() { setTimeout(() => this.onerror?.({ message: 'boom' }), 5); } postMessage() {} terminate() {} };
-    vaultLib._setCallTimeout(5000);
+    globalThis.Worker = class { constructor() { setTimeout(() => this.onerror?.({ message: 'boom secret-ish detail' }), 5); } postMessage() {} terminate() {} };
     const [ra, rb] = await Promise.allSettled([vaultLib.listVault(), vaultLib.matchVault('https://bank.example')]);
     expect(ra.status).toBe('rejected');
-    expect(String(ra.reason?.message)).toMatch(/stopped answering.*reload the cockpit.*\(boom\)/);
+    expect(String(ra.reason?.message)).toBe('the vault worker stopped — unlock the vault again; nothing is known to have been filled');
     expect(rb.status).toBe('rejected');
-    expect(String(rb.reason?.message)).toMatch(/stopped answering/);
-    expect(grants.grantCount()).toBe(0);
-    // a worker that cannot be reached (postMessage throws) is dead too: the call fails with the reason, the vault counts as locked
-    vaultLib._setVaultStatus({ exists: true, unlocked: true, count: 1 });
-    globalThis.Worker = class { postMessage() { throw new Error('worker gone'); } terminate() {} };
-    await expect(vaultLib.listVault()).rejects.toThrow(/could not be reached \(worker gone\).*unlock the vault again/);
+    expect(String(rb.reason?.message)).not.toContain('boom');
     expect(vaultLib._status().unlocked).toBe(false);
-    // the next call starts a fresh worker (the dead one is not reused)
+    expect(grants.grantCount()).toBe(0);
+    // a worker that cannot be reached (postMessage throws) is dead too: fixed phrase, no raw error, status locked
+    vaultLib._setVaultStatus({ exists: true, unlocked: true, count: 1 });
+    globalThis.Worker = class { postMessage() { throw new Error('worker gone detail'); } terminate() {} };
+    await expect(vaultLib.listVault()).rejects.toThrow(/^the vault worker could not be reached — unlock the vault again/);
+    expect(vaultLib._status().unlocked).toBe(false);
+    // a dropped worker's late word — even "unlocked" — is not taken; the next call starts a fresh worker
     let made = 0;
+    let dead = null;
+    vaultLib._setCallTimeout(30, 'list');
+    globalThis.Worker = class { constructor() { dead = this; } postMessage() {} terminate() {} };
+    await expect(vaultLib.listVault()).rejects.toThrow(/did not answer/); // this worker is dropped
     globalThis.Worker = class { constructor() { made++; } postMessage(m) { setTimeout(() => this.onmessage?.({ data: { id: m.id, ok: true, result: [] } }), 1); } terminate() {} };
     expect(await vaultLib.listVault()).toEqual([]);
     expect(made).toBe(1);
+    dead.onmessage?.({ data: { type: 'status', status: { unlocked: true, exists: true, count: 9 } } });
+    expect(vaultLib._status().unlocked).toBe(false);
   } finally {
     globalThis.Worker = RealWorker;
-    vaultLib._setCallTimeout(60_000);
+    vaultLib._setCallTimeout(60_000, 'list');
+    vaultLib._setCallTimeout(180_000, 'unlock');
     vaultLib._setVaultStatus({ exists: false, unlocked: false, error: null });
   }
 });
@@ -378,7 +394,10 @@ test('the card is settled by the HTTP answer, not the socket: after "filled" or 
   // a server render cannot click; the outcome view itself is checked here, the click path in test/vault-card-e2e.test.ts
   const src = await Bun.file(web('components/CredentialCard.jsx')).text();
   expect(src).toContain("const isGone = (e) => e?.status === 404 || e?.status === 410 || /no longer open/i.test(errText(e));");
-  expect(src).toMatch(/if \(isGone\(e\)\) setDone\('gone'\);\s*\}\s*setBusy\(false\);/); // busy is reset on success AND on failure
+  expect(src).toMatch(/if \(isGone\(e\)\) setDone\('gone'\);\s*else if \(outcome === 'filled' && isBroken\(e\)\)[^\n]*\n\s*\}\s*setBusy\(false\);/); // busy is reset on success AND on failure
   expect((src.match(/data-cred-done=\{done\}/g) || []).length).toBe(1);
-  for (const k of ['filled', 'cancel', 'manual', 'gone']) expect(prefs && (await import(web('locales/en.js'))).en[`vault.card.done.${k}`]).toBeTruthy();
+  for (const k of ['filled', 'cancel', 'manual', 'gone', 'failed']) expect(prefs && (await import(web('locales/en.js'))).en[`vault.card.done.${k}`]).toBeTruthy();
+  // a broken attempt (the vault worker died / did not answer, the host unreachable or 5xx) is reported to the host as 'failed' — the agent hears one reason now
+  expect(src).toContain("choice: 'failed', reason: errText(e).slice(0, 200)");
+  expect(src).toMatch(/else if \(outcome === 'filled' && isBroken\(e\)\) \{ setDone\('failed'\); await reportFailed\(sessionId, request\.requestId, e\); \}/);
 });
