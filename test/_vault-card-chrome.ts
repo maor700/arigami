@@ -15,6 +15,8 @@ const SECRET = 'vault-card-e2e-secret-32chars-xxxx';
 const MASTER = 'e2e-master-pass';
 const ID_VALUE = '123456782';
 const PHONE_VALUE = '0500000000';
+const CARD_VALUE = '4111111111111111';
+const CVV_VALUE = '321';
 const ho = await import('../server/handoff.ts');
 const { chromeSessionDir } = await import('../server/lib/chrome.ts');
 const { findChromeBin } = await import('../server/lib/platform.ts');
@@ -56,7 +58,7 @@ async function until<T>(fn: () => Promise<T | null | undefined | false>, ms = 20
 }
 
 // ---- the page the agent works on: two named fields, two origins (127.0.0.1 and localhost) --------------------------
-const page = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: () => new Response('<!doctype html><title>form</title><form onsubmit="event.preventDefault()"><label for="idn">ID number</label><input id="idn" name="idNumber"><label for="ph">Phone</label><input id="ph" name="phone"><button type="submit">Go</button></form>', { headers: { 'content-type': 'text/html' } }) });
+const page = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: () => new Response(`<!doctype html><title>form</title><form onsubmit="event.preventDefault()"><label for="idn">ID number</label><input id="idn" name="idNumber"><label for="ph">Phone</label><input id="ph" name="phone"><label for="cn">Card number</label><input id="cn" name="cardNumber"><label for="cvv">CVV</label><input id="cvv" name="cvv"><label for="cmbExpiryMonth">Expiry month</label><select id="cmbExpiryMonth" name="cmbExpiryMonth"><option value="">--</option>${Array.from({ length: 12 }, (_, i) => `<option value="${i + 1}">${String(i + 1).padStart(2, '0')}</option>`).join('')}</select><button type="submit">Go</button></form>`, { headers: { 'content-type': 'text/html' } }) });
 const pageBase = `http://127.0.0.1:${page.port}`;
 const otherBase = `http://localhost:${page.port}`;
 
@@ -135,18 +137,19 @@ try {
     (type === 2 ? argon2id : argon2d)({ password: new Uint8Array(pw), salt: new Uint8Array(salt), memorySize: memory, iterations, hashLength: length, parallelism, outputType: 'binary' }).then((r: Uint8Array) => r.buffer));
   const db = (kdbxweb as any).Kdbx.create(new (kdbxweb as any).Credentials((kdbxweb as any).ProtectedValue.fromString(MASTER)), 'Arigami');
   db.setKdf((kdbxweb as any).Consts.KdfId.Argon2id);
-  const e = db.createEntry(db.getDefaultGroup());
-  e.fields.set('Title', 'Dana');
-  e.fields.set('URL', pageBase);
-  e.fields.set('Arigami origin', pageBase);
-  e.fields.set('UserName', 'dana');
-  e.fields.set('Password', (kdbxweb as any).ProtectedValue.fromString('s3cret-never-auto'));
-  e.fields.set('id_number', (kdbxweb as any).ProtectedValue.fromString(ID_VALUE));
-  e.fields.set('phone', (kdbxweb as any).ProtectedValue.fromString(PHONE_VALUE));
-  e.fields.set('Arigami field types', JSON.stringify({ phone: 'phone' }));
+  // three entries on ONE origin, as an owner's details tend to be: identity (with a sign-in), card + expiry, cvv; `phone` in two
+  const PV = (v: string) => (kdbxweb as any).ProtectedValue.fromString(v);
+  const mk = (title: string, fields: Record<string, any>) => { const e = db.createEntry(db.getDefaultGroup()); e.fields.set('Title', title); e.fields.set('URL', pageBase); e.fields.set('Arigami origin', pageBase); e.fields.set('UserName', ''); for (const [k, v] of Object.entries(fields)) e.fields.set(k, v); return e; };
+  const e1 = mk('Dana', { UserName: 'dana', Password: PV('s3cret-never-auto'), id_number: PV(ID_VALUE), phone: PV(PHONE_VALUE), 'Arigami field types': JSON.stringify({ phone: 'phone' }) });
+  const e2 = mk('Visa', { card_number: PV(CARD_VALUE), expiry: PV('03/27'), phone: PV('0500000001'), 'Arigami field types': JSON.stringify({ phone: 'phone' }) });
+  const e3 = mk('Visa CVV', { cvv: PV(CVV_VALUE) });
   const file = Buffer.from(await db.save());
   out.vaultPut = (await fetch(base + '/__api/vault/file', { method: 'PUT', headers: { cookie, 'content-type': 'application/octet-stream', 'if-match': '*' }, body: file })).status;
-  out.catalogPut = (await person('PUT', '/__api/vault/catalog', { entries: [{ id: e.uuid.id, title: 'Dana', origin: pageBase, fields: [{ name: 'username', type: 'text' }, { name: 'password', type: 'secret' }, { name: 'id_number', type: 'secret' }, { name: 'phone', type: 'phone' }] }] })).status;
+  out.catalogPut = (await person('PUT', '/__api/vault/catalog', { entries: [
+    { id: e1.uuid.id, title: 'Dana', origin: pageBase, fields: [{ name: 'username', type: 'text' }, { name: 'password', type: 'secret' }, { name: 'id_number', type: 'secret' }, { name: 'phone', type: 'phone' }] },
+    { id: e2.uuid.id, title: 'Visa', origin: pageBase, fields: [{ name: 'card_number', type: 'secret' }, { name: 'expiry', type: 'secret' }, { name: 'phone', type: 'phone' }] },
+    { id: e3.uuid.id, title: 'Visa CVV', origin: pageBase, fields: [{ name: 'cvv', type: 'secret' }] },
+  ] })).status;
 
   at('session chrome');
   // ---- the session browser on the page ---------------------------------------------------------------------------------
@@ -234,18 +237,32 @@ try {
   out.page1 = await evS("({ id: document.querySelector('#idn').value, masked: getComputedStyle(document.querySelector('#idn')).webkitTextSecurity, phone: document.querySelector('#ph').value })");
   out.cardGoneAfterFill = !(await until(async () => !(await card()), 10000).then(() => false, () => true));
   at('fill 2 (grant)');
-  // ---- 3. the next field of the same session + origin: filled with no tap under the grant ---------------------------------
-  await evS("document.querySelector('#ph').focus(); 1");
+  // ---- 3. the other entries of the same origin, under the one approval: cvv, card number and the expiry's month land with
+  //         no tap, each from its own entry (the agent's entry hint points elsewhere and is ignored); `phone`, saved in two
+  //         entries, waits for the owner
+  await evS("document.querySelector('#cvv').focus(); 1");
   const t2 = Date.now();
-  const fill2 = agent(`/__api/sessions/${sid}/vault/fill`, { site: '127.0.0.1', field: 'phone', reason: 'e2e auto' });
+  const fill2 = agent(`/__api/sessions/${sid}/vault/fill`, { site: '127.0.0.1', field: 'cvv', entry: 'Dana', reason: 'e2e auto' });
   out.fill2 = await race(fill2, 15000);
   out.fill2Ms = Date.now() - t2;
   out.card2 = await card();
-  out.page2 = await evS("({ phone: document.querySelector('#ph').value, masked: getComputedStyle(document.querySelector('#ph')).webkitTextSecurity })");
+  out.page2 = await evS("({ cvv: document.querySelector('#cvv').value, masked: getComputedStyle(document.querySelector('#cvv')).webkitTextSecurity })");
+  out.fillCard = await race(agent(`/__api/sessions/${sid}/vault/fill`, { site: '127.0.0.1', field: 'card_number', target: 'card number', reason: 'e2e auto card' }), 15000);
+  out.fillExp = await race(agent(`/__api/sessions/${sid}/vault/fill`, { site: '127.0.0.1', field: 'expiry', part: 'month', target: 'expiry month', reason: 'e2e auto expiry' }), 15000);
+  out.pageCard = await evS("({ cn: document.querySelector('#cn').value, month: document.querySelector('#cmbExpiryMonth').value, inert: document.querySelector('#cmbExpiryMonth').inert })");
+  await evS("document.querySelector('#ph').focus(); 1");
+  const fillAmb = agent(`/__api/sessions/${sid}/vault/fill`, { site: '127.0.0.1', field: 'phone', entry: 'Dana', reason: 'e2e ambiguous' });
+  await until(card, 30000);
+  await sleep(2000);
+  out.cardAmb = await card();
+  out.fillAmbEarly = await race(fillAmb, 10);
+  out.pageAmb = await evS("document.querySelector('#ph').value");
+  await click('[data-cred-cancel]');
+  out.fillAmb = await race(fillAmb, 15000);
   const chat = await (await person('GET', `/__api/sessions/${sid}/chat`)).json();
   const lines: string[] = (Array.isArray(chat?.events) ? chat.events : Array.isArray(chat) ? chat : chat?.chat || []).map((ev: any) => String(ev?.text || ev?.content || '')).filter(Boolean);
   out.grantLine = lines.some((l) => l.includes('one-time approval'));
-  out.leak = lines.some((l) => l.includes(ID_VALUE) || l.includes(PHONE_VALUE)) || fs.readFileSync(hostLog, 'utf8').includes(ID_VALUE);
+  out.leak = lines.some((l) => [ID_VALUE, PHONE_VALUE, CARD_VALUE, CVV_VALUE, '03/27', 's3cret'].some((v) => l.includes(v))) || [ID_VALUE, CARD_VALUE, CVV_VALUE].some((v) => fs.readFileSync(hostLog, 'utf8').includes(v));
   at('other origin');
   // ---- 4. another origin (localhost): the grant does not reach it — the card waits for the owner, who cancels ---------------
   if (out.fill2 !== 'pending') {
@@ -321,14 +338,14 @@ try {
 
     // ---- 7. B's socket dies too; its tap still lands over HTTP and the card shows the outcome itself ----------------------------
     at('success without socket');
-    await evS("document.querySelector('#ph').focus(); 1");
-    const fill7 = agent(`/__api/sessions/${sid}/vault/fill`, { site: '127.0.0.1', field: 'phone', reason: 'e2e no socket' });
+    await evS("document.querySelector('#cvv').focus(); 1");
+    const fill7 = agent(`/__api/sessions/${sid}/vault/fill`, { site: '127.0.0.1', field: 'cvv', reason: 'e2e no socket' });
     await until(async () => { const c = await B.card(); return c && c.fillFrom.length ? c : null; }, 30000);
     await B.cutSocket();
     await B.click('[data-fill-from]');
     out.fill7 = await race(fill7, 20000);
     out.bDone = await until(async () => { const c = await B.card(); return c && c.done ? c : null; }, 10000);
-    out.page7 = await evS("document.querySelector('#ph').value");
+    out.page7 = await evS("document.querySelector('#cvv').value");
     A.c.close(); B.c.close(); bws.close();
   }
 } catch (e) {

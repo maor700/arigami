@@ -223,11 +223,15 @@ Three tools, all riding with the `browser` family (`server/agent-policy.ts`), no
 - **Automatic only under a one-time grant (VAULT4).** The per-site `auto` choice (made with "Remember" on a sign-in
   card) is a sign-in's and never reaches a named field (`pref` is `ask` on a field card). What does: the owner unlocks
   the vault on a field card and ticks "also fill the other details saved for this site in this session" — a grant held
-  in that cockpit tab's memory only (`web/src/lib/vault-grants.js`), keyed by session + **exact origin**, for ONE entry
-  and the field **names** it holds at that moment (the tick spells them out, with the session's name and the time), at
-  most 60 minutes, off by default, gone when the vault locks, the session ends, the time is up or the owner taps Stop. A
-  field saved on the entry later is not covered, and a sign-in role (`username` / `password` / `otp`, any case) never
-  is — those keep `sign_in` and the sign-in card's own rules (including the same-site match), grant or not. Under it `VaultAutoFill` fills a field card from that entry (`auto:true,
+  in that cockpit tab's memory only (`web/src/lib/vault-grants.js`), keyed by session + **exact origin**, holding a
+  names-only **snapshot** taken at the tick: every field name saved on that origin in exactly one entry → that entry
+  (an owner's details are often split over entries — identity, card + expiry, cvv — and one approval covers them all).
+  The tick spells out entries and names, the session's name and the time. A name saved in two entries is not bound (the
+  owner taps and picks; the agent's `entry` hint narrows the tap, never the automatic choice); a sign-in role
+  (`username` / `password` / `otp`, any case) never is — those keep `sign_in` and the sign-in card's own rules (including
+  the same-site match); nothing saved later joins without a new tick. At most 60 minutes, off by default, gone when the
+  vault locks, the session ends, the time is up or the owner taps Stop. An automatic miss leaves the card up with the
+  reason and flags the session in the rail again. Under it `VaultAutoFill` fills a field card from that entry (`auto:true,
   grant:true` on the fill body; the chat line says so); a miss or an error leaves the card up with the reason. Never a
   form, never the owner's Chrome (`target:'shared'`), never another origin. A field card also carries `saved` (the
   catalog, names only, holds this field for the origin) so a locked vault says "unlock to fill the saved X" instead of

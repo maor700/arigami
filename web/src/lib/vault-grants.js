@@ -1,9 +1,12 @@
 // VAULT4 — the owner's one-time "fill the rest yourself" grant. Given on a field card after the vault is unlocked, it
 // lets THIS cockpit tab fill the saved details of ONE session on ONE exact origin without a tap per field, while the
-// vault stays open. Lives in this tab's memory only (never stored, never sent to the host or the agent); gone when the
-// vault locks, the session ends, the time is up — and never reaches another origin, another session or a sign-in.
-const grants = new Map(); // `${sessionId}\n${origin}` → { until, entryId, fields: [lower-case names] }
-const notes = new Map(); // requestId → { error } — why an automatic fill did not land, for the card to show
+// vault stays open. What it holds is a names-only SNAPSHOT taken at the tick: for every field name saved on that origin
+// in exactly one entry, the entry it comes from (field → entry id). A name saved in two entries is not bound (the owner
+// taps and picks), a sign-in role never is, and nothing saved later joins without a new tick. Lives in this tab's
+// memory only (never stored, never sent to the host or the agent); gone when the vault locks, the session ends, the
+// time is up or the owner taps Stop — and never reaches another origin, another session, a form or the owner's Chrome.
+const grants = new Map(); // `${sessionId}\n${origin}` → { until, bindings: {name → entryId}, entries: [{id, title, fields}], ambiguous: [names] }
+const notes = new Map(); // requestId → { error } — why an automatic fill did not land, for the card (and the rail) to show
 const subs = new Set();
 let version = 0;
 
@@ -21,15 +24,32 @@ function bump() {
 }
 
 /**
- * Grant automatic fills for one session on one exact origin, from ONE entry, for the field NAMES it holds now, for
- * `minutes` (clamped) from now. A field saved on the entry later is not covered — the owner approved a list, not an entry.
+ * Pure: the snapshot a tick would take from the exact-origin entries as the vault describes them (`{id, title, fields:[{name}]}`).
+ * `bindings` = field name → the one entry holding it; `ambiguous` = names held by more than one entry (a tap each time);
+ * `entries` = what to show the owner, per entry, names only. Roles are left out of all three.
  */
-export function grantAutoFill({ sessionId, origin, entryId, fields, minutes = GRANT_MINUTES_DEFAULT }, now = Date.now()) {
+export function snapshotBindings(entries) {
+  const holders = new Map(); // name → Set(entryId)
+  const shown = [];
+  for (const e of Array.isArray(entries) ? entries : []) {
+    if (!e?.id) continue;
+    const names = [...new Set((e.fields || []).map(norm).filter((n) => n && !ROLE.test(n)))];
+    for (const n of names) (holders.get(n) || holders.set(n, new Set()).get(n)).add(String(e.id));
+    shown.push({ id: String(e.id), title: String(e.title || e.username || e.id), fields: names });
+  }
+  const bindings = {};
+  const ambiguous = [];
+  for (const [n, ids] of holders) (ids.size === 1 ? (bindings[n] = [...ids][0]) : ambiguous.push(n));
+  return { bindings, ambiguous: ambiguous.sort(), entries: shown.map((e) => ({ ...e, fields: e.fields.filter((n) => bindings[n] === e.id) })).filter((e) => e.fields.length) };
+}
+
+/** Grant automatic fills for one session on one exact origin: the snapshot of `entries` now, for `minutes` (clamped). */
+export function grantAutoFill({ sessionId, origin, entries, minutes = GRANT_MINUTES_DEFAULT }, now = Date.now()) {
   if (!sessionId || !/^https?:\/\//.test(String(origin || ''))) return null;
-  const names = [...new Set((Array.isArray(fields) ? fields : []).map(norm).filter((n) => n && !ROLE.test(n)))];
-  if (!entryId || !names.length) return null;
+  const snap = snapshotBindings(entries);
+  if (!Object.keys(snap.bindings).length) return null;
   const m = Math.max(1, Math.min(GRANT_MINUTES_MAX, Number(minutes) || GRANT_MINUTES_DEFAULT));
-  const g = { until: now + m * 60_000, entryId: String(entryId), fields: names };
+  const g = { until: now + m * 60_000, ...snap };
   grants.set(key(sessionId, origin), g);
   bump();
   return g;
@@ -48,14 +68,15 @@ export function grantFor(sessionId, origin, now = Date.now()) {
   return g;
 }
 
-/** Does a grant cover this request — one of ITS field names (never a sign-in or a form) into the session browser (never the owner's Chrome)? */
-export function coversRequest(sessionId, req, now = Date.now()) {
-  if (!req || req.kind !== 'field' || req.target === 'shared') return false;
+/** The entry a grant binds this request's field to — or null: a sign-in, a form, the owner's Chrome, a role, an unbound or ambiguous name, no grant. */
+export function bindingFor(sessionId, req, now = Date.now()) {
+  if (!req || req.kind !== 'field' || req.target === 'shared') return null;
   const name = norm(req.fields?.[0]);
-  if (!name || ROLE.test(name)) return false;
+  if (!name || ROLE.test(name)) return null;
   const g = grantFor(sessionId, req.origin, now);
-  return !!g && g.fields.includes(name);
+  return (g && g.bindings[name]) || null;
 }
+export const coversRequest = (sessionId, req, now = Date.now()) => !!bindingFor(sessionId, req, now);
 
 export function revokeGrant(sessionId, origin) {
   if (grants.delete(key(sessionId, origin))) bump();
@@ -77,13 +98,15 @@ export function pruneGrants(liveSessionIds) {
 }
 export const grantCount = () => grants.size;
 
-/** An automatic fill's outcome for the card: an error (the card stays up and says why) or cleared on success. */
+/** An automatic fill's outcome for the card: an error (the card stays up, says why, and needs the human again) or cleared on success. */
 export function noteAuto(requestId, error) {
   if (error) notes.set(requestId, { error: String(error) });
   else notes.delete(requestId);
   bump();
 }
 export const autoNote = (requestId) => notes.get(requestId) || null;
+/** The rail's question: does this open card need the human — not covered by a grant, or covered but the automatic fill failed? */
+export const needsHuman = (sessionId, req, now = Date.now()) => !!req && (!coversRequest(sessionId, req, now) || !!autoNote(req.requestId)?.error);
 
 export function subscribeGrants(fn) {
   subs.add(fn);

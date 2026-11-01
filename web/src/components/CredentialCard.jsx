@@ -18,7 +18,7 @@ import { api } from '../lib/api.js';
 import { useT } from '../lib/i18n.js';
 import { useVault, matchVault, unlockVault, createVault, fillFromVault, vaultSupported, matchVaultField, fillVaultField, saveVaultFields } from '../lib/vault.js';
 import { inputPropsFor } from '../lib/vault-schema.js';
-import { grantAutoFill, grantFor, isRoleField, revokeGrant, autoNote, subscribeGrants, grantsVersion, GRANT_MINUTES_DEFAULT } from '../lib/vault-grants.js';
+import { grantAutoFill, grantFor, isRoleField, revokeGrant, autoNote, snapshotBindings, subscribeGrants, grantsVersion, GRANT_MINUTES_DEFAULT } from '../lib/vault-grants.js';
 import { useStore } from '../lib/store.js';
 import { sessionLabel } from './ui.jsx';
 import { defineHostComponent, loose, str, any, z } from '../openui/define.js';
@@ -241,10 +241,19 @@ function FieldCardView({ sessionId, request }) {
   // the grant the tick would give: THIS session, THIS exact origin, the entry the owner taps, the field names it holds now
   const { sessions } = useStore();
   const sessionName = sessionLabel(sessions?.find((x) => x.id === sessionId)) || sessionId;
-  const fieldNames = (m) => (m.fields || []).map((f) => f.name).filter((n) => !isRoleField(n)); // a sign-in role is never offered
+  // the snapshot the tick would take: EVERY entry saved for this exact origin (not only the one tapped), names only
+  const [siteEntries, setSiteEntries] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    if (vault.unlocked && !shared) matchVault(request.origin).then((m) => alive && setSiteEntries(m.filter((x) => x.exact))).catch(() => alive && setSiteEntries([]));
+    else setSiteEntries(null);
+    return () => { alive = false; };
+  }, [vault.unlocked, vault.count, request.origin, shared]);
+  const snap = siteEntries ? snapshotBindings(siteEntries) : null;
+  const describeSnap = (g) => (g.entries || []).map((e) => `${e.title}: ${e.fields.join(', ')}`).join(' · ');
   const fillFrom = (m) => run(async () => {
     await fillVaultField({ ...base, entryId: m.id });
-    if (grantNext && !shared) grantAutoFill({ sessionId, origin: request.origin, entryId: m.id, fields: fieldNames(m), minutes: GRANT_MINUTES_DEFAULT });
+    if (grantNext && !shared && siteEntries) grantAutoFill({ sessionId, origin: request.origin, entries: siteEntries, minutes: GRANT_MINUTES_DEFAULT });
   }, 'filled');
   // what the owner needs to know before any button: the vault's state in THIS tab (never a guess by the host)
   const state = !vault.loaded ? null
@@ -270,7 +279,7 @@ function FieldCardView({ sessionId, request }) {
       {state && <Prose className="mt-1.5 font-medium" data-cred-state={state[0]}>{state[1]}</Prose>}
       {grant && (
         <Prose dim className="mt-1" data-cred-grant-on>
-          {t('vault.fieldCard.grantOn', { host: request.host, fields: grant.fields.join(', '), minutes: Math.max(1, Math.ceil((grant.until - Date.now()) / 60_000)) })}{' '}
+          {t('vault.fieldCard.grantOn', { host: request.host, fields: describeSnap(grant), minutes: Math.max(1, Math.ceil((grant.until - Date.now()) / 60_000)) })}{grant.ambiguous.length ? ` ${t('vault.fieldCard.grantAmbiguous', { fields: grant.ambiguous.join(', ') })}` : ''}{' '}
           <button type="button" className="underline" onClick={() => revokeGrant(sessionId, request.origin)}>{t('vault.fieldCard.grantStop')}</button>
         </Prose>
       )}
@@ -290,10 +299,11 @@ function FieldCardView({ sessionId, request }) {
             ))}
             <Btn variant="quiet" disabled={busy} onClick={() => setTyping(true)}>{t('vault.card.other')}</Btn>
           </div>
-          {!shared && !grant && !isRole && (matches.length !== 1 || fieldNames(matches[0]).length > 0) && (
+          {!shared && !grant && !isRole && snap && Object.keys(snap.bindings).length > 0 && (
             <div className="mt-2">
               <Check checked={grantNext} onChange={setGrantNext} data-cred-grant>
-                {t('vault.fieldCard.grant', { host: request.host, session: sessionName, minutes: GRANT_MINUTES_DEFAULT, fields: matches.length === 1 ? fieldNames(matches[0]).join(', ') : t('vault.fieldCard.grantFieldsOfTapped') })}
+                {t('vault.fieldCard.grant', { host: request.host, session: sessionName, minutes: GRANT_MINUTES_DEFAULT, fields: describeSnap(snap) })}
+                {snap.ambiguous.length ? ` ${t('vault.fieldCard.grantAmbiguous', { fields: snap.ambiguous.join(', ') })}` : ''}
               </Check>
             </div>
           )}

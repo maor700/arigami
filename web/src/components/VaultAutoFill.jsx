@@ -7,7 +7,7 @@
 import { useEffect, useRef } from 'react';
 import { useStore } from '../lib/store.js';
 import { useVault, matchVault, fillFromVault, matchVaultField, fillVaultField } from '../lib/vault.js';
-import { coversRequest, grantFor, isRoleField, noteAuto, pruneGrants, grantCount } from '../lib/vault-grants.js';
+import { bindingFor, isRoleField, noteAuto, pruneGrants, grantCount } from '../lib/vault-grants.js';
 
 export default function VaultAutoFill() {
   const { sessions } = useStore();
@@ -22,15 +22,16 @@ export default function VaultAutoFill() {
       if (!r || tried.current.has(r.requestId)) continue;
       if (r.kind === 'field') {
         const field = r.fields[0];
-        // a sign-in role (username / password / otp) is never automatic here, grant or not — sign_in and the sign-in card own those
-        if (isRoleField(field) || !coversRequest(s.id, r)) continue;
+        // a sign-in role (username / password / otp) is never automatic here, grant or not — sign_in and the sign-in card own those;
+        // a name the snapshot did not bind (saved in two entries, saved later, never saved) waits for a tap
+        const entryId = isRoleField(field) ? null : bindingFor(s.id, r);
+        if (!entryId) continue;
         tried.current.add(r.requestId);
-        const g = grantFor(s.id, r.origin);
-        matchVaultField(r.origin, field, r.entry)
+        // the snapshot's entry on THIS exact origin — the agent's entry hint has no say
+        matchVaultField(r.origin, field, undefined)
           .then((m) => {
-            // the grant names ONE entry on THIS exact origin: that one fills, whatever else the site has saved
-            const hit = m.filter((x) => x.id === g?.entryId && x.origin === r.origin);
-            if (hit.length !== 1) throw new Error(m.length ? `the entry you approved does not hold ${field} for this request — tap to choose` : `no saved ${field} for this exact address`);
+            const hit = m.filter((x) => x.id === entryId && x.origin === r.origin);
+            if (hit.length !== 1) throw new Error(m.length ? `the entry approved for ${field} no longer holds it — tap to choose` : `no saved ${field} for this exact address`);
             return fillVaultField({ sessionId: s.id, requestId: r.requestId, origin: r.origin, field, entryId: hit[0].id, ...(r.part && r.part !== 'value' ? { part: r.part } : {}), auto: true, grant: true });
           })
           .then(() => noteAuto(r.requestId, null))

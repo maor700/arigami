@@ -35,19 +35,27 @@ test.skipIf(!chrome || !built)('the vault card: a locked vault is said and Fill 
   //    (masked), the card goes, the agent hears "filled" — and never the value
   expect(o.cardUnlocked).toMatchObject({ fillFrom: ['Dana'], grant: true, unlockRow: false });
   // the tick says, in one line, what it would allow: the entry's field NAMES, this session by name, this host, the time — and that later fields are out
-  expect(o.grantText).toContain('id_number, phone');
+  expect(o.grantText).toContain('Dana: id_number · Visa: card_number, expiry · Visa CVV: cvv'); // every entry of the origin, names only
+  expect(o.grantText).toContain('still by tap: phone'); // saved in two entries → the owner picks each time
   expect(o.grantText).toContain('“vault e2e”');
   expect(o.grantText).toContain('127.0.0.1');
   expect(o.grantText).toMatch(/up to 30 min/);
-  expect(o.grantText).toMatch(/Fields saved later are not included/);
+  expect(o.grantText).toMatch(/Nothing saved later is included/);
   expect(o.fill1).toMatchObject({ status: 'filled', field: 'id_number', where: 'session-browser' });
   expect(o.page1).toEqual({ id: '123456782', masked: 'disc', phone: '' });
   expect(o.cardGoneAfterFill).toBe(true);
-  // 3. the next field, same session + exact origin: filled with no tap, within seconds; the card that flashed up shows
-  //    the grant; the chat says it was the owner's one-time approval
-  expect(o.fill2).toMatchObject({ status: 'filled', field: 'phone' });
+  // 3. one approval, three entries: cvv (its own entry, the agent's hint "Dana" ignored), the card number and the expiry's
+  //    month (into the select, inert afterwards) land with no tap, within seconds; the ambiguous phone waits for the owner
+  expect(o.fill2).toMatchObject({ status: 'filled', field: 'cvv' });
   expect(o.fill2Ms).toBeLessThan(10_000);
-  expect(o.page2).toEqual({ phone: '0500000000', masked: 'disc' });
+  expect(o.page2).toEqual({ cvv: '321', masked: 'disc' });
+  expect(o.fillCard).toMatchObject({ status: 'filled', field: 'card_number' });
+  expect(o.fillExp).toMatchObject({ status: 'filled', field: 'expiry' });
+  expect(o.pageCard).toEqual({ cn: '4111111111111111', month: '3', inert: true });
+  expect(o.cardAmb).toMatchObject({ fillFrom: ['Dana'], grantOn: true, autoError: null }); // the agent's hint narrows what the owner is offered to TAP — it never picks for the automatic fill
+  expect(o.fillAmbEarly).toBe('pending');
+  expect(o.pageAmb).toBe('');
+  expect(o.fillAmb).toMatchObject({ status: 'cancelled', field: 'phone' });
   expect(o.grantLine).toBe(true);
   expect(o.leak).toBe(false);
   // 4. another origin of the same server (localhost): no entry, no grant — the card waits for the owner and says
@@ -79,7 +87,7 @@ test.skipIf(!chrome || !built)('the vault card: a locked vault is said and Fill 
   expect(o.aAfterStaleTap.error).toMatch(/no longer open/);
   expect(o.page6).toBe('123456782');
   // 7. B's socket is cut too: its tap lands over HTTP, the agent hears "filled", and the card settles itself on the answer
-  expect(o.fill7).toMatchObject({ status: 'filled', field: 'phone' });
+  expect(o.fill7).toMatchObject({ status: 'filled', field: 'cvv' });
   expect(o.bDone).toMatchObject({ done: 'filled', buttons: 0 });
-  expect(o.page7).toBe('0500000000');
+  expect(o.page7).toBe('321');
 }, 280_000);
