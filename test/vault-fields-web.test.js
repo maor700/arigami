@@ -257,14 +257,19 @@ test('a locked vault: the card says so (and that the saved field is there to unl
   vaultLib._setVaultStatus({ exists: false, unlocked: false, error: null });
 });
 
-test('a grant: one session, one exact origin, a bounded time; gone on lock, on the session\'s end, never for a sign-in, a form or the owner\'s Chrome', () => {
+test('a grant: one session, one exact origin, one entry, the field names it holds now, a bounded time; gone on lock, on the session\'s end, never for a sign-in, a form or the owner\'s Chrome', () => {
   const t0 = 1_000_000;
-  expect(grants.grantAutoFill({ sessionId: 's1', origin: 'https://bank.example', minutes: 10 }, t0)).toEqual({ until: t0 + 600_000 });
-  expect(grants.grantAutoFill({ sessionId: 's1', origin: 'https://bank.example', minutes: 999 }, t0).until).toBe(t0 + 60 * 60_000); // clamped
-  expect(grants.grantAutoFill({ sessionId: 's1', origin: 'bank.example' })).toBeNull(); // not an origin
-  grants.grantAutoFill({ sessionId: 's1', origin: 'https://bank.example', minutes: 10 }, t0);
+  const g = { sessionId: 's1', origin: 'https://bank.example', entryId: 'e1', fields: [{ name: 'id_number' }, { name: 'Phone' }, 'phone'] };
+  expect(grants.grantAutoFill({ ...g, minutes: 10 }, t0)).toEqual({ until: t0 + 600_000, entryId: 'e1', fields: ['id_number', 'phone'] });
+  expect(grants.grantAutoFill({ ...g, minutes: 999 }, t0).until).toBe(t0 + 60 * 60_000); // clamped
+  expect(grants.grantAutoFill({ ...g, origin: 'bank.example' })).toBeNull(); // not an origin
+  expect(grants.grantAutoFill({ ...g, entryId: '' })).toBeNull(); // no entry, no grant
+  expect(grants.grantAutoFill({ ...g, fields: [] })).toBeNull(); // nothing approved, no grant
+  grants.grantAutoFill({ ...g, minutes: 10 }, t0);
   const field = { kind: 'field', origin: 'https://bank.example', fields: ['id_number'] };
   expect(grants.coversRequest('s1', field, t0 + 1)).toBe(true);
+  expect(grants.coversRequest('s1', { ...field, fields: ['PHONE'] }, t0 + 1)).toBe(true);
+  expect(grants.coversRequest('s1', { ...field, fields: ['email'] }, t0 + 1)).toBe(false); // a field the owner did not approve — saved later or on another entry
   expect(grants.coversRequest('s2', field, t0 + 1)).toBe(false); // another session
   expect(grants.coversRequest('s1', { ...field, origin: 'https://login.bank.example' }, t0 + 1)).toBe(false); // another origin
   expect(grants.coversRequest('s1', { ...field, origin: 'http://bank.example' }, t0 + 1)).toBe(false);
@@ -274,8 +279,9 @@ test('a grant: one session, one exact origin, a bounded time; gone on lock, on t
   expect(grants.coversRequest('s1', field, t0 + 600_001)).toBe(false); // time up — and dropped
   expect(grants.grantCount()).toBe(0);
   // the rail: an open vault card needs the human — unless this tab's grant is about to fill it
-  grants.grantAutoFill({ sessionId: 's1', origin: 'https://bank.example', minutes: 10 });
+  grants.grantAutoFill({ ...g, minutes: 10 });
   expect(store.needsAttention({ id: 's2', credentialRequest: { requestId: 'c', ...field } })).toBe(true);
+  expect(store.needsAttention({ id: 's1', credentialRequest: { requestId: 'c', ...field, fields: ['email'] } })).toBe(true);
   expect(store.needsAttention({ id: 's1', credentialRequest: { requestId: 'c', ...field } })).toBe(false);
   expect(store.needsAttention({ id: 's1', credentialRequest: { requestId: 'c', ...field, kind: undefined } })).toBe(true);
   expect(store.needsAttention({ id: 's1' })).toBe(false);
@@ -284,13 +290,13 @@ test('a grant: one session, one exact origin, a bounded time; gone on lock, on t
   grants.noteAuto('cred_x', 'no saved id_number for this exact address');
   const html = render(h(CredentialCard, { sessionId: 's1', request: { ...base, kind: 'field', fields: ['id_number'], saved: true } }));
   expect(html).toContain('data-cred-grant-on');
-  expect(html).toContain('Automatic fills are on for bank.example in this session');
+  expect(html).toContain('Automatic fills are on for bank.example in this session: id_number, phone');
   expect(html).toContain('>Stop<');
   expect(html).toContain('data-cred-auto-error');
   expect(html).toContain('Not filled by itself: no saved id_number for this exact address');
   grants.noteAuto('cred_x', null);
   // a grant dies with its session, and with the vault's lock in this tab
-  grants.grantAutoFill({ sessionId: 's9', origin: 'https://x.example' });
+  grants.grantAutoFill({ ...g, sessionId: 's9', origin: 'https://x.example' });
   grants.pruneGrants(['s1']);
   expect(grants.grantFor('s9', 'https://x.example')).toBeNull();
   expect(grants.grantFor('s1', 'https://bank.example')).not.toBeNull();
@@ -298,4 +304,43 @@ test('a grant: one session, one exact origin, a bounded time; gone on lock, on t
   expect(grants.grantCount()).toBe(0);
   expect(store.needsAttention({ id: 's1', credentialRequest: { requestId: 'c', ...field } })).toBe(true);
   vaultLib._setVaultStatus({ exists: false, unlocked: false, error: null });
+});
+
+test('a call to the vault worker always settles: the clock runs out, or the worker dies — every waiting call fails, the vault counts as locked, grants go', async () => {
+  const RealWorker = globalThis.Worker;
+  try {
+    // a worker that never answers
+    globalThis.Worker = class { postMessage() {} terminate() {} };
+    vaultLib._setCallTimeout(60);
+    await expect(vaultLib.listVault()).rejects.toThrow(/did not answer in 0 s \(list\)/);
+    // a worker that crashes: the two calls in flight fail at once with one reason, the status says locked, the grant is gone
+    vaultLib._setVaultStatus({ exists: true, unlocked: true, count: 1 });
+    grants.grantAutoFill({ sessionId: 's1', origin: 'https://bank.example', entryId: 'e1', fields: ['id_number'] });
+    globalThis.Worker = class { constructor() { setTimeout(() => this.onerror?.({ message: 'boom' }), 5); } postMessage() {} terminate() {} };
+    vaultLib._setCallTimeout(5000);
+    const [ra, rb] = await Promise.allSettled([vaultLib.listVault(), vaultLib.matchVault('https://bank.example')]);
+    expect(ra.status).toBe('rejected');
+    expect(String(ra.reason?.message)).toMatch(/stopped answering.*reload the cockpit.*\(boom\)/);
+    expect(rb.status).toBe('rejected');
+    expect(String(rb.reason?.message)).toMatch(/stopped answering/);
+    expect(grants.grantCount()).toBe(0);
+    // the next call starts a fresh worker (the dead one is not reused)
+    let made = 0;
+    globalThis.Worker = class { constructor() { made++; } postMessage(m) { setTimeout(() => this.onmessage?.({ data: { id: m.id, ok: true, result: [] } }), 1); } terminate() {} };
+    expect(await vaultLib.listVault()).toEqual([]);
+    expect(made).toBe(1);
+  } finally {
+    globalThis.Worker = RealWorker;
+    vaultLib._setCallTimeout(60_000);
+    vaultLib._setVaultStatus({ exists: false, unlocked: false, error: null });
+  }
+});
+
+test('the card is settled by the HTTP answer, not the socket: after "filled" or a stale request it shows the outcome and nothing to press', async () => {
+  // a server render cannot click; the outcome view itself is checked here, the click path in test/vault-card-e2e.test.ts
+  const src = await Bun.file(web('components/CredentialCard.jsx')).text();
+  expect(src).toContain("const isGone = (e) => e?.status === 404 || e?.status === 410 || /no longer open/i.test(errText(e));");
+  expect(src).toMatch(/if \(isGone\(e\)\) setDone\('gone'\);\s*\}\s*setBusy\(false\);/); // busy is reset on success AND on failure
+  expect((src.match(/data-cred-done=\{done\}/g) || []).length).toBe(1);
+  for (const k of ['filled', 'cancel', 'manual', 'gone']) expect(prefs && (await import(web('locales/en.js'))).en[`vault.card.done.${k}`]).toBeTruthy();
 });

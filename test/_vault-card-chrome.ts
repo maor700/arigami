@@ -22,6 +22,26 @@ const cdp = await import('../server/lib/chrome-cdp.ts');
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const freePort = (): Promise<number> => new Promise((resolve) => { const s = net.createServer(); s.listen(0, '127.0.0.1', () => { const p = (s.address() as net.AddressInfo).port; s.close(() => resolve(p)); }); });
+/** One open DevTools session to a target: Network.* state (blocked URLs, offline) lives as long as it does. */
+class Cdp {
+  private id = 0;
+  private waiting = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void }>();
+  private constructor(private ws: WebSocket) {
+    ws.onmessage = (ev) => { const m = JSON.parse(String(ev.data)); const w = this.waiting.get(m.id); if (!w) return; this.waiting.delete(m.id); m.error ? w.reject(new Error(m.error.message)) : w.resolve(m.result); };
+  }
+  static open(url: string): Promise<Cdp> {
+    return new Promise((resolve, reject) => { const ws = new WebSocket(url); ws.onopen = () => resolve(new Cdp(ws)); ws.onerror = () => reject(new Error('cdp open failed')); });
+  }
+  call(method: string, params: Record<string, unknown> = {}, timeoutMs = 8000): Promise<any> {
+    const id = ++this.id;
+    return new Promise((resolve, reject) => {
+      const t = setTimeout(() => { this.waiting.delete(id); reject(new Error(`cdp timeout ${method}`)); }, timeoutMs);
+      this.waiting.set(id, { resolve: (v) => { clearTimeout(t); resolve(v); }, reject: (e) => { clearTimeout(t); reject(e); } });
+      this.ws.send(JSON.stringify({ id, method, params }));
+    });
+  }
+  close() { try { this.ws.close(); } catch {} }
+}
 let step_ = 'boot';
 const at = (s: string) => { step_ = s; console.error(`[e2e] ${s}`); };
 async function until<T>(fn: () => Promise<T | null | undefined | false>, ms = 20000, step = 150): Promise<T> {
@@ -65,20 +85,36 @@ process.stdin.on('data',(d)=>{buf+=d;let i;while((i=buf.indexOf('\\n'))>=0){cons
 setInterval(()=>{},1e6);
 `, { mode: 0o755 });
 const hostLog = path.join(DIR, 'host.log');
-const host = spawn('bun', ['server/index.ts'], {
-  cwd: ROOT,
-  env: { ...process.env, HOME: home, ARIGAMI_DIR: DIR, ARIGAMI_PORT: String(port), ARIGAMI_AUTH: 'pairing', ARIGAMI_HANDOFF_SECRET: SECRET, ARIGAMI_SCREEN_ENABLED: '0', ARIGAMI_TELEMETRY: '0', ARIGAMI_CLAUDE_BIN: stub, ARIGAMI_DEFAULT_CWD: ws, COMPOSIO_API_KEY: '', GH_TOKEN: '', GITHUB_TOKEN: '', ...(process.env.E2E_ROOT ? { ARIGAMI_ROOT: process.env.E2E_ROOT } : {}) },
-  stdio: ['ignore', 'pipe', 'pipe'],
-});
-host.stdout!.on('data', (d) => fs.appendFileSync(hostLog, String(d)));
-host.stderr!.on('data', (d) => fs.appendFileSync(hostLog, String(d)));
+const bootHost = () => {
+  const h = spawn('bun', ['server/index.ts'], {
+    cwd: ROOT,
+    env: { ...process.env, HOME: home, ARIGAMI_DIR: DIR, ARIGAMI_PORT: String(port), ARIGAMI_AUTH: 'pairing', ARIGAMI_HANDOFF_SECRET: SECRET, ARIGAMI_SCREEN_ENABLED: '0', ARIGAMI_TELEMETRY: '0', ARIGAMI_CLAUDE_BIN: stub, ARIGAMI_DEFAULT_CWD: ws, COMPOSIO_API_KEY: '', GH_TOKEN: '', GITHUB_TOKEN: '', ...(process.env.E2E_ROOT ? { ARIGAMI_ROOT: process.env.E2E_ROOT } : {}) },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  h.stdout!.on('data', (d) => fs.appendFileSync(hostLog, String(d)));
+  h.stderr!.on('data', (d) => fs.appendFileSync(hostLog, String(d)));
+  return h;
+};
+let host = bootHost();
 
 const out: Record<string, unknown> = {};
 let chromeS: ReturnType<typeof spawn> | null = null;
 let chromeC: ReturnType<typeof spawn> | null = null;
 try {
   at('host health');
-  await until(async () => (await fetch(base + '/__health', { signal: AbortSignal.timeout(2000) })).ok, 45000);
+  // Bun 1.4.0 now and then spins at boot with no output: a host silent for 25 s is replaced, up to three times
+  for (let attempt = 1; ; attempt++) {
+    try {
+      await until(async () => (await fetch(base + '/__health', { signal: AbortSignal.timeout(2000) })).ok, 25000);
+      break;
+    } catch (e) {
+      const silent = !fs.existsSync(hostLog) || fs.statSync(hostLog).size === 0;
+      if (attempt >= 3 || !silent) throw e;
+      console.error(`[e2e] host silent for 25 s (boot spin) — respawning (${attempt})`);
+      try { host.kill('SIGKILL'); } catch {}
+      host = bootHost();
+    }
+  }
   const hr = await fetch(`${base}/__api/auth/handoff?t=${encodeURIComponent(ho.mint(SECRET, 'owner@fake-org.test'))}`, { redirect: 'manual' });
   const cookie = (hr.headers.get('set-cookie') || '').split(';')[0];
   const person = (method: string, p: string, body?: unknown) => fetch(base + p, { method, headers: { cookie, 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
@@ -128,34 +164,44 @@ try {
   fs.mkdirSync(cdir, { recursive: true });
   chromeC = spawn(chromeBin, chromeArgs(cdir, `${base}/__health`), { stdio: 'ignore', env: { ...process.env, TMPDIR: '/tmp' } });
   const cport = await until(async () => cdp.cdpPort('cockpit', cdir), 20000);
-  const ctab = async () => (await cdp.listTabs('cockpit', cport)).find((t) => t.type === 'page' && t.webSocketDebuggerUrl)!;
-  const evC = async (expr: string, timeoutMs = 4000) => {
-    const t = await ctab();
-    const r = await cdp.cdpCall(t.webSocketDebuggerUrl!, 'Runtime.evaluate', { expression: expr, returnByValue: true, awaitPromise: true }, timeoutMs);
-    if (r?.exceptionDetails) throw new Error(r.exceptionDetails.exception?.description || r.exceptionDetails.text || 'cockpit evaluate failed');
-    return r?.result?.value;
-  };
-  const cwsOf = async () => (await ctab()).webSocketDebuggerUrl!;
-  at('cockpit ready');
-  await until(async () => (await ctab()) && (await evC('document.readyState')) === 'complete', 15000);
   const [cname, cvalue] = cookie.split('=');
-  await cdp.cdpCall(await cwsOf(), 'Network.setCookie', { name: cname, value: cvalue, url: base, httpOnly: true });
-  await evC("sessionStorage.setItem('arigami.wizardDismissed', '1'); 1");
-  await cdp.cdpCall(await cwsOf(), 'Page.navigate', { url: `${base}/__host/?session=${encodeURIComponent(sid)}` });
-  // a real mouse click at the element's centre (what a tap is) — a disabled button swallows it, as on the owner's screen
-  const click = async (sel: string) => {
-    const rect = await evC(`(() => { const el = document.querySelector(${JSON.stringify(sel)}); if (!el) return null; el.scrollIntoView({ block: 'center' }); const r = el.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`);
-    if (!rect) throw new Error(`no element ${sel}`);
-    const wsu = await cwsOf();
-    await cdp.cdpCall(wsu, 'Input.dispatchMouseEvent', { type: 'mouseMoved', x: rect.x, y: rect.y });
-    await cdp.cdpCall(wsu, 'Input.dispatchMouseEvent', { type: 'mousePressed', x: rect.x, y: rect.y, button: 'left', clickCount: 1 });
-    await cdp.cdpCall(wsu, 'Input.dispatchMouseEvent', { type: 'mouseReleased', x: rect.x, y: rect.y, button: 'left', clickCount: 1 });
-  };
-  const type = async (sel: string, text: string) => {
-    await evC(`document.querySelector(${JSON.stringify(sel)}).focus(); 1`);
-    await cdp.cdpCall(await cwsOf(), 'Input.insertText', { text });
-  };
-  const card = () => evC(`(() => { const c = document.querySelector('[data-credential-request]'); if (!c) return null; const f = c.querySelector('[data-cred-fill]'); const st = c.querySelector('[data-cred-state]'); const er = c.querySelector('[data-cred-error]'); return { id: c.getAttribute('data-credential-request'), fillDisabled: f ? f.disabled : null, fillText: f ? f.textContent : null, state: st ? st.getAttribute('data-cred-state') : null, error: er ? er.textContent : null, unlockRow: !!c.querySelector('input[aria-label="Vault password"]'), fillFrom: [...c.querySelectorAll('[data-fill-from]')].map((b) => b.getAttribute('data-fill-from')), grant: !!c.querySelector('[data-cred-grant]'), grantOn: !!c.querySelector('[data-cred-grant-on]'), autoError: (c.querySelector('[data-cred-auto-error]') || {}).textContent || null }; })()`);
+  const CARD_JS = `(() => { const c = document.querySelector('[data-credential-request]'); if (!c) return null; const f = c.querySelector('[data-cred-fill]'); const st = c.querySelector('[data-cred-state]'); const er = c.querySelector('[data-cred-error]'); const dn = c.querySelector('[data-cred-done]'); return { id: c.getAttribute('data-credential-request'), fillDisabled: f ? f.disabled : null, fillText: f ? f.textContent : null, state: st ? st.getAttribute('data-cred-state') : null, error: er ? er.textContent : null, unlockRow: !!c.querySelector('input[aria-label="Vault password"]'), fillFrom: [...c.querySelectorAll('[data-fill-from]')].map((b) => b.getAttribute('data-fill-from')), grant: !!c.querySelector('[data-cred-grant]'), grantText: (c.querySelector('[data-cred-grant]') || {}).textContent || null, grantOn: !!c.querySelector('[data-cred-grant-on]'), grantOnText: (c.querySelector('[data-cred-grant-on]') || {}).textContent || null, autoError: (c.querySelector('[data-cred-auto-error]') || {}).textContent || null, done: dn ? dn.getAttribute('data-cred-done') : null, doneText: dn ? dn.textContent : null, buttons: c.querySelectorAll('button').length }; })()`;
+  /** One cockpit tab: the owner's cookie, the wizard dismissed, the session's view; real mouse taps and real typing. */
+  async function cockpitTab(targetId?: string) {
+    const tab = await until(async () => (await cdp.listTabs('cockpit', cport)).find((t) => t.type === 'page' && t.webSocketDebuggerUrl && (targetId ? t.id === targetId : true)), 15000);
+    const c = await Cdp.open(tab.webSocketDebuggerUrl!);
+    const ev = async (expr: string, timeoutMs = 4000) => {
+      const r = await c.call('Runtime.evaluate', { expression: expr, returnByValue: true, awaitPromise: true }, timeoutMs);
+      if (r?.exceptionDetails) throw new Error(r.exceptionDetails.exception?.description || r.exceptionDetails.text || 'cockpit evaluate failed');
+      return r?.result?.value;
+    };
+    await until(async () => (await ev('document.readyState')) === 'complete', 15000);
+    await c.call('Network.setCookie', { name: cname, value: cvalue, url: base, httpOnly: true });
+    await ev("sessionStorage.setItem('arigami.wizardDismissed', '1'); 1");
+    // every socket the cockpit opens is kept in reach, so the test can cut the tab's link to the host and keep it cut
+    await c.call('Page.enable');
+    await c.call('Page.addScriptToEvaluateOnNewDocument', { source: "(() => { const W = window.WebSocket; window.__sockets = []; window.__wsDead = false; const P = function (u, p) { if (window.__wsDead) return { readyState: 0, send() {}, close() {}, addEventListener() {}, removeEventListener() {} }; const s = p === undefined ? new W(u) : new W(u, p); window.__sockets.push(s); return s; }; P.prototype = W.prototype; P.CONNECTING = 0; P.OPEN = 1; P.CLOSING = 2; P.CLOSED = 3; window.WebSocket = P; })();" });
+    await c.call('Page.navigate', { url: `${base}/__host/?session=${encodeURIComponent(sid)}` });
+    // a real mouse click at the element's centre (what a tap is) — a disabled button swallows it, as on the owner's screen
+    const click = async (sel: string) => {
+      const rect = await ev(`(() => { const el = document.querySelector(${JSON.stringify(sel)}); if (!el) return null; el.scrollIntoView({ block: 'center' }); const r = el.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`);
+      if (!rect) throw new Error(`no element ${sel}`);
+      await c.call('Input.dispatchMouseEvent', { type: 'mouseMoved', x: rect.x, y: rect.y });
+      await c.call('Input.dispatchMouseEvent', { type: 'mousePressed', x: rect.x, y: rect.y, button: 'left', clickCount: 1 });
+      await c.call('Input.dispatchMouseEvent', { type: 'mouseReleased', x: rect.x, y: rect.y, button: 'left', clickCount: 1 });
+    };
+    const type = async (sel: string, text: string) => { await ev(`document.querySelector(${JSON.stringify(sel)}).focus(); 1`); await c.call('Input.insertText', { text }); };
+    const card = () => ev(CARD_JS);
+    const unlock = async () => { await type('input[aria-label="Vault password"]', MASTER); await click('button[data-variant="secondary"]:not([data-cred-manual])'); };
+    /** The tab's link to the host dies and cannot come back (every reconnect gets a socket that never opens); HTTP still works. */
+    const cutSocket = async () => {
+      await ev('window.__wsDead = true; window.__sockets.forEach((s) => s.close()); window.__sockets.length');
+      await sleep(800);
+    };
+    return { id: tab.id, c, ev, click, type, card, unlock, cutSocket };
+  }
+  const A = await cockpitTab();
+  const evC = A.ev, click = A.click, type = A.type, card = A.card;
   const race = <T,>(p: Promise<T>, ms: number): Promise<T | 'pending'> => Promise.race([p, sleep(ms).then(() => 'pending' as const)]);
 
   at('card 1');
@@ -174,14 +220,12 @@ try {
   out.stillPendingAfterTap = !!(await pending());
   out.fill1Early = await race(fill1, 10);
   // ---- 2. unlock on the card, fill from the saved entry, and grant the rest -------------------------------------------------
-  if ((await card())?.unlockRow) {
-    await type('input[aria-label="Vault password"]', MASTER);
-    await click('button[data-variant="secondary"]:not([data-cred-manual])'); // Unlock
-  }
+  if ((await card())?.unlockRow) await A.unlock();
   at('unlock → fill-from');
   const c2 = await until(async () => { const c = await card(); return c && c.fillFrom.length ? c : null; }, 30000);
   out.cardUnlocked = c2;
   if (c2.grant) await click('[data-cred-grant] input');
+  out.grantText = c2.grantText;
   const t1 = Date.now();
   await click('[data-fill-from]');
   out.fill1 = await race(fill1, 20000);
@@ -217,6 +261,60 @@ try {
     await click('button[data-variant="quiet"]'); // Cancel
     out.fill3 = await race(fill3, 15000);
     out.page3 = await evS("document.querySelector('#idn').value");
+
+    // ---- 5. a field the grant does not name (saved later, or never): the card waits; Stop revokes the grant ------------------
+    at('unlisted field + Stop');
+    await cdp.pageNavigate(sid, `${pageBase}/form`);
+    await until(async () => evS("!!document.querySelector('#idn')"), 15000);
+    await evS("document.querySelector('#idn').focus(); 1");
+    const fill5 = agent(`/__api/sessions/${sid}/vault/fill`, { site: '127.0.0.1', field: 'email', reason: 'e2e unlisted' });
+    await until(card, 30000);
+    await sleep(2000);
+    out.card5 = await card();
+    out.fill5Early = await race(fill5, 10);
+    if (out.card5?.grantOn) await click('[data-cred-grant-on] button'); // Stop
+    await sleep(300);
+    out.card5AfterStop = await card();
+    await click('button[data-variant="quiet"]'); // Cancel
+    out.fill5 = await race(fill5, 15000);
+
+    // ---- 6. a second cockpit tab; tab A loses its socket; B answers the card; A's copy is stale → the host says so ------------
+    at('two tabs, stale card');
+    const browser = (await (await fetch(`http://127.0.0.1:${cport}/json/version`)).json()) as any;
+    const bws = await Cdp.open(browser.webSocketDebuggerUrl);
+    const { targetId } = await bws.call('Target.createTarget', { url: `${base}/__health` });
+    const B = await cockpitTab(targetId);
+    await cdp.pageNavigate(sid, `${pageBase}/form`);
+    await until(async () => evS("!!document.querySelector('#idn')"), 15000);
+    await evS("document.querySelector('#idn').focus(); 1");
+    const fill6 = agent(`/__api/sessions/${sid}/vault/fill`, { site: '127.0.0.1', field: 'id_number', target: 'id number', reason: 'e2e stale' });
+    await until(A.card, 30000);
+    await until(B.card, 30000);
+    await A.cutSocket();
+    if ((await B.card())?.unlockRow) await B.unlock();
+    await until(async () => { const c = await B.card(); return c && c.fillFrom.length ? c : null; }, 30000);
+    await B.click('[data-fill-from]');
+    out.fill6 = await race(fill6, 20000);
+    await sleep(1500);
+    out.bCardGone = !(await B.card());
+    out.aStale = await A.card(); // still up: A heard nothing
+    if (out.aStale) {
+      await A.click('[data-fill-from]');
+      out.aAfterStaleTap = await until(async () => { const c = await A.card(); return c && (c.done || c.error) ? c : null; }, 10000);
+    }
+    out.page6 = await evS("document.querySelector('#idn').value");
+
+    // ---- 7. B's socket dies too; its tap still lands over HTTP and the card shows the outcome itself ----------------------------
+    at('success without socket');
+    await evS("document.querySelector('#ph').focus(); 1");
+    const fill7 = agent(`/__api/sessions/${sid}/vault/fill`, { site: '127.0.0.1', field: 'phone', reason: 'e2e no socket' });
+    await until(async () => { const c = await B.card(); return c && c.fillFrom.length ? c : null; }, 30000);
+    await B.cutSocket();
+    await B.click('[data-fill-from]');
+    out.fill7 = await race(fill7, 20000);
+    out.bDone = await until(async () => { const c = await B.card(); return c && c.done ? c : null; }, 10000);
+    out.page7 = await evS("document.querySelector('#ph').value");
+    A.c.close(); B.c.close(); bws.close();
   }
 } catch (e) {
   out.error = String((e as Error)?.message || e);

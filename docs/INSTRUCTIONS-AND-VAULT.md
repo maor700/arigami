@@ -223,12 +223,19 @@ Three tools, all riding with the `browser` family (`server/agent-policy.ts`), no
 - **Automatic only under a one-time grant (VAULT4).** The per-site `auto` choice (made with "Remember" on a sign-in
   card) is a sign-in's and never reaches a named field (`pref` is `ask` on a field card). What does: the owner unlocks
   the vault on a field card and ticks "also fill the other details saved for this site in this session" — a grant held
-  in that cockpit tab's memory only (`web/src/lib/vault-grants.js`), keyed by session + **exact origin**, at most 60
-  minutes, gone when the vault locks, the session ends or the time is up. Under it `VaultAutoFill` fills a field card
-  with exactly one matching entry (`auto:true, grant:true` on the fill body; the chat line says so); a miss or an error
-  leaves the card up with the reason. Never a form, never the owner's Chrome (`target:'shared'`), never another origin.
-  A field card also carries `saved` (the catalog, names only, holds this field for the origin) so a locked vault says
-  "unlock to fill the saved X" instead of a dead end; the card's Fill is never a silent no-op.
+  in that cockpit tab's memory only (`web/src/lib/vault-grants.js`), keyed by session + **exact origin**, for ONE entry
+  and the field **names** it holds at that moment (the tick spells them out, with the session's name and the time), at
+  most 60 minutes, off by default, gone when the vault locks, the session ends, the time is up or the owner taps Stop. A
+  field saved on the entry later is not covered. Under it `VaultAutoFill` fills a field card from that entry (`auto:true,
+  grant:true` on the fill body; the chat line says so); a miss or an error leaves the card up with the reason. Never a
+  form, never the owner's Chrome (`target:'shared'`), never another origin. A field card also carries `saved` (the
+  catalog, names only, holds this field for the origin) so a locked vault says "unlock to fill the saved X" instead of
+  a dead end; the card's Fill is never a silent no-op.
+- **The HTTP answer settles the card, the socket only tidies it.** A tap's outcome (`filled` / `cancel` / `manual`, or
+  `404 no longer open` for a request another tab or the clock already settled) is shown on the card itself with nothing
+  left to press, so a cockpit tab whose socket died never shows a live card for a dead request. A call into the vault
+  worker always settles too (60 s clock, the worker's crash): a silent worker is dropped and restarted on the next call.
+  All of it runs end to end in `test/vault-card-e2e.test.ts` — a real host, a real session Chrome, a real cockpit tab.
 - **The card says where.** A field card carries `page: {tag, type, label}` read from the element the host marked, and
   shows "Into the page field “Card number” (input · text) · bank.example" — the owner judges the target, not only the
   site. A detail whose saved type is not plain text (secret, number, date, otp — or a name the catalog does not know)

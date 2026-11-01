@@ -8,6 +8,22 @@ import { revokeAllGrants } from './vault-grants.js';
 let worker = null;
 let seq = 0;
 const waiting = new Map();
+// VAULT4: a call to the worker always settles — an answer, the worker's death, or this clock (argon2 at 64 MiB takes
+// a second or two; a fill waits on the host for up to 30 s) — so no card ever sits on "busy" forever
+let CALL_TIMEOUT_MS = 60_000;
+/** Test seam. */
+export const _setCallTimeout = (ms) => { CALL_TIMEOUT_MS = ms; };
+const WORKER_DEAD = 'the vault worker stopped answering — reload the cockpit (Ctrl+Shift+R); nothing is known to have been filled';
+function failAll(error) {
+  for (const [id, w] of waiting) { waiting.delete(id); clearTimeout(w.timer); w.reject(new Error(error)); }
+}
+/** The worker crashed or will not load: every waiting call fails, the vault counts as locked, the next call starts a new worker. */
+function workerDied(why) {
+  try { worker?.terminate(); } catch { /* already gone */ }
+  worker = null;
+  failAll(why);
+  setStatus({ unlocked: false });
+}
 let status = { loaded: false, exists: false, unlocked: false, count: 0 };
 const subs = new Set();
 const WINDOW_KEY = 'arigami.vault.windowMinutes';
@@ -35,9 +51,12 @@ function getWorker() {
     const w = waiting.get(msg.id);
     if (!w) return;
     waiting.delete(msg.id);
+    clearTimeout(w.timer);
     if (msg.ok) w.resolve(msg.result);
     else w.reject(Object.assign(new Error(msg.error), { status: msg.status }));
   };
+  worker.onerror = (ev) => workerDied(`${WORKER_DEAD}${ev?.message ? ` (${ev.message})` : ''}`);
+  worker.onmessageerror = () => workerDied(WORKER_DEAD);
   const min = Number(localStorage.getItem(WINDOW_KEY));
   if (min) worker.postMessage({ id: ++seq, op: 'setWindow', args: { minutes: min } });
   return worker;
@@ -46,8 +65,16 @@ function getWorker() {
 function call(op, args) {
   return new Promise((resolve, reject) => {
     const id = ++seq;
-    waiting.set(id, { resolve, reject });
-    getWorker().postMessage({ id, op, args });
+    // a worker that does not answer is not kept: this call fails, and so does every other one waiting on it; the next call starts afresh
+    const timer = setTimeout(() => { if (waiting.has(id)) workerDied(`the vault did not answer in ${Math.round(CALL_TIMEOUT_MS / 1000)} s (${op}) — try again, or reload the cockpit`); }, CALL_TIMEOUT_MS);
+    waiting.set(id, { resolve, reject, timer });
+    try {
+      getWorker().postMessage({ id, op, args });
+    } catch (e) {
+      waiting.delete(id);
+      clearTimeout(timer);
+      reject(new Error(`the vault worker could not start: ${e?.message || e}`));
+    }
   });
 }
 

@@ -7,7 +7,7 @@
 import { useEffect, useRef } from 'react';
 import { useStore } from '../lib/store.js';
 import { useVault, matchVault, fillFromVault, matchVaultField, fillVaultField } from '../lib/vault.js';
-import { coversRequest, noteAuto, pruneGrants, grantCount } from '../lib/vault-grants.js';
+import { coversRequest, grantFor, noteAuto, pruneGrants, grantCount } from '../lib/vault-grants.js';
 
 export default function VaultAutoFill() {
   const { sessions } = useStore();
@@ -24,10 +24,13 @@ export default function VaultAutoFill() {
         if (!coversRequest(s.id, r)) continue;
         tried.current.add(r.requestId);
         const field = r.fields[0];
+        const g = grantFor(s.id, r.origin);
         matchVaultField(r.origin, field, r.entry)
           .then((m) => {
-            if (m.length !== 1) throw new Error(m.length ? `${m.length} saved entries hold ${field} for this site — pick one` : `no saved ${field} for this exact address`);
-            return fillVaultField({ sessionId: s.id, requestId: r.requestId, origin: r.origin, field, entryId: m[0].id, ...(r.part && r.part !== 'value' ? { part: r.part } : {}), auto: true, grant: true });
+            // the grant names ONE entry: that one fills, whatever else the site has saved
+            const hit = m.filter((x) => x.id === g?.entryId);
+            if (hit.length !== 1) throw new Error(m.length ? `the entry you approved does not hold ${field} for this request — tap to choose` : `no saved ${field} for this exact address`);
+            return fillVaultField({ sessionId: s.id, requestId: r.requestId, origin: r.origin, field, entryId: hit[0].id, ...(r.part && r.part !== 'value' ? { part: r.part } : {}), auto: true, grant: true });
           })
           .then(() => noteAuto(r.requestId, null))
           .catch((e) => noteAuto(r.requestId, e?.message || e)); // the card stays up and shows this

@@ -2,7 +2,7 @@
 // lets THIS cockpit tab fill the saved details of ONE session on ONE exact origin without a tap per field, while the
 // vault stays open. Lives in this tab's memory only (never stored, never sent to the host or the agent); gone when the
 // vault locks, the session ends, the time is up — and never reaches another origin, another session or a sign-in.
-const grants = new Map(); // `${sessionId}\n${origin}` → { until }
+const grants = new Map(); // `${sessionId}\n${origin}` → { until, entryId, fields: [lower-case names] }
 const notes = new Map(); // requestId → { error } — why an automatic fill did not land, for the card to show
 const subs = new Set();
 let version = 0;
@@ -16,11 +16,16 @@ function bump() {
   for (const fn of subs) fn();
 }
 
-/** Grant automatic fills for one session on one exact origin, for `minutes` (clamped) from now. */
-export function grantAutoFill({ sessionId, origin, minutes = GRANT_MINUTES_DEFAULT }, now = Date.now()) {
+/**
+ * Grant automatic fills for one session on one exact origin, from ONE entry, for the field NAMES it holds now, for
+ * `minutes` (clamped) from now. A field saved on the entry later is not covered — the owner approved a list, not an entry.
+ */
+export function grantAutoFill({ sessionId, origin, entryId, fields, minutes = GRANT_MINUTES_DEFAULT }, now = Date.now()) {
   if (!sessionId || !/^https?:\/\//.test(String(origin || ''))) return null;
+  const names = [...new Set((Array.isArray(fields) ? fields : []).map((f) => String(f?.name ?? f ?? '').trim().toLowerCase()).filter(Boolean))];
+  if (!entryId || !names.length) return null;
   const m = Math.max(1, Math.min(GRANT_MINUTES_MAX, Number(minutes) || GRANT_MINUTES_DEFAULT));
-  const g = { until: now + m * 60_000 };
+  const g = { until: now + m * 60_000, entryId: String(entryId), fields: names };
   grants.set(key(sessionId, origin), g);
   bump();
   return g;
@@ -39,10 +44,11 @@ export function grantFor(sessionId, origin, now = Date.now()) {
   return g;
 }
 
-/** Does a grant cover this request — a named field (never a sign-in or a form) into the session browser (never the owner's Chrome)? */
+/** Does a grant cover this request — one of ITS field names (never a sign-in or a form) into the session browser (never the owner's Chrome)? */
 export function coversRequest(sessionId, req, now = Date.now()) {
   if (!req || req.kind !== 'field' || req.target === 'shared') return false;
-  return !!grantFor(sessionId, req.origin, now);
+  const g = grantFor(sessionId, req.origin, now);
+  return !!g && g.fields.includes(String(req.fields?.[0] || '').toLowerCase());
 }
 
 export function revokeGrant(sessionId, origin) {
