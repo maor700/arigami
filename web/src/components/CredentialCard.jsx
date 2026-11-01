@@ -9,11 +9,16 @@
 //   'form'  → vault_collect: a secure form of named fields; Save puts them in the vault (the worker encrypts, uploads)
 //             and tells the host only the names. Nothing goes to any page.
 //   'field' → vault_fill: ONE named field of the page — "Fill <field> from <entry>" (one tap), or type it once and keep it.
-import { useEffect, useState } from 'react';
+// VAULT4 — the field card is never a dead end: it says what state the vault is in (locked / unreachable / no entry for
+//   this exact address), Fill always answers (a hint or an error), and one tick on it grants this tab the rest of the
+//   session's saved details for this exact origin (lib/vault-grants.js) — the host's `saved` flag (names only) says
+//   whether there is anything saved to unlock for.
+import { useEffect, useState, useSyncExternalStore } from 'react';
 import { api } from '../lib/api.js';
 import { useT } from '../lib/i18n.js';
 import { useVault, matchVault, unlockVault, createVault, fillFromVault, vaultSupported, matchVaultField, fillVaultField, saveVaultFields } from '../lib/vault.js';
 import { inputPropsFor } from '../lib/vault-schema.js';
+import { grantAutoFill, grantFor, revokeGrant, autoNote, subscribeGrants, grantsVersion, GRANT_MINUTES_DEFAULT } from '../lib/vault-grants.js';
 import { defineHostComponent, loose, str, any, z } from '../openui/define.js';
 import { CardFrame, Btn, Prose } from '../openui/primitives.jsx';
 import { INPUT } from './settings/shared.jsx';
@@ -168,6 +173,7 @@ function FieldCardView({ sessionId, request }) {
   const vault = useVault();
   const field = request.fields[0];
   const [matches, setMatches] = useState([]);
+  const [matched, setMatched] = useState(false); // the vault has answered which entries hold the field
   const [typing, setTyping] = useState(false);
   const [value, setValue] = useState('');
   const [save, setSave] = useState(true);
@@ -187,8 +193,8 @@ function FieldCardView({ sessionId, request }) {
 
   useEffect(() => {
     let alive = true;
-    if (vault.unlocked) matchVaultField(request.origin, field, request.entry).then((m) => alive && setMatches(m)).catch(() => {});
-    else setMatches([]);
+    if (vault.unlocked) matchVaultField(request.origin, field, request.entry).then((m) => { if (alive) { setMatches(m); setMatched(true); } }).catch(() => {});
+    else { setMatches([]); setMatched(false); }
     return () => { alive = false; };
   }, [vault.unlocked, vault.count, request.origin, field, request.entry]);
 
@@ -197,9 +203,8 @@ function FieldCardView({ sessionId, request }) {
     setErr(null);
     try { await fn(); } catch (e) { setErr(errText(e)); setBusy(false); }
   };
-  // no "remember this choice" here: a named field is never filled without a tap (the per-site auto choice is a sign-in's)
+  // no "remember this choice" here: the per-site auto choice is a sign-in's; a named field is automatic only under this tab's grant (below)
   const base = { sessionId, requestId: request.requestId, origin: request.origin, field, ...(part ? { part } : {}) };
-  const fillFrom = (m) => run(() => fillVaultField({ ...base, entryId: m.id }));
   const fillTyped = () => run(async () => {
     const keep = save && supported && field !== 'otp';
     if (keep) await openVault(t, vault, master, master2);
@@ -210,6 +215,24 @@ function FieldCardView({ sessionId, request }) {
   const onEnter = (fn) => (e) => { if (e.key === 'Enter' && !busy) { e.preventDefault(); fn(); } };
   const showSaved = vault.unlocked && matches.length > 0 && !typing;
   const shared = request.target === 'shared';
+  // VAULT4: this tab's grant for the session + exact origin, and why an automatic fill under it did not land
+  useSyncExternalStore(subscribeGrants, grantsVersion, grantsVersion);
+  const grant = !shared ? grantFor(sessionId, request.origin) : null;
+  const auto = autoNote(request.requestId);
+  const [grantNext, setGrantNext] = useState(false);
+  const fillFrom = (m) => run(async () => {
+    await fillVaultField({ ...base, entryId: m.id });
+    if (grantNext && !shared) grantAutoFill({ sessionId, origin: request.origin, minutes: GRANT_MINUTES_DEFAULT });
+  });
+  // what the owner needs to know before any button: the vault's state in THIS tab (never a guess by the host)
+  const state = !vault.loaded ? null
+    : vault.unsupported ? null
+    : vault.error ? ['unreachable', t('vault.fieldCard.state.unreachable', { error: vault.error })]
+    : vault.exists && !vault.unlocked ? [request.saved ? 'locked' : 'lockedNone', t(request.saved ? 'vault.fieldCard.state.locked' : 'vault.fieldCard.state.lockedNone', { field: source })]
+    : vault.unlocked && (request.saved === false || matched) && matches.length === 0 ? ['noEntry', t('vault.fieldCard.state.noEntry', { field: source, origin: request.origin.replace(/^https?:\/\//, '') })]
+    : null;
+  // Fill with nothing typed is an answer, not a dead button
+  const fillTypedOrSay = () => { if (!value) return setErr(t('vault.fieldCard.needValue', { field: source })); fillTyped(); };
 
   return (
     <CardFrame tone="accent" live data-credential-request={request.requestId} data-cred-kind="field" data-cred-part={part || undefined} label={t('vault.fieldCard.title', { field: source, host: request.host })}>
@@ -222,15 +245,30 @@ function FieldCardView({ sessionId, request }) {
         </Prose>
       )}
       <Prose dim className="mt-1">{t('vault.fieldCard.private')}</Prose>
+      {state && <Prose className="mt-1.5 font-medium" data-cred-state={state[0]}>{state[1]}</Prose>}
+      {grant && (
+        <Prose dim className="mt-1" data-cred-grant-on>
+          {t('vault.fieldCard.grantOn', { host: request.host, minutes: Math.max(1, Math.ceil((grant.until - Date.now()) / 60_000)) })}{' '}
+          <button type="button" className="underline" onClick={() => revokeGrant(sessionId, request.origin)}>{t('vault.fieldCard.grantStop')}</button>
+        </Prose>
+      )}
+      {auto?.error && <div data-cred-auto-error dir="auto" className="mt-1.5 text-xs font-medium text-destructive">{t('vault.fieldCard.autoFailed', { error: auto.error })}</div>}
       {showSaved ? (
-        <div className="mt-2.5 flex flex-wrap items-center gap-2">
-          {matches.map((m) => (
-            <Btn key={m.id} variant="primary" disabled={busy} data-fill-from={m.title} onClick={() => fillFrom(m)}>
-              {t('vault.fieldCard.fillFrom', { field: source, entry: m.title || m.username })}{!m.exact && <span className="opacity-70"> · {new URL(m.origin).hostname}</span>}
-            </Btn>
-          ))}
-          <Btn variant="quiet" disabled={busy} onClick={() => setTyping(true)}>{t('vault.card.other')}</Btn>
-        </div>
+        <>
+          <div className="mt-2.5 flex flex-wrap items-center gap-2">
+            {matches.map((m) => (
+              <Btn key={m.id} variant="primary" disabled={busy} data-fill-from={m.title} onClick={() => fillFrom(m)}>
+                {t('vault.fieldCard.fillFrom', { field: source, entry: m.title || m.username })}{!m.exact && <span className="opacity-70"> · {new URL(m.origin).hostname}</span>}
+              </Btn>
+            ))}
+            <Btn variant="quiet" disabled={busy} onClick={() => setTyping(true)}>{t('vault.card.other')}</Btn>
+          </div>
+          {!shared && !grant && (
+            <div className="mt-2">
+              <Check checked={grantNext} onChange={setGrantNext} data-cred-grant>{t('vault.fieldCard.grant', { host: request.host, minutes: GRANT_MINUTES_DEFAULT })}</Check>
+            </div>
+          )}
+        </>
       ) : (
         <>
           <MasterRow vault={vault} master={master} setMaster={setMaster} master2={master2} setMaster2={setMaster2} onEnter={onEnter} busy={busy} onUnlock={unlock} create={save && supported && field !== 'otp' ? fillTyped : null} />
@@ -250,7 +288,7 @@ function FieldCardView({ sessionId, request }) {
         <Btn variant="quiet" disabled={busy} onClick={() => answer('cancel')}>{t('vault.card.cancel')}</Btn>
         <Btn variant="secondary" disabled={busy} data-cred-manual onClick={() => answer('manual')}>{t('vault.card.manual')}</Btn>
         {!showSaved && (
-          <Btn variant="primary" data-cred-fill disabled={busy || !value} onClick={fillTyped}>
+          <Btn variant="primary" data-cred-fill disabled={busy} onClick={fillTypedOrSay}>
             {save && supported && field !== 'otp' ? t('vault.card.fillSave') : t('vault.card.fill')}
           </Btn>
         )}
@@ -376,7 +414,7 @@ function SignInCardView({ sessionId, request }) {
         <Btn variant="quiet" disabled={busy} onClick={() => answer('cancel')}>{t('vault.card.cancel')}</Btn>
         <Btn variant="secondary" disabled={busy} data-cred-manual onClick={() => answer('manual')}>{t('vault.card.manual')}</Btn>
         {!showSaved && (
-          <Btn variant="primary" data-cred-fill disabled={busy || !fields.some((r) => values[r])} onClick={fillTyped}>
+          <Btn variant="primary" data-cred-fill disabled={busy} onClick={() => (fields.some((r) => values[r]) ? fillTyped() : setErr(t('vault.card.needValue')))}>
             {save && saveable && supported ? t('vault.card.fillSave') : t('vault.card.fill')}
           </Btn>
         )}
@@ -397,7 +435,7 @@ export const CredentialCardDef = defineHostComponent({
   description: 'Host: request_credentials — fill a sign-in from the owner\'s vault, or hand it to take-over',
   props: loose({
     sessionId: z.string(),
-    request: loose({ requestId: str, origin: str, host: str, fields: any, reason: any, pref: any, target: any, account: any, kind: any, spec: any, entry: any, page: any, part: any }),
+    request: loose({ requestId: str, origin: str, host: str, fields: any, reason: any, pref: any, target: any, account: any, kind: any, spec: any, entry: any, page: any, part: any, saved: any }),
   }),
   component: CredentialCardView,
 });

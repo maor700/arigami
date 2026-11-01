@@ -10,6 +10,7 @@ import { toast, toastError } from './toast.js';
 import { t } from './i18n.js';
 import { sessionLabel } from '../components/ui.jsx';
 import { applyState, explanationsKey, inflateFrame, nextCursor, planGapFill, stateChatGap, wsQuery, lastSeq, WIRE } from './resume.js';
+import { coversRequest } from './vault-grants.js';
 
 let state = {
   sessions: [], // includes archived (REST snapshot merges them in)
@@ -84,7 +85,8 @@ function setState(patch) {
 /* ---------------- "needs attention" detection ---------------------------- */
 // A session needs attention when it has a pending question for the human.
 export function needsAttention(s) {
-  return !!(s && (s.action || s.claude?.state === 'awaiting-input'));
+  // VAULT4: an open vault card is the human's too — unless this tab's grant is about to fill it
+  return !!(s && (s.action || s.claude?.state === 'awaiting-input' || (s.credentialRequest && !coversRequest(s.id, s.credentialRequest))));
 }
 
 // Set of session ids currently needing attention (kept across setState calls).

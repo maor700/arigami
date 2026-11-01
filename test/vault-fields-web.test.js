@@ -13,7 +13,7 @@ isolate();
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const web = (p) => path.join(ROOT, 'web/src', p);
 
-let React, render, CredentialCard, schema, prefs;
+let React, render, CredentialCard, schema, prefs, vaultLib, grants, store;
 const h = (...a) => React.createElement(...a);
 let origFetch;
 
@@ -25,6 +25,7 @@ beforeAll(async () => {
   globalThis.navigator = { language: 'en-US', userAgent: 'test' };
   globalThis.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
   globalThis.WebSocket = class { close() {} };
+  globalThis.MutationObserver = class { observe() {} disconnect() {} takeRecords() { return []; } };
   // the cockpit on https / localhost: saving to the vault is offered (vaultSupported); no worker is started by a server render
   globalThis.isSecureContext = true;
   globalThis.Worker = class { postMessage() {} };
@@ -40,6 +41,9 @@ beforeAll(async () => {
   prefs.setPrefs({ language: 'en' });
   ({ default: CredentialCard } = await import(web('components/CredentialCard.jsx')));
   schema = await import(web('lib/vault-schema.js'));
+  vaultLib = await import(web('lib/vault.js'));
+  grants = await import(web('lib/vault-grants.js'));
+  store = await import(web('lib/store.js'));
 });
 afterAll(() => { if (origFetch) globalThis.fetch = origFetch; });
 
@@ -186,10 +190,12 @@ test('one named field (vault_fill) renders WHERE it goes, a single dotted input,
   expect(html).not.toContain('Remember this choice'); // the per-site auto choice is a sign-in's, not a grant for named fields
   expect(html).not.toContain('data-cred-shared');
   expect(html).not.toMatch(/type="password"/);
-  // the cockpit never auto-fills a form or a named field: only a plain sign-in request (no kind) under the auto choice
+  // VAULT4: a named field is automatic only under this tab's grant (session + exact origin); a sign-in's "remember"
+  // choice still reaches only a request without a kind, and a form is never automatic
   const auto = await Bun.file(web('components/VaultAutoFill.jsx')).text();
-  expect(auto).toContain('|| r.kind ||');
-  expect(auto).not.toMatch(/fillVaultField|matchVaultField/);
+  expect(auto).toContain("if (!coversRequest(s.id, r)) continue;");
+  expect(auto).toContain("if (r.pref !== 'auto' || r.kind) continue;");
+  expect(auto).toContain('auto: true, grant: true');
   const shared = render(h(CredentialCard, { sessionId: 's1', request: { ...base, kind: 'field', fields: ['id_number'], target: 'shared', account: 'work.example' } }));
   expect(shared).toContain('data-cred-shared');
   expect(shared).toContain('work.example');
@@ -216,4 +222,80 @@ test('the Passwords page renders an unlocked vault\'s entries with their fields 
   const src = await Bun.file(web('components/settings/Passwords.jsx')).text();
   expect(src).toContain("shown === null ? '••••••••' : shown");
   expect(src).not.toMatch(/type=["']password["']/);
+});
+
+// ---- VAULT4: the field card is never a dead end; one tick grants the rest of the session's details on this origin -------
+
+test('a locked vault: the card says so (and that the saved field is there to unlock for), Fill answers instead of sitting disabled', () => {
+  vaultLib._setVaultStatus({ exists: true, unlocked: false, count: 0 });
+  const req = { ...base, kind: 'field', fields: ['id_number'], saved: true, page: { tag: 'input', type: 'text', label: 'ID' } };
+  const html = render(h(CredentialCard, { sessionId: 's1', request: req }));
+  expect(html).toContain('data-cred-state="locked"');
+  expect(html).toContain('The vault is locked in this tab. Unlock it to fill the saved id_number.');
+  expect(html).toMatch(/aria-label="Vault password"/); // the unlock row is on the card
+  expect(html).not.toMatch(/data-cred-fill[^>]*disabled/); // a click gets a hint or a fill — never nothing
+  // nothing saved for it: unlock, or type it
+  const none = render(h(CredentialCard, { sessionId: 's1', request: { ...req, saved: false } }));
+  expect(none).toContain('data-cred-state="lockedNone"');
+  expect(none).toContain('Unlock it, or type the id_number below.');
+  // the vault file could not be read: said, with the status — not folded into "no vault"
+  vaultLib._setVaultStatus({ exists: false, unlocked: false, error: 'HTTP 401' });
+  const bad = render(h(CredentialCard, { sessionId: 's1', request: req }));
+  expect(bad).toContain('data-cred-state="unreachable"');
+  expect(bad).toContain('could not be read (HTTP 401)');
+  // unlocked, no entry for this exact address: said, with the address
+  // unlocked and the catalog says nothing is saved for this field: said at once, with the address (a saved one waits for the vault's answer)
+  vaultLib._setVaultStatus({ exists: true, unlocked: true, error: null, count: 3 });
+  expect(render(h(CredentialCard, { sessionId: 's1', request: req }))).not.toContain('data-cred-state');
+  const no = render(h(CredentialCard, { sessionId: 's1', request: { ...req, saved: false } }));
+  expect(no).toContain('data-cred-state="noEntry"');
+  expect(no).toContain('No saved id_number for bank.example in the vault');
+  expect(no).not.toContain('data-cred-grant'); // the grant is offered only with a saved entry to fill from
+  // the sign-in card's Fill answers too
+  const si = render(h(CredentialCard, { sessionId: 's1', request: { ...base, fields: ['username', 'password'] } }));
+  expect(si).not.toMatch(/data-cred-fill[^>]*disabled/);
+  vaultLib._setVaultStatus({ exists: false, unlocked: false, error: null });
+});
+
+test('a grant: one session, one exact origin, a bounded time; gone on lock, on the session\'s end, never for a sign-in, a form or the owner\'s Chrome', () => {
+  const t0 = 1_000_000;
+  expect(grants.grantAutoFill({ sessionId: 's1', origin: 'https://bank.example', minutes: 10 }, t0)).toEqual({ until: t0 + 600_000 });
+  expect(grants.grantAutoFill({ sessionId: 's1', origin: 'https://bank.example', minutes: 999 }, t0).until).toBe(t0 + 60 * 60_000); // clamped
+  expect(grants.grantAutoFill({ sessionId: 's1', origin: 'bank.example' })).toBeNull(); // not an origin
+  grants.grantAutoFill({ sessionId: 's1', origin: 'https://bank.example', minutes: 10 }, t0);
+  const field = { kind: 'field', origin: 'https://bank.example', fields: ['id_number'] };
+  expect(grants.coversRequest('s1', field, t0 + 1)).toBe(true);
+  expect(grants.coversRequest('s2', field, t0 + 1)).toBe(false); // another session
+  expect(grants.coversRequest('s1', { ...field, origin: 'https://login.bank.example' }, t0 + 1)).toBe(false); // another origin
+  expect(grants.coversRequest('s1', { ...field, origin: 'http://bank.example' }, t0 + 1)).toBe(false);
+  expect(grants.coversRequest('s1', { ...field, kind: undefined }, t0 + 1)).toBe(false); // a sign-in
+  expect(grants.coversRequest('s1', { ...field, kind: 'form' }, t0 + 1)).toBe(false);
+  expect(grants.coversRequest('s1', { ...field, target: 'shared' }, t0 + 1)).toBe(false); // the owner's Chrome
+  expect(grants.coversRequest('s1', field, t0 + 600_001)).toBe(false); // time up — and dropped
+  expect(grants.grantCount()).toBe(0);
+  // the rail: an open vault card needs the human — unless this tab's grant is about to fill it
+  grants.grantAutoFill({ sessionId: 's1', origin: 'https://bank.example', minutes: 10 });
+  expect(store.needsAttention({ id: 's2', credentialRequest: { requestId: 'c', ...field } })).toBe(true);
+  expect(store.needsAttention({ id: 's1', credentialRequest: { requestId: 'c', ...field } })).toBe(false);
+  expect(store.needsAttention({ id: 's1', credentialRequest: { requestId: 'c', ...field, kind: undefined } })).toBe(true);
+  expect(store.needsAttention({ id: 's1' })).toBe(false);
+  // the card shows the grant and offers to stop it; an automatic miss is shown on the card
+  vaultLib._setVaultStatus({ exists: true, unlocked: true, count: 1 });
+  grants.noteAuto('cred_x', 'no saved id_number for this exact address');
+  const html = render(h(CredentialCard, { sessionId: 's1', request: { ...base, kind: 'field', fields: ['id_number'], saved: true } }));
+  expect(html).toContain('data-cred-grant-on');
+  expect(html).toContain('Automatic fills are on for bank.example in this session');
+  expect(html).toContain('>Stop<');
+  expect(html).toContain('data-cred-auto-error');
+  expect(html).toContain('Not filled by itself: no saved id_number for this exact address');
+  grants.noteAuto('cred_x', null);
+  // a grant dies with its session, and with the vault's lock in this tab
+  grants.grantAutoFill({ sessionId: 's9', origin: 'https://x.example' });
+  grants.pruneGrants(['s1']);
+  expect(grants.grantFor('s9', 'https://x.example')).toBeNull();
+  expect(grants.grantFor('s1', 'https://bank.example')).not.toBeNull();
+  vaultLib._setVaultStatus({ unlocked: false });
+  expect(grants.grantCount()).toBe(0);
+  expect(store.needsAttention({ id: 's1', credentialRequest: { requestId: 'c', ...field } })).toBe(true);
+  vaultLib._setVaultStatus({ exists: false, unlocked: false, error: null });
 });

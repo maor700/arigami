@@ -24,6 +24,9 @@ kdbxweb.CryptoEngine.setArgon2Impl((password, salt, memory, iterations, length, 
 // Argon2id at 64 MiB × 3 passes: about a second in WASM — slow enough to make guessing a stolen file expensive.
 const KDF = { memory: 64 * 1024 * 1024, iterations: 3 };
 const ORIGIN_FIELD = 'Arigami origin';
+// a fill answers or fails in this long: the card never sits on "busy" with nothing said
+const FILL_TIMEOUT_MS = 30_000;
+const HOST_SLOW = 'the host did not answer in 30 s — nothing is known to have been filled; try again';
 
 let db = null;
 let etag = null;
@@ -298,7 +301,7 @@ const ops = {
    * `save` keeps on the entry it names (saveTo), the only entry of the site, or a new one. The value goes to the host's
    * fill route and nowhere else.
    */
-  async fillField({ sessionId, requestId, origin, field, part, entryId, value, save: keep, saveTo, title, remember, auto }) {
+  async fillField({ sessionId, requestId, origin, field, part, entryId, value, save: keep, saveTo, title, remember, auto, grant }) {
     let v;
     if (entryId) {
       if (!db) throw new Error('the vault is locked');
@@ -320,8 +323,9 @@ const ops = {
     const r = await fetch(`/__api/sessions/${encodeURIComponent(sessionId)}/credentials/fill`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ requestId, values: { [field]: sent }, remember: !!remember, auto: !!auto }),
-    });
+      body: JSON.stringify({ requestId, values: { [field]: sent }, remember: !!remember, auto: !!auto, ...(grant ? { grant: true } : {}) }),
+      signal: AbortSignal.timeout(FILL_TIMEOUT_MS),
+    }).catch((e) => { throw new Error(e?.name === 'TimeoutError' ? HOST_SLOW : `the host could not be reached (${e?.message || e})`); });
     const out = await r.json().catch(() => ({}));
     if (!r.ok) throw Object.assign(new Error(out.error || `HTTP ${r.status}`), { status: r.status });
     let saved = false;
@@ -364,7 +368,8 @@ const ops = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ requestId, values: body, remember: !!remember, auto: !!auto }),
-    });
+      signal: AbortSignal.timeout(FILL_TIMEOUT_MS),
+    }).catch((e) => { throw new Error(e?.name === 'TimeoutError' ? HOST_SLOW : `the host could not be reached (${e?.message || e})`); });
     const out = await r.json().catch(() => ({}));
     if (!r.ok) throw Object.assign(new Error(out.error || `HTTP ${r.status}`), { status: r.status });
     let saved = false;

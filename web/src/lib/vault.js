@@ -3,6 +3,7 @@
 // Settings › Connections › Passwords render from. No value ever comes back to the page: the worker returns usernames
 // and fill outcomes only.
 import { useSyncExternalStore } from 'react';
+import { revokeAllGrants } from './vault-grants.js';
 
 let worker = null;
 let seq = 0;
@@ -12,9 +13,14 @@ const subs = new Set();
 const WINDOW_KEY = 'arigami.vault.windowMinutes';
 
 function setStatus(next) {
+  const was = status.unlocked;
   status = { ...status, ...next, loaded: true };
+  // VAULT4: a grant lives only while the vault is open in this tab
+  if (was && !status.unlocked) revokeAllGrants();
   for (const fn of subs) fn();
 }
+/** Test seam: the status a server render sees. */
+export const _setVaultStatus = (s) => setStatus(s);
 
 function getWorker() {
   if (worker) return worker;
@@ -51,7 +57,7 @@ export const vaultSupported = () => typeof window !== 'undefined' && window.isSe
 export async function refreshVault() {
   if (!vaultSupported()) return setStatus({ exists: false, unlocked: false, unsupported: true });
   const s = await call('status');
-  setStatus(s);
+  setStatus({ error: null, ...s }); // a stale "could not be read" clears once the file answers
   return s;
 }
 

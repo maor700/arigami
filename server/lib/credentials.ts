@@ -99,6 +99,8 @@ export interface CredentialRequest {
   page?: { tag: string; type: string; label: string; id?: string; name?: string };
   /** 'field': which part of the saved value goes in — the whole value, or an expiry's month / full year (split in the vault worker, never here). */
   part?: FieldPart;
+  /** 'field': the catalog (names only) says an entry of this origin holds this field — so the card can say "unlock to fill it" instead of a dead end. */
+  saved?: boolean;
 }
 
 // VAULT3: a saved expiry ("MM/YY") lands in two selects on most payment forms. The agent names the part; the owner's
@@ -600,7 +602,7 @@ export async function requestField(
   for (const [id, p] of pending) if (p.sessionId === sessionId) { pending.delete(id); settle(id, 'cancel'); }
   const request: CredentialRequest = {
     // a named field is never filled without a tap: the sign-in card's "auto" choice for this origin does not reach here
-    requestId, at: new Date().toISOString(), origin, host, fields: [o.field], pref: 'ask', kind: 'field',
+    requestId, at: new Date().toISOString(), origin, host, fields: [o.field], pref: 'ask', kind: 'field', saved: types.size > 0,
     page: { tag: String(r.tag || ''), type: String(r.type || ''), label: String(r.label || ''), ...(r.id ? { id: String(r.id) } : {}), ...(r.name ? { name: String(r.name) } : {}) },
     ...(o.part && o.part !== 'value' ? { part: o.part } : {}),
     ...(o.entry ? { entry: String(o.entry).slice(0, 120) } : {}),

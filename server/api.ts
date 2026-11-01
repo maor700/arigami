@@ -1573,7 +1573,7 @@ async function vaultFill(id: string, body: any): Promise<VaultFillOutcome> {
   if (settled === 'manual') return { status: 'manual', field, host: req.host, next: `the owner types the ${field} themselves: call request_screen (say which field, and where) and wait` };
   cr.forget(req.requestId, settled === 'expired' ? 'expired' : 'cancel');
   if (settled === 'cancel') return { status: 'cancelled', field, host: req.host, reason: `the owner cancelled — do not ask for the ${field} again in this turn, and never in the chat` };
-  return { status: 'expired', field, host: req.host, reason: `nobody answered the ${req.host} card in ${SIGN_IN_WAIT_MS / 60_000} minutes (the vault may be locked in the cockpit)` };
+  return { status: 'expired', field, host: req.host, reason: `nobody answered the ${req.host} card in ${SIGN_IN_WAIT_MS / 60_000} minutes — the owner has to open the cockpit, unlock the vault and tap Fill (or allow automatic fills for this site in this session)` };
 }
 
 /** sign_in({fill}): the host types ONE vault value into the field the agent clicked, in the owner's Chrome. */
@@ -3051,7 +3051,7 @@ sharedDesktop.wire({
   waitingOnHuman: (id) => {
     if (hasOpenScreenRequest(id)) return true;
     const s = state.getSession(id);
-    return !!(s && (s.action || s.claude?.state === 'awaiting-input'));
+    return !!(s && (s.action || s.claude?.state === 'awaiting-input' || s.credentialRequest));
   },
   changed: (st) => broadcast({ type: 'shared-desktop', lease: st }),
 });
@@ -7243,7 +7243,9 @@ export async function handle(
       state.patchSession(id, { credentialRequest: null });
       if (owned) {
         const where = card.target === 'shared' ? 'into your Chrome on the shared desktop' : "into the field on the agent's page";
-        claude.appendChat(id, { kind: 'system', text: `🔑 Typed your ${r.filled.join(', ')} for ${card.host} from your vault ${where}${body.auto === true ? ' (automatically)' : ''} — the agent did not see it.` });
+        const how = body.auto !== true ? '' : body.grant === true ? ' (automatically — your one-time approval for this site in this session)' : ' (automatically)';
+        claude.appendChat(id, { kind: 'system', text: `🔑 Typed your ${r.filled.join(', ')} for ${card.host} from your vault ${where}${how} — the agent did not see it.` });
+        if (body.auto === true) console.log(`[vault] ${new Date().toISOString()} ${id} ${card.kind === 'field' ? 'field' : 'sign-in'} filled automatically${body.grant === true ? ' under the owner\'s grant' : ''} (${card.host})`);
         return json(res, { ok: true, filled: r.filled, submitted: r.submitted });
       }
       claude.appendChat(id, { kind: 'system', text: `🔑 Signed in to ${card.host} from your vault${body.auto === true ? ' (automatically)' : ''} — the agent did not see the details.` });
