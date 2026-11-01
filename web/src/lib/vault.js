@@ -35,8 +35,9 @@ function setStatus(next) {
   if (was && !status.unlocked) revokeAllGrants();
   for (const fn of subs) fn();
 }
-/** Test seam: the status a server render sees. */
+/** Test seams: the status a server render sees. */
 export const _setVaultStatus = (s) => setStatus(s);
+export const _status = () => status;
 
 function getWorker() {
   if (worker) return worker;
@@ -71,9 +72,8 @@ function call(op, args) {
     try {
       getWorker().postMessage({ id, op, args });
     } catch (e) {
-      waiting.delete(id);
-      clearTimeout(timer);
-      reject(new Error(`the vault worker could not start: ${e?.message || e}`));
+      // a worker that cannot be reached is gone: this call and every other one waiting fail, the vault counts as locked
+      workerDied(`the vault worker could not be reached (${e?.message || e}) — unlock the vault again; nothing is known to have been filled`);
     }
   });
 }

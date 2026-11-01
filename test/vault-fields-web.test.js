@@ -357,6 +357,11 @@ test('a call to the vault worker always settles: the clock runs out, or the work
     expect(rb.status).toBe('rejected');
     expect(String(rb.reason?.message)).toMatch(/stopped answering/);
     expect(grants.grantCount()).toBe(0);
+    // a worker that cannot be reached (postMessage throws) is dead too: the call fails with the reason, the vault counts as locked
+    vaultLib._setVaultStatus({ exists: true, unlocked: true, count: 1 });
+    globalThis.Worker = class { postMessage() { throw new Error('worker gone'); } terminate() {} };
+    await expect(vaultLib.listVault()).rejects.toThrow(/could not be reached \(worker gone\).*unlock the vault again/);
+    expect(vaultLib._status().unlocked).toBe(false);
     // the next call starts a fresh worker (the dead one is not reused)
     let made = 0;
     globalThis.Worker = class { constructor() { made++; } postMessage(m) { setTimeout(() => this.onmessage?.({ data: { id: m.id, ok: true, result: [] } }), 1); } terminate() {} };

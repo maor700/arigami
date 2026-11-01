@@ -184,7 +184,7 @@ try {
     await ev("sessionStorage.setItem('arigami.wizardDismissed', '1'); 1");
     // every socket the cockpit opens is kept in reach, so the test can cut the tab's link to the host and keep it cut
     await c.call('Page.enable');
-    await c.call('Page.addScriptToEvaluateOnNewDocument', { source: "(() => { const W = window.WebSocket; window.__sockets = []; window.__wsDead = false; const P = function (u, p) { if (window.__wsDead) return { readyState: 0, send() {}, close() {}, addEventListener() {}, removeEventListener() {} }; const s = p === undefined ? new W(u) : new W(u, p); window.__sockets.push(s); return s; }; P.prototype = W.prototype; P.CONNECTING = 0; P.OPEN = 1; P.CLOSING = 2; P.CLOSED = 3; window.WebSocket = P; })();" });
+    await c.call('Page.addScriptToEvaluateOnNewDocument', { source: "(() => { const W = window.WebSocket; window.__sockets = []; window.__wsDead = false; const P = function (u, p) { if (window.__wsDead) return { readyState: 0, send() {}, close() {}, addEventListener() {}, removeEventListener() {} }; const s = p === undefined ? new W(u) : new W(u, p); window.__sockets.push(s); return s; }; P.prototype = W.prototype; P.CONNECTING = 0; P.OPEN = 1; P.CLOSING = 2; P.CLOSED = 3; window.WebSocket = P; const RW = window.Worker; window.__workers = []; const PW = function (u, o) { const w = new RW(u, o); window.__workers.push(w); return w; }; PW.prototype = RW.prototype; window.Worker = PW; })();" });
     await c.call('Page.navigate', { url: `${base}/__host/?session=${encodeURIComponent(sid)}` });
     // a real mouse click at the element's centre (what a tap is) — a disabled button swallows it, as on the owner's screen
     const click = async (sel: string) => {
@@ -202,7 +202,9 @@ try {
       await ev('window.__wsDead = true; window.__sockets.forEach((s) => s.close()); window.__sockets.length');
       await sleep(800);
     };
-    return { id: tab.id, c, ev, click, type, card, unlock, cutSocket };
+    /** The vault worker dies under the owner's hands (killed, and unreachable from then on) — what a crash or a frozen tab does. */
+    const killWorker = () => ev("window.__workers.forEach((w) => { w.terminate(); w.postMessage = () => { throw new Error('worker gone'); }; }); window.__workers.length");
+    return { id: tab.id, c, ev, click, type, card, unlock, cutSocket, killWorker };
   }
   const A = await cockpitTab();
   const evC = A.ev, click = A.click, type = A.type, card = A.card;
@@ -309,6 +311,26 @@ try {
     out.card5AfterStop = await card();
     await click('[data-cred-cancel]');
     out.fill5 = await race(fill5, 15000);
+
+    // ---- 5b. the vault worker dies under a tap: the tap fails with one reason, nothing stays busy, the vault counts as locked,
+    //          and the owner unlocks again and fills — the agent, meanwhile, waited and then gets "filled"
+    at('worker dies under a tap');
+    await cdp.pageNavigate(sid, `${pageBase}/form`);
+    await until(async () => evS("!!document.querySelector('#idn')"), 15000);
+    await evS("document.querySelector('#idn').focus(); 1");
+    const fillW = agent(`/__api/sessions/${sid}/vault/fill`, { site: '127.0.0.1', field: 'id_number', target: 'id number', reason: 'e2e worker' });
+    await until(async () => { const c = await card(); return c && c.fillFrom.length ? c : null; }, 30000);
+    out.workersKilled = await A.killWorker();
+    await click('[data-fill-from]');
+    out.cardWorkerDead = await until(async () => { const c = await card(); return c && c.error ? c : null; }, 10000);
+    out.fillWEarly = await race(fillW, 10);
+    // the action buttons are back (busy released); the Unlock button alone is disabled, for its empty password box, as always
+    out.busyAfterWorkerDeath = await evC("['[data-cred-cancel]', '[data-cred-manual]', '[data-cred-fill]'].map((q) => { const b = document.querySelector('[data-credential-request] ' + q); return b ? b.disabled : 'missing'; })");
+    await A.unlock();
+    await until(async () => { const c = await card(); return c && c.fillFrom.length ? c : null; }, 30000);
+    await click('[data-fill-from]');
+    out.fillW = await race(fillW, 20000);
+    out.pageW = await evS("document.querySelector('#idn').value");
 
     // ---- 6. a second cockpit tab; tab A loses its socket; B answers the card; A's copy is stale → the host says so ------------
     at('two tabs, stale card');

@@ -78,6 +78,16 @@ test.skipIf(!chrome || !built)('the vault card: a locked vault is said and Fill 
   expect(o.fill5Early).toBe('pending');
   expect(o.card5AfterStop).toMatchObject({ grantOn: false });
   expect(o.fill5).toMatchObject({ status: 'cancelled', field: 'email' });
+  // 5b. the vault worker dies under the owner's tap (terminated + unreachable): the tap fails with one reason, no button
+  //     stays busy, the card asks for the vault password again (the worker is gone, so the vault counts as locked), the
+  //     owner unlocks and taps once more, the agent — still waiting — gets "filled"
+  expect(o.workersKilled).toBeGreaterThan(0);
+  expect(o.cardWorkerDead.error).toMatch(/vault worker could not be reached.*unlock the vault again/);
+  expect(o.cardWorkerDead.unlockRow).toBe(true);
+  expect(o.busyAfterWorkerDeath).toEqual([false, false, false]); // Cancel, I'll type it myself, Fill — none stuck on busy
+  expect(o.fillWEarly).toBe('pending');
+  expect(o.fillW).toMatchObject({ status: 'filled', field: 'id_number' });
+  expect(o.pageW).toBe('123456782');
   // 6. two cockpit tabs; A's socket is cut, B fills: the agent is served once; A's stale copy, tapped, is told by the HTTP
   //    answer that the request is gone — outcome shown, nothing left to press, nothing filled twice
   expect(o.fill6).toMatchObject({ status: 'filled', field: 'id_number' });
