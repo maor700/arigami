@@ -334,9 +334,23 @@ try {
     if (cW2.unlockRow) await A.unlock();
     await until(async () => { const c = await card(); return c && c.fillFrom.length ? c : null; }, 30000);
     out.busyAfterWorkerDeath = await evC("['[data-cred-cancel]', '[data-cred-manual]', '[data-fill-from]'].map((q) => { const b = document.querySelector('[data-credential-request] ' + q); return b ? b.disabled : 'missing'; })");
+    await until(async () => (await card())?.grant, 15000); // the tick appears once the origin's entries are listed
+    await click('[data-cred-grant] input'); // a fresh grant, for 5c
     await click('[data-fill-from]');
     out.fillW2 = await race(fillW2, 20000);
     out.pageW = await evS("document.querySelector('#idn').value");
+
+    // ---- 5c. the AUTOMATIC fill meets a dead worker: no tap anywhere — the card shows the miss, the agent's tool ends blocked
+    at('auto fill, dead worker');
+    await until(async () => !(await card()), 10000);
+    out.workersKilled2 = await A.killWorker();
+    await evS("document.querySelector('#cvv').focus(); 1");
+    const t5c = Date.now();
+    const autoDead = agent(`/__api/sessions/${sid}/vault/fill`, { site: '127.0.0.1', field: 'cvv', reason: 'e2e auto dead' });
+    out.autoDead = await race(autoDead, 15000);
+    out.autoDeadMs = Date.now() - t5c;
+    out.cardAutoDead = await card();
+    out.pageAutoDead = await evS("document.querySelector('#cvv').value");
 
     // ---- 6. a second cockpit tab; tab A loses its socket; B answers the card; A's copy is stale → the host says so ------------
     at('two tabs, stale card');
@@ -350,6 +364,7 @@ try {
     const fill6 = agent(`/__api/sessions/${sid}/vault/fill`, { site: '127.0.0.1', field: 'id_number', target: 'id number', reason: 'e2e stale' });
     await until(A.card, 30000);
     await until(B.card, 30000);
+    if ((await A.card())?.unlockRow) { await A.unlock(); await until(async () => { const c = await A.card(); return c && c.fillFrom.length ? c : null; }, 30000); } // A's worker died in 5c
     await A.cutSocket();
     if ((await B.card())?.unlockRow) await B.unlock();
     await until(async () => { const c = await B.card(); return c && c.fillFrom.length ? c : null; }, 30000);

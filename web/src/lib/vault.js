@@ -3,7 +3,7 @@
 // Settings › Connections › Passwords render from. No value ever comes back to the page: the worker returns usernames
 // and fill outcomes only.
 import { useSyncExternalStore } from 'react';
-import { revokeAllGrants } from './vault-grants.js';
+import { revokeAllGrants, reportFatal } from './vault-grants.js';
 
 let worker = null;
 let seq = 0;
@@ -20,14 +20,31 @@ const clockFor = (op) => CALL_TIMEOUTS[op] ?? CALL_TIMEOUTS.default;
 const WORKER_DEAD = 'the vault worker stopped — unlock the vault again; nothing is known to have been filled';
 const WORKER_UNREACHABLE = 'the vault worker could not be reached — unlock the vault again; nothing is known to have been filled';
 const slow = (op, ms) => `the vault did not answer in ${Math.round(ms / 1000)} s (${op}) — unlock the vault again, or reload the cockpit; nothing is known to have been filled`;
+/**
+ * VAULT4: the filtered code of a fill attempt that broke on this side — what the card reports to the host (choice 'failed')
+ * so the agent's tool ends now, with a fixed reason. Null for anything the owner can still answer on the card (a hint, a
+ * wrong vault password, no entry, two entries, a stale request): those stay pending.
+ */
+export function failureCode(e) {
+  const m = String(e?.message || e || '');
+  if (e?.status === 404 || e?.status === 410 || /no longer open/i.test(m)) return null;
+  if (/vault worker stopped/i.test(m)) return 'worker_dead';
+  if (/vault did not answer/i.test(m)) return 'worker_timeout';
+  if (/vault worker could not be reached/i.test(m)) return 'worker_unreachable';
+  if (/host did not answer/i.test(m)) return 'host_timeout';
+  if (/host could not be reached/i.test(m)) return 'host_unreachable';
+  if (e?.status >= 500) return 'host_error';
+  return null;
+}
 function failAll(error) {
   for (const [id, w] of waiting) { waiting.delete(id); clearTimeout(w.timer); w.reject(new Error(error)); }
 }
 /** The worker crashed, froze or will not load: every waiting call fails, the vault counts as locked, the next call starts a new worker. */
-function workerDied(why) {
+function workerDied(why, code) {
   try { worker?.terminate(); } catch { /* already gone */ }
   worker = null;
   failAll(why);
+  reportFatal(code); // covered open cards are acknowledged to the host first — the lock below revokes the grants
   setStatus({ unlocked: false });
 }
 let status = { loaded: false, exists: false, unlocked: false, count: 0 };
@@ -44,6 +61,7 @@ function setStatus(next) {
 /** Test seams: the status a server render sees. */
 export const _setVaultStatus = (s) => setStatus(s);
 export const _status = () => status;
+export const _dropWorker = () => { try { worker?.terminate(); } catch { /* gone */ } worker = null; };
 
 /** A message from worker `w` — taken only while `w` is still THE worker; a dropped worker's late word (even "unlocked") is not. */
 function onWorkerMessage(w, ev) {
@@ -67,8 +85,8 @@ function getWorker() {
   const w = new Worker(new URL('./vault.worker.js', import.meta.url), { type: 'module' });
   worker = w;
   w.onmessage = (ev) => onWorkerMessage(w, ev);
-  w.onerror = () => { if (w === worker) workerDied(WORKER_DEAD); };
-  w.onmessageerror = () => { if (w === worker) workerDied(WORKER_DEAD); };
+  w.onerror = () => { if (w === worker) workerDied(WORKER_DEAD, 'worker_dead'); };
+  w.onmessageerror = () => { if (w === worker) workerDied(WORKER_DEAD, 'worker_dead'); };
   const min = Number(localStorage.getItem(WINDOW_KEY));
   if (min) w.postMessage({ id: ++seq, op: 'setWindow', args: { minutes: min } });
   return w;
@@ -79,13 +97,13 @@ function call(op, args) {
     const id = ++seq;
     const ms = clockFor(op);
     // a worker that does not answer is not kept: this call fails, and so does every other one waiting on it; the next call starts afresh
-    const timer = setTimeout(() => { if (waiting.has(id)) workerDied(slow(op, ms)); }, ms);
+    const timer = setTimeout(() => { if (waiting.has(id)) workerDied(slow(op, ms), 'worker_timeout'); }, ms);
     waiting.set(id, { resolve, reject, timer });
     try {
       getWorker().postMessage({ id, op, args });
     } catch {
       // a worker that cannot be reached is gone: this call and every other one waiting fail, the vault counts as locked
-      workerDied(WORKER_UNREACHABLE);
+      workerDied(WORKER_UNREACHABLE, 'worker_unreachable');
     }
   });
 }

@@ -242,9 +242,14 @@ Three tools, all riding with the `browser` family (`server/agent-policy.ts`), no
   worker always settles too — a clock per operation (unlock/create 180 s for argon2 on a slow device, a fill 45 s so the
   worker's own 30 s host fetch speaks first, 60 s otherwise), the worker's crash or an unreachable worker: every waiting
   call fails with a fixed phrase (never the worker's words), the worker is dropped (its late word is ignored), the vault
-  counts as locked and the grants go. A fill ATTEMPT that broke on the cockpit's side is answered to the host as
-  `credentials/answer {choice:'failed', reason}`: the agent's `vault_fill` returns `{status:'failed', reason, next}` at
+  counts as locked and the grants go. A fill ATTEMPT that broke on the cockpit's side — tapped or automatic — is
+  acknowledged to the host as `credentials/answer {choice:'failed', code}` with a filtered code (`worker_dead`,
+  `worker_timeout`, `worker_unreachable`, `host_timeout`, `host_unreachable`, `host_error`; never free text), for that exact
+  request (an old card's word cannot touch a new one): the agent's `vault_fill` ends `{status:'blocked', reason, next}` at
   once (sign_in({fill}) → blocked) instead of expiring ten minutes later, the chat says so, and the owner unlocks again.
+  What the owner can still answer on the card (a hint, a wrong password, no entry, two entries) stays pending. The worker's
+  fatal failure while a grant promised an automatic fill is acknowledged the same way for every covered open card, with no
+  tap, before the lock revokes the grants (`setFatalHook` in `vault-grants.js`, called from `workerDied`).
   All of it runs end to end in `test/vault-card-e2e.test.ts` — a real host, a real session Chrome, a real cockpit tab.
 - **The card says where.** A field card carries `page: {tag, type, label}` read from the element the host marked, and
   shows "Into the page field “Card number” (input · text) · bank.example" — the owner judges the target, not only the

@@ -6,13 +6,30 @@
 // up and says why. A form, a sign-in's "remember" choice and the owner's Chrome (target 'shared') never get this.
 import { useEffect, useRef } from 'react';
 import { useStore } from '../lib/store.js';
-import { useVault, matchVault, fillFromVault, matchVaultField, fillVaultField } from '../lib/vault.js';
-import { bindingFor, isRoleField, noteAuto, pruneGrants, grantCount } from '../lib/vault-grants.js';
+import { useVault, matchVault, fillFromVault, matchVaultField, fillVaultField, failureCode } from '../lib/vault.js';
+import { api } from '../lib/api.js';
+import { bindingFor, isRoleField, noteAuto, pruneGrants, grantCount, setFatalHook, coversRequest } from '../lib/vault-grants.js';
 
 export default function VaultAutoFill() {
   const { sessions } = useStore();
   const vault = useVault();
   const tried = useRef(new Set());
+  const latest = useRef(sessions);
+  latest.current = sessions;
+  // the worker died (crash / silence / unreachable) while a grant promised to fill an open card: that request is acknowledged
+  // to the host by code at once — the agent's tool ends "blocked" now, the card says why, the owner unlocks and the agent asks again
+  useEffect(() => {
+    setFatalHook((code) => {
+      for (const s of latest.current || []) {
+        const r = s.credentialRequest;
+        if (!r || !coversRequest(s.id, r)) continue;
+        tried.current.add(r.requestId);
+        noteAuto(r.requestId, `the vault worker ${code === 'worker_timeout' ? 'did not answer' : code === 'worker_dead' ? 'stopped' : 'could not be reached'} — unlock the vault again`);
+        api.post(`/sessions/${encodeURIComponent(s.id)}/credentials/answer`, { requestId: r.requestId, choice: 'failed', code }).catch(() => {});
+      }
+    });
+    return () => setFatalHook(null);
+  }, []);
   useEffect(() => {
     // a grant dies with its session
     if (grantCount() && Array.isArray(sessions) && sessions.length) pruneGrants(sessions.map((s) => s.id));
@@ -35,7 +52,14 @@ export default function VaultAutoFill() {
             return fillVaultField({ sessionId: s.id, requestId: r.requestId, origin: r.origin, field, entryId: hit[0].id, ...(r.part && r.part !== 'value' ? { part: r.part } : {}), auto: true, grant: true });
           })
           .then(() => noteAuto(r.requestId, null))
-          .catch((e) => noteAuto(r.requestId, e?.message || e)); // the card stays up and shows this
+          .catch((e) => {
+            noteAuto(r.requestId, e?.message || e); // the card stays up and shows this; the rail flags the session again
+            // a FATAL miss (the worker died or did not answer, the host unreachable) is acknowledged to the host by code, for
+            // this exact request: the agent's tool ends "blocked" now instead of waiting the card out; a miss the owner can
+            // answer (no entry, two entries) stays pending for them
+            const code = failureCode(e);
+            if (code) api.post(`/sessions/${encodeURIComponent(s.id)}/credentials/answer`, { requestId: r.requestId, choice: 'failed', code }).catch(() => {});
+          });
         continue;
       }
       // a sign-in: only the per-site "remember" choice, as before (a form is the owner's to fill)

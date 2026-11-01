@@ -87,7 +87,8 @@ export function revokeSession(sessionId) {
   if (n) bump();
 }
 export function revokeAllGrants() {
-  if (grants.size || notes.size) { grants.clear(); notes.clear(); bump(); }
+  // the notes stay: a card whose automatic fill just failed keeps saying why after the lock that followed
+  if (grants.size) { grants.clear(); bump(); }
 }
 /** Drop the grants of sessions that are gone. */
 export function pruneGrants(liveSessionIds) {
@@ -107,6 +108,15 @@ export function noteAuto(requestId, error) {
 export const autoNote = (requestId) => notes.get(requestId) || null;
 /** The rail's question: does this open card need the human — not covered by a grant, or covered but the automatic fill failed? */
 export const needsHuman = (sessionId, req, now = Date.now()) => !!req && (!coversRequest(sessionId, req, now) || !!autoNote(req.requestId)?.error);
+
+// VAULT4: the vault worker's fatal failure (dead, silent, unreachable) while a grant promised an automatic fill: whoever holds
+// the open cards (VaultAutoFill) acknowledges each covered request to the host by code BEFORE the lock revokes the grants —
+// so the agent's tool ends now, without a tap, and the owner is asked again after unlocking.
+let fatalHook = null;
+export function setFatalHook(fn) { fatalHook = fn; }
+export function reportFatal(code) {
+  try { fatalHook?.(code); } catch { /* a card's problem never stops the lock */ }
+}
 
 export function subscribeGrants(fn) {
   subs.add(fn);

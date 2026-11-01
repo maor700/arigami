@@ -84,10 +84,17 @@ test.skipIf(!chrome || !built)('the vault card: a locked vault is said and Fill 
   expect(o.workersKilled).toBeGreaterThan(0);
   expect(o.cardWorkerDead.error).toMatch(/^the vault worker could not be reached — unlock the vault again/); // a fixed phrase: no raw error, no value
   expect(o.cardWorkerDead.done).toBe('failed');
-  // the TOOL gets the outcome now, with the reason, not an "expired" ten minutes later
-  expect(o.fillW).toMatchObject({ status: 'failed', field: 'id_number', host: '127.0.0.1' });
-  expect(o.fillW.reason).toMatch(/failed in their cockpit: the vault worker could not be reached/);
+  // the TOOL ends now — blocked, with the fixed line of the filtered code — not "expired" ten minutes later
+  expect(o.fillW).toMatchObject({ status: 'blocked', field: 'id_number', host: '127.0.0.1' });
+  expect(o.fillW.reason).toMatch(/failed in the owner's cockpit: the owner's vault worker could not be reached; nothing was filled/);
   expect(o.fillW.next).toMatch(/call vault_fill\(\{site:"127\.0\.0\.1", field:"id_number"\}\) once more/);
+  // 5c. the same, with NO tap: under a fresh grant the AUTOMATIC fill meets a dead worker → the card shows the miss, the host is
+  //     acknowledged by code for that exact request, the agent's tool ends blocked within seconds; the field stays empty
+  expect(o.autoDead).toMatchObject({ status: 'blocked', field: 'cvv' });
+  expect(o.autoDead.reason).toMatch(/vault worker could not be reached/);
+  expect(o.autoDeadMs).toBeLessThan(10_000);
+  expect(o.pageAutoDead).toBe('');
+  expect(o.cardAutoDead === null || o.cardAutoDead.autoError).toBeTruthy();
   // the vault counts as locked in that tab; the agent's next request shows the unlock row; after the unlock nothing is stuck on busy; the tap fills
   expect(o.cardWorkerRetry.unlockRow).toBe(true);
   expect(o.busyAfterWorkerDeath).toEqual([false, false, false]); // Cancel, I'll type it myself, Fill from Dana

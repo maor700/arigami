@@ -152,6 +152,16 @@ interface Pending {
 
 /** How a request ended — what a host-side waiter (sign_in) hears. Never a value. */
 export type Settled = 'filled' | 'manual' | 'cancel' | 'expired' | 'saved' | 'failed';
+/** VAULT4: the cockpit's filtered codes for a fill attempt that broke on its side, and the one line each becomes. No free text crosses. */
+export const FAIL_REASONS: Record<string, string> = {
+  worker_dead: "the owner's vault worker stopped while filling",
+  worker_timeout: "the owner's vault did not answer in time",
+  worker_unreachable: "the owner's vault worker could not be reached",
+  host_timeout: "the owner's cockpit got no answer from the host in time",
+  host_unreachable: "the owner's cockpit could not reach the host",
+  host_error: 'the host failed while filling',
+};
+export const failReason = (code: unknown): string | null => (typeof code === 'string' && FAIL_REASONS[code]) || null;
 const settleWaiters = new Map<string, (s: Settled) => void>();
 // VAULT2: what the owner saved on a form — the entry's id, title and field NAMES, for the agent's next vault_fill.
 const settleDetails = new Map<string, unknown>();

@@ -16,7 +16,7 @@
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import { api } from '../lib/api.js';
 import { useT } from '../lib/i18n.js';
-import { useVault, matchVault, unlockVault, createVault, fillFromVault, vaultSupported, matchVaultField, fillVaultField, saveVaultFields } from '../lib/vault.js';
+import { useVault, matchVault, unlockVault, createVault, fillFromVault, vaultSupported, matchVaultField, fillVaultField, saveVaultFields, failureCode } from '../lib/vault.js';
 import { inputPropsFor } from '../lib/vault-schema.js';
 import { grantAutoFill, grantFor, isRoleField, revokeGrant, autoNote, snapshotBindings, subscribeGrants, grantsVersion, GRANT_MINUTES_DEFAULT } from '../lib/vault-grants.js';
 import { useStore } from '../lib/store.js';
@@ -40,9 +40,10 @@ const errText = (e) => String(e?.body?.error || e?.message || e).replace(/^HTTP 
 // VAULT4: the host says this request is gone (answered elsewhere, expired, the host restarted) — the card is over, whatever the socket shows
 const isGone = (e) => e?.status === 404 || e?.status === 410 || /no longer open/i.test(errText(e));
 // a fill ATTEMPT that broke on this side (the vault worker died or did not answer, the host could not be reached or answered 5xx):
-// the host hears "failed" so the agent gets one reason now instead of waiting the card out; the owner may unlock and the agent asks again
-const isBroken = (e) => !isGone(e) && (/vault worker|did not answer|could not be reached|host did not answer/i.test(errText(e)) || (e?.status >= 500));
-const reportFailed = (sessionId, requestId, e) => api.post(`/sessions/${encodeURIComponent(sessionId)}/credentials/answer`, { requestId, choice: 'failed', reason: errText(e).slice(0, 200) }).catch(() => {});
+// the host hears "failed" with a filtered CODE (never the message) so the agent's tool ends now with one reason instead of waiting
+// the card out; a state the owner can still answer (hint, wrong password, no entry, two entries, a stale request) stays pending
+const isBroken = (e) => !!failureCode(e);
+export const reportFailed = (sessionId, requestId, e) => api.post(`/sessions/${encodeURIComponent(sessionId)}/credentials/answer`, { requestId, choice: 'failed', code: failureCode(e) }).catch(() => {});
 
 /** The card after its one outcome: what happened, and nothing to press — the HTTP answer settles it, not the socket. */
 function DoneLine({ t, done }) {

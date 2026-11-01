@@ -397,7 +397,45 @@ test('the card is settled by the HTTP answer, not the socket: after "filled" or 
   expect(src).toMatch(/if \(isGone\(e\)\) setDone\('gone'\);\s*else if \(outcome === 'filled' && isBroken\(e\)\)[^\n]*\n\s*\}\s*setBusy\(false\);/); // busy is reset on success AND on failure
   expect((src.match(/data-cred-done=\{done\}/g) || []).length).toBe(1);
   for (const k of ['filled', 'cancel', 'manual', 'gone', 'failed']) expect(prefs && (await import(web('locales/en.js'))).en[`vault.card.done.${k}`]).toBeTruthy();
-  // a broken attempt (the vault worker died / did not answer, the host unreachable or 5xx) is reported to the host as 'failed' — the agent hears one reason now
-  expect(src).toContain("choice: 'failed', reason: errText(e).slice(0, 200)");
+  // a broken attempt (the vault worker died / did not answer, the host unreachable or 5xx) is reported to the host as 'failed' with a
+  // filtered CODE — never the message — for the exact requestId; the agent hears one fixed reason now
+  expect(src).toContain("choice: 'failed', code: failureCode(e)");
+  expect(src).not.toContain("reason: errText(e)");
   expect(src).toMatch(/else if \(outcome === 'filled' && isBroken\(e\)\) \{ setDone\('failed'\); await reportFailed\(sessionId, request\.requestId, e\); \}/);
+  const auto = await Bun.file(web('components/VaultAutoFill.jsx')).text();
+  expect(auto).toContain("if (code) api.post(`/sessions/${encodeURIComponent(s.id)}/credentials/answer`, { requestId: r.requestId, choice: 'failed', code })");
+  // the codes: fatal on this side → a code; what the owner can still answer → null (stays pending)
+  const fc = vaultLib.failureCode;
+  expect(fc(new Error('the vault worker stopped — unlock the vault again; nothing is known to have been filled'))).toBe('worker_dead');
+  expect(fc(new Error('the vault did not answer in 45 s (fillField) — unlock the vault again'))).toBe('worker_timeout');
+  expect(fc(new Error('the vault worker could not be reached — unlock the vault again'))).toBe('worker_unreachable');
+  expect(fc(new Error('the host did not answer in 30 s — nothing is known to have been filled; try again'))).toBe('host_timeout');
+  expect(fc(new Error('the host could not be reached (Failed to fetch)'))).toBe('host_unreachable');
+  expect(fc(Object.assign(new Error('HTTP 502'), { status: 502 }))).toBe('host_error');
+  expect(fc(Object.assign(new Error('this sign-in request is no longer open'), { status: 404 }))).toBeNull();
+  expect(fc(new Error('wrong vault password'))).toBeNull();
+  expect(fc(new Error('no saved id_number for this exact address'))).toBeNull();
+  expect(fc(new Error('the entry approved for cvv no longer holds it — tap to choose'))).toBeNull();
+  expect(fc(Object.assign(new Error('nothing to fill'), { status: 400 }))).toBeNull();
+  // the worker's fatal failure reaches the open covered cards BEFORE the lock revokes the grants (the fatal hook), by code
+  const RealWorker2 = globalThis.Worker;
+  const seen = [];
+  try {
+    grants.setFatalHook((code) => seen.push({ code, grants: grants.grantCount() }));
+    vaultLib._setVaultStatus({ exists: true, unlocked: true, count: 1 });
+    grants.grantAutoFill({ sessionId: 's1', origin: 'https://bank.example', entries: [{ id: 'e1', title: 'Dana', fields: ['id_number'] }] });
+    vaultLib._dropWorker(); // the answering fake of the test above is not reused
+    globalThis.Worker = class { postMessage() { throw new Error('gone'); } terminate() {} };
+    await vaultLib.listVault().catch(() => {});
+    expect(seen).toEqual([{ code: 'worker_unreachable', grants: 1 }]); // the grant was still there for the hook
+    expect(grants.grantCount()).toBe(0); // and gone right after
+    expect(vaultLib._status().unlocked).toBe(false);
+    expect(auto).toContain("setFatalHook((code) => {");
+    expect(auto).toContain("if (!r || !coversRequest(s.id, r)) continue;");
+    expect(auto).toMatch(/choice: 'failed', code \}\)\.catch/);
+  } finally {
+    grants.setFatalHook(null);
+    globalThis.Worker = RealWorker2;
+    vaultLib._setVaultStatus({ exists: false, unlocked: false, error: null });
+  }
 });
