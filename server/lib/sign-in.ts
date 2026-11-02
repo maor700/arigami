@@ -353,16 +353,26 @@ export async function gcloudStatus(): Promise<{ bin: string | null; ok: boolean;
   return { bin, ok: tok.code === 0 && tok.out.trim().length > 20, account: account && account !== '(unset)' ? account : null };
 }
 
+/** The BROWSER gcloud runs: one URL into the owner's Chrome profile, with the host's launch flags (word-split on purpose). */
+export const gcloudOpenerScript = (): string =>
+  '#!/bin/sh\n# sign_in (lib/sign-in.ts): open one URL in the owner\'s Chrome profile named by ARIGAMI_SIGNIN_PROFILE\n' +
+  '# shellcheck disable=SC2086\nexec "$ARIGAMI_SIGNIN_CHROME" $ARIGAMI_SIGNIN_FLAGS --profile-directory="$ARIGAMI_SIGNIN_PROFILE" "$1" >/dev/null 2>&1\n';
+
+/** Pure: the launch flags (owner-chrome.ts ownerChromeLaunchFlags — `--no-sandbox` in a container) as the opener's
+ * one word-split variable: plain `--name[=value]` words only, nothing a shell would expand. */
+export const gcloudOpenerFlags = (flags: string[]): string => flags.filter((f) => /^--[a-z0-9-]+(=[\w.,/:-]*)?$/i.test(f)).join(' ');
+
 /**
  * `gcloud auth login` with its browser opened in ONE profile of the owner's Chrome on the shared desktop: BROWSER is a
  * tiny opener that hands the URL to that Chrome, and the OAuth redirect lands on gcloud's own localhost listener, so
  * there is no code to copy. Resolves when gcloud exits.
  */
-export function startGcloudLogin(bin: string, o: { display: string; chrome: string; profileDir: string; dir: string }): { proc: ChildProcess; done: Promise<{ ok: boolean }> } {
+export function startGcloudLogin(bin: string, o: { display: string; chrome: string; flags?: string[]; profileDir: string; dir: string }): { proc: ChildProcess; done: Promise<{ ok: boolean }> } {
   fs.mkdirSync(o.dir, { recursive: true });
   const opener = path.join(o.dir, 'sign-in-open.sh');
-  fs.writeFileSync(opener, '#!/bin/sh\n# sign_in (lib/sign-in.ts): open one URL in the owner\'s Chrome profile named by ARIGAMI_SIGNIN_PROFILE\nexec "$ARIGAMI_SIGNIN_CHROME" --profile-directory="$ARIGAMI_SIGNIN_PROFILE" "$1" >/dev/null 2>&1\n', { mode: 0o700 });
-  const env: NodeJS.ProcessEnv = { ...process.env, DISPLAY: o.display, BROWSER: opener, ARIGAMI_SIGNIN_CHROME: o.chrome, ARIGAMI_SIGNIN_PROFILE: o.profileDir };
+  fs.writeFileSync(opener, gcloudOpenerScript(), { mode: 0o700 });
+  const flags = gcloudOpenerFlags(o.flags || []);
+  const env: NodeJS.ProcessEnv = { ...process.env, DISPLAY: o.display, BROWSER: opener, ARIGAMI_SIGNIN_CHROME: o.chrome, ARIGAMI_SIGNIN_FLAGS: flags, ARIGAMI_SIGNIN_PROFILE: o.profileDir };
   for (const k of ['SSH_CONNECTION', 'SSH_CLIENT', 'SSH_TTY', 'WAYLAND_DISPLAY']) delete env[k];
   const proc = spawn(bin, ['auth', 'login', '--brief', '--launch-browser', '--quiet'], { env, stdio: ['ignore', 'ignore', 'ignore'], detached: false });
   const done = new Promise<{ ok: boolean }>((resolve) => {

@@ -8,14 +8,16 @@
 // copy is deleted after. That works because Chrome on Linux with the basic password store encrypts cookies with a
 // fixed key ("v10"); a profile whose cookies are tied to a keyring ("v11") is not offered.
 //
-// Optional: on by default only where it can exist — Linux, not in a container, an existing user-data dir. Config
-// `ownerChrome: false | { userDataDir?, profile? }`, env ARIGAMI_OWNER_CHROME=0 | <user-data-dir>,
-// ARIGAMI_OWNER_CHROME_PROFILE=<profile dir name>.
+// Optional: on by default only where it can exist — an existing user-data dir on a Linux machine, or in a container
+// that has its own shared desktop (the instance's screen on, its X display up). In such a container the desktop's
+// Chrome — the one its dock icon opens, on the default user-data dir — IS the owner's everyday Chrome: one owner per
+// container, nobody else's browser on that screen. Config `ownerChrome: false | { userDataDir?, profile? }`, env
+// ARIGAMI_OWNER_CHROME=0 | <user-data-dir>, ARIGAMI_OWNER_CHROME_PROFILE=<profile dir name>.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { cfg } from './config.js';
-import { CHROME_BASE_DIR } from './chrome.js';
+import { CHROME_BASE_DIR, CHROME_SESSIONS_DIR, chromeExtraFlags } from './chrome.js';
 
 export interface OwnerProfile {
   /** The user-data dir (~/.config/google-chrome). */
@@ -40,17 +42,21 @@ export function resolveOwnerProfile(o: {
   env?: NodeJS.ProcessEnv;
   platform?: NodeJS.Platform;
   inContainer?: boolean;
+  /** In a container: it has its own shared desktop (containerHasDesktop). Ignored outside a container. */
+  desktop?: boolean;
   home?: string;
+  /** Never these user-data dirs, nor anything inside them (My browser, the sessions' own Chromes). */
   exclude?: string[];
 }): OwnerProfile | null {
   const env = o.env || {};
   if (o.config === false || env.ARIGAMI_OWNER_CHROME === '0' || env.ARIGAMI_OWNER_CHROME === 'false') return null;
   const explicitDir = (env.ARIGAMI_OWNER_CHROME && env.ARIGAMI_OWNER_CHROME !== '1' ? env.ARIGAMI_OWNER_CHROME : '') || (o.config && o.config.userDataDir) || '';
-  // Without an explicit dir: only where an everyday Chrome can live next to the host.
-  if (!explicitDir && ((o.platform || process.platform) !== 'linux' || o.inContainer)) return null;
+  // Without an explicit dir: only where an everyday Chrome can live next to the host — a Linux machine, or a container
+  // with its own shared desktop (its Chrome is the owner's; a container without one has no everyday Chrome at all).
+  if (!explicitDir && ((o.platform || process.platform) !== 'linux' || (o.inContainer && !o.desktop))) return null;
   const home = o.home || os.homedir();
   const userDataDir = path.resolve((explicitDir || path.join(home, '.config', 'google-chrome')).replace(/^~(?=$|\/)/, home));
-  if ((o.exclude || []).some((x) => path.resolve(x) === userDataDir)) return null;
+  if ((o.exclude || []).some((x) => { const r = path.resolve(x); return userDataDir === r || userDataDir.startsWith(r + path.sep); })) return null;
   let profileDir = env.ARIGAMI_OWNER_CHROME_PROFILE || (o.config && o.config.profile) || '';
   if (!profileDir) {
     try {
@@ -112,14 +118,14 @@ export const profileLabel = (p: OwnerProfile): string => (p.name || p.profileDir
 /**
  * Pure: should the host open the owner's everyday Chrome once on the shared desktop, so it HAS a profile? sign_in signs
  * new sites in there and copies logins out of it; a fresh install has the browser and the display but no profile until
- * someone opens Chrome on it. Only where an everyday Chrome is auto-detected (Linux, not a container, not turned off)
- * and nothing is there yet.
+ * someone opens Chrome on it. Only where an everyday Chrome is auto-detected (Linux, or a container with its own shared
+ * desktop; not turned off) and nothing is there yet — so a brand-new container works on its first sign-in.
  */
-export function shouldSeedOwnerChrome(o: { platform: NodeJS.Platform; inContainer: boolean; config: OwnerChromeConfig | false | null | undefined; env: NodeJS.ProcessEnv; hasProfile: boolean; displayUp: boolean; chromeRunning: boolean }): { seed: true } | { seed: false; why: string } {
+export function shouldSeedOwnerChrome(o: { platform: NodeJS.Platform; inContainer: boolean; desktop?: boolean; config: OwnerChromeConfig | false | null | undefined; env: NodeJS.ProcessEnv; hasProfile: boolean; displayUp: boolean; chromeRunning: boolean }): { seed: true } | { seed: false; why: string } {
   if (o.config === false || o.env.ARIGAMI_OWNER_CHROME === '0' || o.env.ARIGAMI_OWNER_CHROME === 'false') return { seed: false, why: 'owner Chrome turned off' };
   if (o.env.ARIGAMI_OWNER_CHROME && o.env.ARIGAMI_OWNER_CHROME !== '1') return { seed: false, why: 'an explicit owner Chrome is configured' };
   if (o.config && o.config.userDataDir) return { seed: false, why: 'an explicit owner Chrome is configured' };
-  if (o.platform !== 'linux' || o.inContainer) return { seed: false, why: 'no everyday Chrome on this kind of host' };
+  if (o.platform !== 'linux' || (o.inContainer && !o.desktop)) return { seed: false, why: 'no everyday Chrome on this kind of host' };
   if (!o.displayUp) return { seed: false, why: 'no shared desktop' };
   if (o.hasProfile) return { seed: false, why: 'the profile is there' };
   if (o.chromeRunning) return { seed: false, why: 'Chrome is starting' };
@@ -129,13 +135,36 @@ export function shouldSeedOwnerChrome(o: { platform: NodeJS.Platform; inContaine
 /** The flags the owner's everyday Chrome is started with when the HOST starts it — no DevTools port, ever. */
 export const OWNER_CHROME_FLAGS = ['--password-store=basic', '--no-first-run', '--no-default-browser-check'];
 
+/**
+ * OWNER_CHROME_FLAGS plus what this host's Chrome needs to start at all: in a container that is `--no-sandbox` (its
+ * zygote dies without it as a non-root user — measured in a pod: the launch left only defunct processes), the same one
+ * flag the dock's Chrome icon gets (chrome-launcher.ts). Nothing else: the dock's Chrome and this one are one browser.
+ */
+export function ownerChromeLaunchFlags(env: NodeJS.ProcessEnv = process.env, dockerenv?: boolean): string[] {
+  return [...OWNER_CHROME_FLAGS, ...chromeExtraFlags(env, dockerenv).filter((f) => f === '--no-sandbox')];
+}
+
+/**
+ * Pure: has a container its own shared desktop — the instance's screen turned on and its X display (":<n>") up? Then
+ * the desktop's Chrome is the owner's everyday Chrome (resolveOwnerProfile, shouldSeedOwnerChrome).
+ */
+export function containerHasDesktop(o: { screenEnabled: boolean; display: string; socketExists: (p: string) => boolean }): boolean {
+  const m = /^:(\d+)$/.exec(String(o.display || ''));
+  return !!o.screenEnabled && !!m && o.socketExists(`/tmp/.X11-unix/X${m[1]}`);
+}
+
 const inContainer = (): boolean => fs.existsSync('/.dockerenv') || !!process.env.KUBERNETES_SERVICE_HOST;
 
 export const ownerChromeInContainer = (): boolean => inContainer();
 
+/** This container's own shared desktop is up (false outside a container — a machine needs no such check). */
+export const ownerChromeDesktopHere = (): boolean =>
+  inContainer() && containerHasDesktop({ screenEnabled: !!cfg.screen?.enabled, display: String(cfg.screen?.display || ':99'), socketExists: fs.existsSync });
+
 /** The owner's everyday Chrome profile on this host, or null. Read fresh: the owner may switch profiles. */
 export function ownerProfile(): OwnerProfile | null {
-  return resolveOwnerProfile({ config: cfg.ownerChrome ?? null, env: process.env, inContainer: inContainer(), exclude: [CHROME_BASE_DIR] });
+  const c = inContainer();
+  return resolveOwnerProfile({ config: cfg.ownerChrome ?? null, env: process.env, inContainer: c, desktop: c && ownerChromeDesktopHere(), exclude: [CHROME_BASE_DIR, CHROME_SESSIONS_DIR] });
 }
 
 /** Every profile of the owner's everyday Chrome (the configured / last-used one first), or [] when there is none. */

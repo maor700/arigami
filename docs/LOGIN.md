@@ -35,7 +35,10 @@ pinned by `test/sign-in.test.ts`), not in a prompt the model has to run in its h
    "I'm not a robot", Google's "this browser may not be secure"). The host takes the shared-desktop lease itself
    (waiting in the queue if needed), opens the site in the chosen profile, and answers `driving`.
 
-No shared desktop on the host (containers, macOS/Windows by default) → rung 3 is `blocked` with that reason.
+No shared desktop with the owner's Chrome on the host (macOS/Windows by default, a container whose screen is off) →
+rung 3 is `blocked` with that reason. A container WITH its own desktop — the image's default (`ARIGAMI_SCREEN_ENABLED=1`,
+Xvfb `:99`), so every Docker / Kubernetes tenant — has one: there the desktop's Chrome, the one its dock icon opens on
+`$HOME/.config/google-chrome`, is the owner's everyday Chrome (one owner per container), with nothing to configure.
 
 ## Driving a new sign-in
 
@@ -80,8 +83,10 @@ a new sign-in uses the profile signed in to the owner's identity (Google SSO wor
 
 * **The profile exists from the first boot.** The installer puts Chrome and the shared desktop on the host; on boot the
   host opens the owner's everyday Chrome there once if it has no profile yet (`seedOwnerChrome`, server/index.ts —
-  default instance, Linux, not in a container, not turned off), the way a person would: no DevTools port,
-  `--password-store=basic` so its cookies stay readable to the host.
+  default instance, a Linux machine or a container with its own shared desktop, not turned off), the way a person
+  would: no DevTools port, `--password-store=basic` so its cookies stay readable to the host (and `--no-sandbox` in a
+  container, the one flag the dock's Chrome icon gets there too — without it Chrome does not start as a non-root
+  user). So a brand-new tenant has a profile before its first sign-in.
 * **The identity is signed in there — Google, Microsoft or Apple.** Settings › Connections › Sign-in identity runs
   `connect-identity`: `sign_in` to that provider (`accounts.google.com`, `microsoft` → login.microsoftonline.com /
   login.live.com, `apple` → account.apple.com) in that Chrome — the password from the vault, the owner approves the
@@ -117,7 +122,9 @@ cards already up and for `sign_in` itself. `save_browser_logins` stays for agent
 * The owner's Chrome has no DevTools port, so the host knows its page only from the outside: the focused window's pid
   (`xprop _NET_WM_PID`) and the profile's History (committed within ~10 s). A sign-in page loaded more than 20 minutes
   ago is reloaded before a fill.
-* `ownerChrome` in config.json / `ARIGAMI_OWNER_CHROME` choose the everyday Chrome (`false` / `0` = off);
-  `ARIGAMI_OWNER_CHROME_PROFILE` pins one profile.
+* `ownerChrome` in config.json / `ARIGAMI_OWNER_CHROME` choose the everyday Chrome (`false` / `0` = off) and win over
+  the default (`$HOME/.config/google-chrome` on a Linux machine, or in a container whose screen is on and display up);
+  `ARIGAMI_OWNER_CHROME_PROFILE` pins one profile. My browser (`chrome-base`) and the sessions' own Chromes
+  (`chrome-sessions/`) are never the owner's Chrome, whatever is configured.
 * Cloudflare Turnstile on some sites rejects synthetic clicks even in a real-profile Chrome — a site-specific limit;
   that is the `human` hand-over.

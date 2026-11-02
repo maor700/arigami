@@ -155,6 +155,11 @@ runs `claude`. Because Chrome runs as `node`, the host adds
 compose gives it `shm_size: 1gb` and no extra capabilities. Turn the shared
 desktop off with `ARIGAMI_GLOBAL_DESKTOP=0`.
 
+The Chrome on that desktop — its panel's browser icon, on `$HOME/.config/google-chrome` — is the owner's everyday
+Chrome: `sign_in` does new sign-ins there with real input and the vault fill, as on a Linux machine
+([LOGIN.md](LOGIN.md)). The host opens it once on first boot so it has a profile. Nothing to configure;
+`ARIGAMI_OWNER_CHROME=0` turns that off (then a new sign-in is `blocked`).
+
 ### WhatsApp
 
 The bridge is cloned at build time (pinned commit, `ARIGAMI_WA_MCP_DIR=/opt/whatsapp-mcp`).

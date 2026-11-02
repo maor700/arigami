@@ -1,5 +1,5 @@
 // The owner's everyday Chrome as a second, read-only source of logins (owner-chrome.ts + login-vault.ts):
-//   - which profile, if any: config/env, Linux-only auto, never in a container, never chrome-base
+//   - which profile, if any: config/env, Linux-only auto, never in a container without its own desktop (owner-chrome-container.test.ts), never chrome-base
 //   - detection from its disk next to the vault's, keyring-encrypted cookies (v11) not offered
 //   - against REAL headless Chrome: one site's login read from a snapshot copy, the original untouched, the copy gone
 import { test, expect, beforeAll } from 'bun:test';
@@ -30,7 +30,7 @@ test('resolveOwnerProfile: Linux auto from Local State; off in a container, else
   fakeChrome(ud, 'Profile 1', []);
   const p = resolveOwnerProfile({ home, platform: 'linux', env: {} });
   expect(p).toEqual({ userDataDir: ud, profileDir: 'Profile 1', profilePath: path.join(ud, 'Profile 1') });
-  expect(resolveOwnerProfile({ home, platform: 'linux', inContainer: true, env: {} })).toBe(null); // Docker / a pod
+  expect(resolveOwnerProfile({ home, platform: 'linux', inContainer: true, env: {} })).toBe(null); // Docker / a pod without its own desktop
   expect(resolveOwnerProfile({ home, platform: 'darwin', env: {} })).toBe(null); // no auto outside Linux
   expect(resolveOwnerProfile({ home, platform: 'linux', env: { ARIGAMI_OWNER_CHROME: '0' } })).toBe(null);
   expect(resolveOwnerProfile({ home, platform: 'linux', config: false, env: {} })).toBe(null);

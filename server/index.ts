@@ -635,13 +635,13 @@ async function seedOwnerChrome(): Promise<void> {
   const n = Number(display.replace(/^:/, ''));
   const userDataDir = (await import('node:path')).join(os.homedir(), '.config', 'google-chrome');
   const d = oc.shouldSeedOwnerChrome({
-    platform: process.platform, inContainer: oc.ownerChromeInContainer(), config: (cfg as any).ownerChrome ?? null, env: process.env,
+    platform: process.platform, inContainer: oc.ownerChromeInContainer(), desktop: oc.ownerChromeDesktopHere(), config: (cfg as any).ownerChrome ?? null, env: process.env,
     hasProfile: !!oc.ownerProfile(), displayUp: Number.isFinite(n) && fs.existsSync(`/tmp/.X11-unix/X${n}`), chromeRunning: si.ownerChromePids(userDataDir).length > 0,
   });
   if (!d.seed) return;
   const chrome = await import('./lib/chrome.js');
   const { spawn } = await import('node:child_process');
-  const p = spawn(chrome.chromeBin(), oc.OWNER_CHROME_FLAGS, { env: chrome.chromeEnv({ ...process.env, DISPLAY: display }), detached: true, stdio: 'ignore' });
+  const p = spawn(chrome.chromeBin(), oc.ownerChromeLaunchFlags(), { env: chrome.chromeEnv({ ...process.env, DISPLAY: display }), detached: true, stdio: 'ignore' });
   p.unref();
   console.log(`[host] opened the owner's everyday Chrome on ${display} once, so sign_in has a profile to sign sites in to (pid ${p.pid})`);
 }

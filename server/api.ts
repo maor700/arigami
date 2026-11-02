@@ -1392,7 +1392,7 @@ async function signInStart(id: string, body: any): Promise<SignInOutcome> {
   if (cli) {
     const prev = signInJobs.get(id)?.gcloud;
     if (prev) try { prev.proc.kill('SIGTERM'); } catch {}
-    const g = si.startGcloudLogin(gc!.bin!, { display: dc().sharedDisplay(), chrome: bin, profileDir: profile.profileDir, dir: (await import('./lib/instance.js')).RUN_DIR });
+    const g = si.startGcloudLogin(gc!.bin!, { display: dc().sharedDisplay(), chrome: bin, flags: oc.ownerChromeLaunchFlags(), profileDir: profile.profileDir, dir: (await import('./lib/instance.js')).RUN_DIR });
     signInJobs.set(id, { site: 'google.com', input: 'gcloud', profile, label, gcloud: g, doneTries: 0 });
     g.done.then(() => { if (signInJobs.get(id)?.gcloud === g) sharedDesktop.get().touch(id); });
     return { status: 'driving', site: 'gcloud', account: label, next: `gcloud auth login opened Google's consent page in the owner's Chrome (${label}) on the shared desktop. Pick the account and press Continue / Allow there — gcloud gets the answer on its own, there is no code to copy. ${si.DRIVE_HOW.replace('sign_in({site, done:true})', 'sign_in({site:"gcloud", done:true})')}` };
@@ -1400,7 +1400,7 @@ async function signInStart(id: string, body: any): Promise<SignInOutcome> {
   signInJobs.set(id, { site, input: raw, profile, label, doneTries: 0, before: lv.sessionCookieNames(raw, profile), ...(consent ? { consent: true } : {}) });
   if (!consent && !fresh && lv.detectProfile(raw, profile).present) return signInDone(id, { already: true });
   const url = consent || si.startUrl(raw, ls.resolve(raw).signInUrl);
-  const launched = dc().sharedLaunch(bin, [...oc.OWNER_CHROME_FLAGS, `--profile-directory=${profile.profileDir}`, url]);
+  const launched = dc().sharedLaunch(bin, [...oc.ownerChromeLaunchFlags(), `--profile-directory=${profile.profileDir}`, url]);
   sharedDesktop.get().touch(id);
   console.log(`[sign-in] ${new Date().toISOString()} ${id} opened ${hostOfUrl(url)} in owner Chrome ${profile.profileDir} (pid ${launched.pid})`);
   await new Promise((r2) => setTimeout(r2, 2500));
