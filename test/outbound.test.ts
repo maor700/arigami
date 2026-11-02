@@ -7,7 +7,6 @@
 //     it; a non-sender runs as always
 import { test, expect } from 'bun:test';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isOutbound, cardPrompt, describe as describeOut } from '../server/lib/outbound.ts';
@@ -93,7 +92,7 @@ test('ext-mcp: an agent calling a sender files a request instead of sending', as
 }, 30_000);
 
 test('ext-mcp: a tool that returns { error } fails, and missing required arguments are refused before a card', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'outbound-err-'));
+  const dir = tmpDir('outbound-err-');
   const mod = path.join(dir, 'tools', 'module.js');
   fs.mkdirSync(path.dirname(mod), { recursive: true });
   fs.writeFileSync(
