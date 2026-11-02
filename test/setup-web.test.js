@@ -4,7 +4,7 @@
 // prove each step mounts in both locales and the card shows the right
 // controls per phase. Interaction is covered by the pure helpers
 // (derivePhase / defaultMode) + the store's setup-update patching.
-import { test, expect, beforeAll } from 'bun:test';
+import { test, expect, beforeAll, afterAll } from 'bun:test';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isolate } from './_isolate.js';
@@ -42,6 +42,9 @@ beforeAll(async () => {
   ({ default: SetupCard, derivePhase, defaultMode } = await import(web('components/setup/SetupCard.jsx')));
   store = await import(web('lib/store.js'));
 });
+
+// prefs is one module instance for the whole `bun test` process: hand the next file the English it assumes.
+afterAll(() => prefs.setPrefs({ language: 'en' }));
 
 const h = (C, props) => React.createElement(C, props);
 

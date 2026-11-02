@@ -31,6 +31,7 @@ beforeAll(async () => {
   React = (await import(path.join(ROOT, 'web/node_modules/react/index.js'))).default;
   ({ renderToStaticMarkup: render } = await import(path.join(ROOT, 'web/node_modules/react-dom/server.js')));
   prefs = await import(web('lib/prefs.js'));
+  prefs.setPrefs({ language: 'en' }); // these assertions are English; an earlier file may have left Hebrew in the shared prefs
   ({ default: NativeMcp } = await import(web('components/settings/NativeMcp.jsx')));
   ({ default: OAuthCodeStep } = await import(web('components/setup/OAuthCodeStep.jsx')));
   registry = await import(web('components/setup/registry.js'));

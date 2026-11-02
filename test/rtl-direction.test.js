@@ -2,7 +2,7 @@
 // character while the chrome follows the app language. Pure helpers, SSR
 // renders asserting `dir` attributes, and a source guard against physical
 // left/right utilities creeping back in.
-import { test, expect, beforeAll } from 'bun:test';
+import { test, expect, beforeAll, afterAll } from 'bun:test';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -41,6 +41,9 @@ beforeAll(async () => {
   ({ TodoList, default: ChatPane } = await import(web('components/ChatPane.jsx')));
   prefs.setPrefs({ language: 'he' });
 });
+
+// prefs is one module instance for the whole `bun test` process: hand the next file the English it assumes.
+afterAll(() => prefs.setPrefs({ language: 'en' }));
 
 test('strongDirOf / dirOf / fieldDir: RTL once RTL letters pass a small share, neutral falls back', () => {
   const { strongDirOf, dirOf, fieldDir } = i18n;

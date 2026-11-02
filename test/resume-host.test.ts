@@ -67,6 +67,66 @@ async function openWs(query = ''): Promise<{ ws: WebSocket; rx: Rx[]; close: () 
 }
 const stateOf = (rx: Rx[]) => rx.find((r) => r.msg.type === 'state')!;
 
+// The state message as seen by a bare client that offers NO permessage-deflate — the opening a browser on a link
+// that cannot deflate takes. Whether the runtime's own WebSocket negotiates the extension differs by version (bun
+// 1.4.4 does, 1.4.2 does not), so the app-level gzip path is exercised here over a raw handshake instead.
+function rawState(query: string): Promise<Rx> {
+  return new Promise((resolve, reject) => {
+    const u = new URL(wsBase);
+    const sock = net.connect(Number(u.port), u.hostname);
+    const timer = setTimeout(() => { sock.destroy(); reject(new Error('no state frame in time')); }, 8000);
+    let buf = Buffer.alloc(0);
+    let upgraded = false;
+    let parts: Buffer[] = [];
+    let opcode = 0;
+    sock.on('error', reject);
+    sock.on('connect', () => {
+      sock.write(
+        `GET /__ws${query} HTTP/1.1\r\nHost: ${u.host}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n` +
+          `Sec-WebSocket-Key: ${Buffer.from('arigami-raw-key!').toString('base64')}\r\nSec-WebSocket-Version: 13\r\n\r\n`,
+      );
+    });
+    sock.on('data', (d) => {
+      buf = Buffer.concat([buf, d]);
+      if (!upgraded) {
+        const end = buf.indexOf('\r\n\r\n');
+        if (end < 0) return;
+        const head = buf.subarray(0, end).toString();
+        if (!/^HTTP\/1\.1 101/.test(head) || /sec-websocket-extensions/i.test(head)) {
+          clearTimeout(timer);
+          sock.destroy();
+          return reject(new Error('unexpected handshake: ' + head));
+        }
+        upgraded = true;
+        buf = buf.subarray(end + 4);
+      }
+      for (;;) {
+        if (buf.length < 2) return;
+        const fin = (buf[0] & 0x80) !== 0;
+        const op = buf[0] & 0x0f;
+        let len = buf[1] & 0x7f;
+        let off = 2;
+        if (len === 126) { if (buf.length < 4) return; len = buf.readUInt16BE(2); off = 4; }
+        else if (len === 127) { if (buf.length < 10) return; len = Number(buf.readBigUInt64BE(2)); off = 10; }
+        if (buf.length < off + len) return;
+        const payload = buf.subarray(off, off + len);
+        buf = buf.subarray(off + len);
+        if (op >= 0x8) continue; // control frames (ping/close) carry no message
+        if (op !== 0) { opcode = op; parts = []; }
+        parts.push(payload);
+        if (!fin) continue;
+        const data = Buffer.concat(parts);
+        const binary = opcode === 0x2;
+        const msg = JSON.parse(binary ? zlib.gunzipSync(data).toString() : data.toString());
+        if (msg.type !== 'state') continue;
+        clearTimeout(timer);
+        sock.destroy();
+        return resolve({ msg, binary });
+      }
+    });
+  });
+}
+
 beforeAll(async () => {
   dir = tmpDir('arigami-resume-host-');
   const port = await freePort();
@@ -197,10 +257,17 @@ test('an unknown boot (host restarted) → the full replay', async () => {
   await c.close();
 });
 
-test('z=1: a replay above the threshold arrives as one binary gzip frame', async () => {
+test('z=1: a replay above the threshold arrives as one binary gzip frame — unless the link already deflates', async () => {
+  // A link without permessage-deflate: the app-level gzip frame is the only compression there is.
+  const raw = await rawState('?wire=2&z=1');
+  expect(raw.binary).toBe(true);
+  expect(raw.msg.v).toBe(2);
+  // Without z=1 the same replay stays text.
+  expect((await rawState('?wire=2')).binary).toBe(false);
+  // The runtime's own client: where it negotiated permessage-deflate the link compresses, so no second gzip.
   const c = await openWs('?wire=2&z=1');
   const st = stateOf(c.rx);
-  expect(st.binary).toBe(true);
+  expect(st.binary).toBe(!/permessage-deflate/.test(String(c.ws.extensions || '')));
   expect(st.msg.v).toBe(2);
   await c.close();
 });

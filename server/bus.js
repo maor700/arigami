@@ -5,9 +5,9 @@ import zlib from 'node:zlib';
 import { WebSocketServer } from 'ws';
 import { RevTracker, WIRE_V2, slimHeavy, slimMessage } from './lib/wire-resume.js';
 
-// permessage-deflate where the runtime negotiates it (node's `ws`). Bun's
-// built-in `ws` shim accepts the option and never negotiates the extension
-// (checked on bun 1.4) — those links get app-level gzip frames, see send().
+// permessage-deflate where the runtime negotiates it (node's `ws`, bun ≥ 1.4.4).
+// Older bun's built-in `ws` shim accepts the option and never negotiates the
+// extension (bun 1.4.2) — those links get app-level gzip frames, see send().
 const wss = new WebSocketServer({ noServer: true, perMessageDeflate: { threshold: 1024 } });
 
 // RESUME: every session broadcast bumps a revision; a v2 client reconnecting

@@ -61,6 +61,7 @@ beforeAll(async () => {
   React = (await import(path.join(ROOT, 'web/node_modules/react/index.js'))).default;
   ({ renderToStaticMarkup: render } = await import(path.join(ROOT, 'web/node_modules/react-dom/server.js')));
   prefs = await import(web('lib/prefs.js'));
+  prefs.setPrefs({ language: 'en' }); // these assertions are English; an earlier file may have left Hebrew in the shared prefs
   engines = await import(web('lib/engines.js'));
   store = await import(web('lib/store.js'));
   ({ default: SessionView } = await import(web('components/SessionView.jsx')));

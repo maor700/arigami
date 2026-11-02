@@ -40,6 +40,9 @@ beforeAll(async () => {
   ({ ChatModeItems: ChatModeToggle } = await import(web('components/SessionView.jsx')));
 });
 
+// prefs is one module instance for the whole `bun test` process: hand the next file the English it assumes.
+afterAll(() => prefs.setPrefs({ language: 'en' }));
+
 test('chatModeOf: the stored mode wins; unset is terminal on desktop and simple on a phone', () => {
   const { chatModeOf } = chatMode;
   expect(chatModeOf({ metadata: { chatMode: 'simple' } }, true)).toBe('simple');
