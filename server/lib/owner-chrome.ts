@@ -132,6 +132,16 @@ export function shouldSeedOwnerChrome(o: { platform: NodeJS.Platform; inContaine
   return { seed: true };
 }
 
+/**
+ * Pure: is the shared desktop this instance's — the same rule desktops.ts ensureGlobalDesktop starts it by: not turned
+ * off, and the default instance or one that opted in (ARIGAMI_GLOBAL_DESKTOP=1, as a container image does: its own
+ * ARIGAMI_DIR makes it a non-default instance). The seed runs only there.
+ */
+export function ownsSharedDesktop(isDefaultInstance: boolean, env: NodeJS.ProcessEnv): boolean {
+  if (env.ARIGAMI_GLOBAL_DESKTOP === '0') return false;
+  return isDefaultInstance || env.ARIGAMI_GLOBAL_DESKTOP === '1';
+}
+
 /** The flags the owner's everyday Chrome is started with when the HOST starts it — no DevTools port, ever. */
 export const OWNER_CHROME_FLAGS = ['--password-store=basic', '--no-first-run', '--no-default-browser-check'];
 

@@ -83,7 +83,8 @@ a new sign-in uses the profile signed in to the owner's identity (Google SSO wor
 
 * **The profile exists from the first boot.** The installer puts Chrome and the shared desktop on the host; on boot the
   host opens the owner's everyday Chrome there once if it has no profile yet (`seedOwnerChrome`, server/index.ts —
-  default instance, a Linux machine or a container with its own shared desktop, not turned off), the way a person
+  the instance the shared desktop belongs to — a Linux machine's default one, or a container's own (its
+  `ARIGAMI_GLOBAL_DESKTOP=1`) —, not turned off), the way a person
   would: no DevTools port, `--password-store=basic` so its cookies stay readable to the host (and `--no-sandbox` in a
   container, the one flag the dock's Chrome icon gets there too — without it Chrome does not start as a non-root
   user). So a brand-new tenant has a profile before its first sign-in.

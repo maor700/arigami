@@ -11,7 +11,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { runInChild } from './_child.js';
 import * as si from '../server/lib/sign-in.ts';
-import { resolveOwnerProfile, shouldSeedOwnerChrome, containerHasDesktop, ownerChromeLaunchFlags, OWNER_CHROME_FLAGS } from '../server/lib/owner-chrome.ts';
+import { resolveOwnerProfile, shouldSeedOwnerChrome, containerHasDesktop, ownerChromeLaunchFlags, ownsSharedDesktop, OWNER_CHROME_FLAGS } from '../server/lib/owner-chrome.ts';
 import { tmpDir } from './_tmp.js';
 
 /** A user-data dir as Chrome leaves it: Local State naming the last profile, and that profile's Cookies file. */
@@ -115,6 +115,19 @@ test('shouldSeedOwnerChrome in a container: a brand-new one with a desktop gets 
     expect(shouldSeedOwnerChrome({ ...vm, desktop })).toEqual({ seed: true });
     expect(shouldSeedOwnerChrome({ ...vm, desktop, platform: 'darwin' })).toMatchObject({ seed: false });
   }
+});
+
+test("the seed runs on the instance the shared desktop belongs to — a container's own (ARIGAMI_DIR + opt-in) too", () => {
+  // the image sets ARIGAMI_DIR (a non-default instance) and ARIGAMI_GLOBAL_DESKTOP=1: the pod's desktop is its own
+  expect(ownsSharedDesktop(false, { ARIGAMI_GLOBAL_DESKTOP: '1' })).toBe(true);
+  expect(ownsSharedDesktop(true, {})).toBe(true); // a machine's default instance, as before
+  expect(ownsSharedDesktop(false, {})).toBe(false); // a second instance on a machine: not its desktop
+  expect(ownsSharedDesktop(true, { ARIGAMI_GLOBAL_DESKTOP: '0' })).toBe(false);
+  expect(ownsSharedDesktop(false, { ARIGAMI_GLOBAL_DESKTOP: '0' })).toBe(false);
+  // the seed's gate is the same one the desktop starts by (desktops.ts ensureGlobalDesktop)
+  const src = fs.readFileSync(path.join(import.meta.dir, '..', 'server', 'index.ts'), 'utf8');
+  expect(src).toMatch(/if \(!oc\.ownsSharedDesktop\(IS_DEFAULT_INSTANCE, process\.env\)\) return;/);
+  expect(src).not.toMatch(/if \(!IS_DEFAULT_INSTANCE\) return;\s*const oc = await import\('\.\/lib\/owner-chrome\.js'\)/);
 });
 
 test('containerHasDesktop: the screen on AND its display up', () => {

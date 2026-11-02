@@ -622,12 +622,14 @@ if (process.env.ARIGAMI_SUPERVISOR === 'self' && process.platform !== 'win32' &&
 /**
  * sign_in signs new sites in to the owner's everyday Chrome on the shared desktop (docs/LOGIN.md). A fresh install has
  * Chrome and the display but no profile until someone opens it: open it once, as a person would (no DevTools port), so
- * the profile exists and Chrome stays there on the screen. Default instance only, and only when nothing is there yet.
+ * the profile exists and Chrome stays there on the screen. Only on the instance the shared desktop belongs to (the
+ * default one, or a container's own via ARIGAMI_GLOBAL_DESKTOP=1 — its ARIGAMI_DIR makes it non-default), and only
+ * when nothing is there yet.
  */
 async function seedOwnerChrome(): Promise<void> {
   const { IS_DEFAULT_INSTANCE } = await import('./lib/instance.js');
-  if (!IS_DEFAULT_INSTANCE) return;
   const oc = await import('./lib/owner-chrome.js');
+  if (!oc.ownsSharedDesktop(IS_DEFAULT_INSTANCE, process.env)) return;
   const si = await import('./lib/sign-in.js');
   const os = await import('node:os');
   const fs = await import('node:fs');
