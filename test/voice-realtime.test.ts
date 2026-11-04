@@ -36,11 +36,11 @@ test('mint: gate shapes pass through; ok → client secret, never the key; reque
       "cfgm.updateVoiceConfig({caps:{'voice:openai':null}});" +
       "const ok=await rt.mintRealtimeSession({sessionId:'sess_abc',lang:'he'},{fetchImpl:f});" +
       "cfgm.cfg.voice.realtime={model:'gpt-realtime-2.1-mini',voice:'cedar'};" +
-      "const mini=await rt.mintRealtimeSession({sessionId:'sess_abc'},{fetchImpl:f});" +
+      "const mini=await rt.mintRealtimeSession({sessionId:'sess_abc',takeover:true},{fetchImpl:f});" +
       "cfgm.cfg.voice.realtime={model:'../evil',voice:'nope'};" +
-      "const junk=await rt.mintRealtimeSession({sessionId:'sess_abc'},{fetchImpl:f});" +
-      "const rej=await rt.mintRealtimeSession({sessionId:'sess_abc'},{fetchImpl:async()=>new Response('{\"error\":{\"message\":\"bad key '+KEY+'\"}}',{status:401})});" +
-      "const noval=await rt.mintRealtimeSession({sessionId:'sess_abc'},{fetchImpl:async()=>new Response('{}',{status:200})});" +
+      "const junk=await rt.mintRealtimeSession({sessionId:'sess_abc',takeover:true},{fetchImpl:f});" +
+      "const rej=await rt.mintRealtimeSession({sessionId:'sess_abc',takeover:true},{fetchImpl:async()=>new Response('{\"error\":{\"message\":\"bad key '+KEY+'\"}}',{status:401})});" +
+      "const noval=await rt.mintRealtimeSession({sessionId:'sess_abc',takeover:true},{fetchImpl:async()=>new Response('{}',{status:200})});" +
       'emit({noSid:[noSid.status,noSid.body.error],none:none.body,off:off.body,capped:capped.body,ok:{status:ok.status,body:ok.body},req:reqs[0],mini:[mini.body.model,mini.body.voice],junk:[junk.body.model,junk.body.voice],rej:[rej.status,rej.body.error],noval:[noval.status,noval.body.error],' +
       'leak:JSON.stringify({ok:ok.body,mini:mini.body,rej:rej.body,logs}).includes(KEY),live:rt.liveCallCount(),logs});'
   );
@@ -75,7 +75,7 @@ test('mint: gate shapes pass through; ok → client secret, never the key; reque
   expect(out.rej[1]).toContain('401');
   expect(out.noval).toEqual([502, 'OpenAI answered 200 without a client secret']);
   expect(out.leak).toBe(false);
-  expect(out.live).toBe(3);
+  expect(out.live).toBe(1); // stage 1d: one call at a time — each takeover ended the one before
 });
 
 test('call window: a tool/transcript/end needs the call of the same session; end clamps the duration into the window and records minutes; the transcript lands once', () => {
@@ -245,15 +245,15 @@ test('Gemini Live: with only Gemini connected the mint is an ephemeral auth toke
       "vp.setProviderSecret('voice:gemini',{token:KEY});" +
       "let t=1700000000000;const now=()=>t;" +
       "const g=await rt.mintRealtimeSession({sessionId:'sess_g',lang:'he'},{fetchImpl:f,now});" +
-      "cfgm.cfg.voice.realtime={geminiModel:'gemini-3.1-flash-live-preview',geminiVoice:'Puck'};" +
-      "const g2=await rt.mintRealtimeSession({sessionId:'sess_g'},{fetchImpl:f,now});" +
-      "cfgm.cfg.voice.realtime={geminiModel:'../x',geminiVoice:'lower'};" +
-      "const g3=await rt.mintRealtimeSession({sessionId:'sess_g'},{fetchImpl:f,now});" +
-      "const noName=await rt.mintRealtimeSession({sessionId:'sess_g'},{fetchImpl:async()=>new Response('{}',{status:200}),now});" +
-      "const rej=await rt.mintRealtimeSession({sessionId:'sess_g'},{fetchImpl:async()=>new Response('{\"error\":{\"message\":\"bad '+KEY+'\"}}',{status:403}),now});" +
       "t+=120_000;const end=rt.endRealtimeCall({sessionId:'sess_g',callId:g.body.callId,seconds:120},host,{now});" +
+      "cfgm.cfg.voice.realtime={geminiModel:'gemini-3.1-flash-live-preview',geminiVoice:'Puck'};" +
+      "const g2=await rt.mintRealtimeSession({sessionId:'sess_g',takeover:true},{fetchImpl:f,now});" +
+      "cfgm.cfg.voice.realtime={geminiModel:'../x',geminiVoice:'lower'};" +
+      "const g3=await rt.mintRealtimeSession({sessionId:'sess_g',takeover:true},{fetchImpl:f,now});" +
+      "const noName=await rt.mintRealtimeSession({sessionId:'sess_g',takeover:true},{fetchImpl:async()=>new Response('{}',{status:200}),now});" +
+      "const rej=await rt.mintRealtimeSession({sessionId:'sess_g',takeover:true},{fetchImpl:async()=>new Response('{\"error\":{\"message\":\"bad '+KEY+'\"}}',{status:403}),now});" +
       "vp.setProviderSecret('voice:openai',{token:KEY+'oa'});" +
-      "const both=await rt.mintRealtimeSession({sessionId:'sess_g'},{fetchImpl:f,now});" +
+      "const both=await rt.mintRealtimeSession({sessionId:'sess_g',takeover:true},{fetchImpl:f,now});" +
       "const usage=vu.voiceUsageThisMonth()['voice:gemini'];" +
       'emit({g:g.body,req:reqs[0],g2:[g2.body.model,g2.body.voice,g2.body.setup.tools[0].functionDeclarations[0].behavior||null,g2.body.setup.generationConfig.speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName],g3:[g3.body.model,g3.body.voice],noName:[noName.status,noName.body.error],rej:[rej.status,rej.body.error],end:end.body,both:[both.body.provider,both.body.transport],usage,' +
       'leak:JSON.stringify({g:g.body,g2:g2.body,rej:rej.body,logs}).includes(KEY),logs});'
@@ -290,4 +290,36 @@ test('Gemini Live: with only Gemini connected the mint is an ephemeral auth toke
   expect(out.usage.seconds).toBe(120);
   expect(out.usage.usd).toBeCloseTo(0.046, 5);
   expect(out.leak).toBe(false);
+});
+
+test('stage 1d: a global call anchors in the voice home session, carries the open session as context, and only one call is live at a time', () => {
+  const out = run(
+    `const KEY=${JSON.stringify(KEY)};const reqs=[];const f=async(u,i)=>{reqs.push(JSON.parse(i.body));return okMint();};` +
+      "vp.setProviderSecret('voice:openai',{token:KEY});" +
+      "let homes=0;const mh={getSession:(id)=>id==='sess_open'?{id,title:'Fix \"login\"'}:id==='sess_arch'?{id,title:'old',archived:true}:null,voiceHome:()=>{homes++;return {id:'sess_home'};}};" +
+      "const noHost=await rt.mintRealtimeSession({home:true},{fetchImpl:f});" +
+      "const a=await rt.mintRealtimeSession({home:true,contextSessionId:'sess_open'},{fetchImpl:f,host:mh});" +
+      "const busy=await rt.mintRealtimeSession({sessionId:'sess_other'},{fetchImpl:f,host:mh});" +
+      "const failed=await rt.mintRealtimeSession({sessionId:'sess_other',takeover:true},{fetchImpl:async()=>new Response('{}',{status:200}),host:mh});" +
+      "const stillA=!!rt.liveCall(a.body.callId);" +
+      "const b=await rt.mintRealtimeSession({home:true,contextSessionId:'sess_arch',takeover:true},{fetchImpl:f,host:mh});" +
+      "const aGone=!rt.liveCall(a.body.callId);" +
+      "rt.endRealtimeCall({sessionId:'sess_home',callId:b.body.callId,seconds:3},host);" +
+      "const c=await rt.mintRealtimeSession({sessionId:'sess_x',contextSessionId:'sess_x'},{fetchImpl:f,host:mh});" +
+      "emit({noHost:noHost.status,a:[a.body.sessionId,a.body.contextSessionId],instr:reqs[0].session.instructions,busy:[busy.status,busy.body.busy],failed:failed.status,stillA,aGone,b:[b.body.sessionId,b.body.contextSessionId],bInstr:reqs[1].session.instructions,c:c.body.contextSessionId,cInstr:reqs[2].session.instructions,homes,live:rt.liveCallCount(),base:rt.clerkInstructions()===rt.CLERK_INSTRUCTIONS});"
+  );
+  expect(out.noHost).toBe(500);
+  expect(out.a).toEqual(['sess_home', 'sess_open']);
+  expect(out.instr).toContain('The owner has the session "Fix  login " (id sess_open) open right now');
+  expect(out.busy).toEqual([409, true]);
+  expect(out.failed).toBe(502); // a takeover whose mint fails leaves the live call alone
+  expect(out.stillA).toBe(true);
+  expect(out.aGone).toBe(true);
+  expect(out.b).toEqual(['sess_home', null]); // an archived session is no context
+  expect(out.bInstr).not.toContain('open right now');
+  expect(out.c).toBe(null); // the anchor itself is not "another" open session
+  expect(out.cInstr).not.toContain('open right now');
+  expect(out.homes).toBe(2);
+  expect(out.live).toBe(1);
+  expect(out.base).toBe(true);
 });

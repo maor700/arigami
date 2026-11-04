@@ -64,6 +64,7 @@ export async function connectOpenAI({ mint, deps, hooks }) {
       send({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id: callId, output: JSON.stringify(out) } });
       send({ type: 'response.create' });
     },
+    alive: () => !closed && (pc.connectionState === 'connected' || pc.connectionState === undefined), // stage 1d: no resume — call.js re-mints
     close,
   };
 }

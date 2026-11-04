@@ -340,7 +340,7 @@ test('hands-free: opens the mic in handsfree mode, shows one state in VoiceHUD, 
   expect(html).toContain('data-hands-free="listening"');
   expect(html).toContain('מאזין…');
   expect(html).toContain('data-hands-free-stop');
-  expect(html).toContain('data-voice-dock="default"'); // stage 1d: the floating box, not the centred window
+  expect(html).toContain('data-voice-dock="docked"'); // stage 1d: the box (docked on this phone-sized shim), not the centred window
   expect(html).toContain('data-hands-free-mute="off"');
   // stage 1d: mute closes the mic and keeps the conversation; unmute opens it again
   expect(handsfree.toggleHandsFreeMute()).toBe(true);

@@ -158,13 +158,20 @@ test('call: mint → offer → SDP answer with the ephemeral secret → listenin
   expect(hud).toContain('data-voice-call="listening"');
   expect(hud).toContain('On the line');
   expect(hud).toContain('data-voice-call-hangup');
-  expect(hud).toContain('data-voice-dock="default"'); // stage 1d: the floating, draggable box
-  expect(hud).toContain('data-voice-dock-grip');
+  // stage 1d: a phone gets the compact bar docked at the bottom (no grip); a desktop the floating, draggable box
+  expect(hud).toContain('data-voice-dock="docked"');
+  expect(hud).not.toContain('data-voice-dock-grip');
   expect(hud).toContain('data-voice-call-mute="off"');
+  const mm = globalThis.matchMedia;
+  globalThis.matchMedia = () => ({ matches: true, addEventListener() {}, removeEventListener() {} });
+  hud = render(h(VoiceHUD, {}));
+  expect(hud).toContain('data-voice-dock="default"');
+  expect(hud).toContain('data-voice-dock-grip');
   const dock = await import(web('lib/voiceDock.js'));
   dock.saveDockPos({ x: 500, y: 300 });
   expect(render(h(VoiceHUD, {}))).toContain('data-voice-dock="moved"');
   dock.saveDockPos(null);
+  globalThis.matchMedia = mm;
   expect(render(h(CallButton, { sessionId: 's1' }))).toContain('data-voice-call="on"');
   expect(render(h(CallButton, { sessionId: 's2' }))).toContain('data-voice-call="off"');
 

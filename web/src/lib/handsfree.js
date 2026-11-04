@@ -16,6 +16,7 @@ function set(patch) {
   for (const fn of listeners) fn();
 }
 const subscribe = (fn) => { listeners.add(fn); return () => listeners.delete(fn); };
+export const subscribeHandsFree = subscribe;
 export const getHandsFree = () => state;
 export function useHandsFree() {
   return useSyncExternalStore(subscribe, getHandsFree, getHandsFree);

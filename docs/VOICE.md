@@ -137,12 +137,24 @@ Call `requireVoiceProvider(kind)` first and return its non-ok shapes as the tool
   (listening / thinking / speaking; connecting / checking in a call; muted), the latest sentence (two lines at most), **Mute** and
   **End / Hang up**. The command/dictation window (VOICE1/2) is unchanged and still centred.
 - **Default spot**: desktop — over the bottom of the rail (start edge, so the right side in RTL), as wide as the rail allows
-  (200–320 px), so it never covers the chat; phone — the top-end corner under the top bar.
+  (200–320 px), so it never covers the chat. Phone (< 768 px): a compact bar docked at the bottom edge (safe-area aware), no free drag.
 - **Moving it**: drag the header (pointer events, works with touch); the grip also takes the arrow keys (16 px a step) and Home;
   a double-click on the header puts it back. The dropped spot is kept **per device** under its own localStorage key
   `arigami-voice-dock` (not a pref) and clamped back fully on screen on every resize.
 - **Hands-free mute**: `toggleHandsFreeMute()` closes the mic (the answer still plays, nothing is sent, the silence timeout pauses);
   unmute opens it again. Call mute is the existing `toggleMute()`.
 - **No voice source → no box**: the box only exists while hands-free or a call is active, both of which are gated as before.
-- **Tests**: `test/voice-dock-web.test.js` (placement LTR/RTL/phone, clamping, per-device storage, keyboard nudge), plus the box and
-  mute checks in `test/speak-web.test.js` and `test/voice-call-web.test.js`.
+- **Global call (rail phone)**: `RailCallButton` in the rail's brand row, only while `voiceProviders.realtime` is non-empty (and the
+  layer is on). It mints `{home:true, contextSessionId}`: the host anchors the call in one **voice home session** (`metadata.voiceHome`,
+  worktree-less, created on first use and not spawned — audit cards and the transcript land there) and adds the open session to the
+  clerk's instructions as its default subject (`clerkInstructions()`; an archived or unknown id is dropped). The mint answers
+  `sessionId` = the anchor; the browser uses it for every later post.
+- **One call at a time**: a mint while any call is live answers 409 `{busy:true}`; the browser shows one toast with "End it and call",
+  which re-mints with `takeover:true` — the old call is finished (`reason:'takeover'`) only once the new mint succeeded.
+- **Wake lock + resume** (`web/src/lib/wakeLock.js`, wired in `main.jsx`): `navigator.wakeLock.request('screen')` while a call or
+  hands-free is live, released at the end, re-taken on every `visibilitychange` → visible. A connection lost while the page is
+  hidden waits (phase `connecting`) instead of ending; back to visible, `resumeCall()` reopens Gemini with its session handle, or for
+  OpenAI ends the old call (`reason:'resume'`) and re-mints + reconnects once; if that fails the call ends with one toast line.
+- **Tests**: `test/voice-dock-web.test.js` (placement LTR/RTL, clamping, per-device storage, keyboard nudge), `test/voice-s1d-web.test.js`
+  (rail gating + global mint, busy/takeover, OpenAI/Gemini resume, wake lock with a fake navigator), the stage-1d case in
+  `test/voice-realtime.test.ts` (home anchor, context, guard, takeover), plus box/mute checks in `speak-web` and `voice-call-web`.

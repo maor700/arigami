@@ -94,6 +94,7 @@ function VoiceDock({ title, indicator, attrs, children, footer, t }) {
   const w = dockWidth({ vw, railPx, isDesktop });
   const geo = { vw, vh, w, h, rtl, isDesktop, railPx };
   const pos = live || dockPlacement({ saved, ...geo });
+  const docked = !isDesktop; // phone: a compact bar docked at the bottom edge, no free drag
 
   // the height follows the content (a note, a longer line) — measured so the box is clamped by its real size
   useLayoutEffectSafe(() => {
@@ -105,7 +106,7 @@ function VoiceDock({ title, indicator, attrs, children, footer, t }) {
     const ro = new ResizeObserver(measure);
     ro.observe(el);
     return () => ro.disconnect();
-  }, []);
+  }, [docked]);
 
   const onPointerDown = (e) => {
     if (e.pointerType === 'mouse' && e.button !== 0) return;
@@ -138,6 +139,27 @@ function VoiceDock({ title, indicator, attrs, children, footer, t }) {
     e.stopPropagation();
     saveDockPos(next);
   };
+
+  if (docked) {
+    return (
+      <div
+        className="fixed inset-x-2 z-[70]"
+        style={{ bottom: 'calc(env(safe-area-inset-bottom, 0px) + 0.5rem)' }}
+        data-voice-hud
+        data-voice-dock="docked"
+        {...attrs}
+      >
+        <div className="overflow-hidden rounded-xl border border-border bg-popover text-popover-foreground shadow-dialog">
+          <div className="flex items-center gap-2 px-3 pt-2">
+            {indicator}
+            <span className="min-w-0 flex-1 truncate text-[12px] font-bold" {...title.attrs}>{title.text}</span>
+          </div>
+          <div className="px-3 py-1.5">{children}</div>
+          <div className="flex items-center justify-between gap-1.5 border-t border-hair px-2.5 py-1.5">{footer}</div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -231,7 +253,7 @@ function HandsFreeHUD({ hf, status, level, error, t, onClose }) {
       )}
       <LastLine text={hf.lastText} attr="data-hands-free-last" />
       {note && <div className="mt-1 line-clamp-3 text-[11px] text-danger" data-hands-free-note>{note}</div>}
-      {!hf.lastText && !note && <div className="line-clamp-2 text-[11px] text-fgdim">{t('dialogs.handsFree.hint')}</div>}
+      {!hf.lastText && !note && <div className="line-clamp-2 text-[11px] text-fgdim max-md:hidden">{t('dialogs.handsFree.hint')}</div>}
     </VoiceDock>
   );
 }
@@ -255,7 +277,7 @@ function CallHUD({ call, t }) {
     >
       <LastLine text={call.lastText} attr="data-voice-call-last" />
       {call.note && <div className="mt-1 line-clamp-3 text-[11px] text-danger" data-voice-call-note>{call.note}</div>}
-      {!call.lastText && !call.note && <div className="line-clamp-2 text-[11px] text-fgdim">{t('dialogs.call.hint')}</div>}
+      {!call.lastText && !call.note && <div className="line-clamp-2 text-[11px] text-fgdim max-md:hidden">{t('dialogs.call.hint')}</div>}
     </VoiceDock>
   );
 }
