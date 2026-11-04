@@ -91,11 +91,19 @@ Call `requireVoiceProvider(kind)` first and return its non-ok shapes as the tool
 - **What it is**: a realtime speech model (OpenAI Realtime over WebRTC) holds the conversation — turns, barge-in, "רגע, בודק" — and
   delegates the real work to the existing sessions through tools the host runs. Claude/Codex are never in the latency path.
 - **Mint** `POST /__api/voice/realtime/session {sessionId, lang?}`: `requireVoiceProvider('realtime')` first (its shapes come back as
-  JSON 200), then `POST {base}/v1/realtime/client_secrets` with the stored key → `{callId, clientSecret, expiresAt, model, voice, callsUrl}`.
-  The secret is an ephemeral `ek_…` (10 min, SDP handshake only); the API key never leaves the host. Model = `config.voice.realtime.model`
-  (default `gpt-realtime-2.1`; `gpt-realtime-2.1-mini` is the cheap pick), voice = `config.voice.realtime.voice` (default `marin`), both file-only.
-  The session config carries the clerk persona (`CLERK_INSTRUCTIONS`), server VAD with `interrupt_response` (native barge-in), input
-  transcription (`gpt-4o-transcribe`, the mic language), and the five tool schemas.
+  JSON 200; order OpenAI → Gemini, whichever is connected), then one of two transports, named by `transport` in the answer:
+  - `openai-webrtc` (`voice:openai`): `POST {base}/v1/realtime/client_secrets` → `{callId, clientSecret, expiresAt, model, voice, callsUrl}`.
+    The secret is an ephemeral `ek_…` (10 min, SDP handshake only). Model = `config.voice.realtime.model` (default `gpt-realtime-2.1`;
+    `gpt-realtime-2.1-mini` is the cheap pick), voice = `config.voice.realtime.voice` (default `marin`). The session config carries the
+    clerk persona (`CLERK_INSTRUCTIONS`), server VAD with `interrupt_response` (native barge-in), input transcription
+    (`gpt-4o-transcribe`, the mic language), and the five tool schemas.
+  - `gemini-ws` (`voice:gemini`, Gemini Live): `POST {base}/v1beta/auth_tokens` (`x-goog-api-key`) → `{callId, token, wsUrl, setup, model,
+    voice, expiresAt}`. The token is an ephemeral `auth_tokens/…` (one session, may be opened within 2 min, lives 2 h, resumes ride it);
+    the browser connects `wsUrl?access_token=` and sends the host-built `setup` first (same persona and tools as `functionDeclarations`,
+    `AUDIO` out, input/output transcription on, `sessionResumption`, `contextWindowCompression` so the 15-min audio cap does not apply).
+    Model = `config.voice.realtime.geminiModel` (default `gemini-3.8-live`; tools are `BLOCKING` there, the model's default is async),
+    voice = `config.voice.realtime.geminiVoice` (default `Kore`). Hebrew is picked up automatically (native-audio models take no language code).
+  The API key never leaves the host for either; all config keys are file-only. ≈ $0.10/min (OpenAI) vs ≈ $0.023/min (Gemini) in the ledger.
 - **Tools** (`CLERK_TOOLS`, run by the host with the cockpit's own paths — `clerkHost()` in `api.ts`): `list_sessions` (id, title, status,
   folder, working), `session_status(id)` (+ `metadata.result` summary), `ask_session(id, prompt)` (the normal message path, then the turn's
   final `assistant-text` is awaited ≤ 90 s, else `still working` + what it said so far), `create_session(title, prompt)`, `interrupt_session(id)`.
@@ -109,12 +117,16 @@ Call `requireVoiceProvider(kind)` first and return its non-ok shapes as the tool
 - **Audit trail**: every tool call lands in the calling session's chat as a compact `ext-card` (`extension:'voice'`: what was asked, what came
   back, `voice:{callId, tool, ms}`); the spoken transcript lands once per call as one more card (`voice:{seconds, turns, tools, reason}`).
 - **Web**: the phone button next to the headphones (composer) exists only while `config.voiceProviders.realtime` is non-empty and the layer
-  is on — no provider, no change. `startCall()` mints, opens `RTCPeerConnection` (mic track up, remote audio down, data channel `oai-events`),
-  POSTs the SDP offer to `callsUrl` with the ephemeral secret, and the HUD shows connecting / listening / speaking / checking (tool name),
-  with Mute and Hang up (Esc too). A connection that fails falls back to the 1b hands-free mode with one line (or a toast without 1b).
+  is on — no provider, no change. `startCall()` mints and hands the answer to the transport it names: `call-openai.js` opens
+  `RTCPeerConnection` (mic track up, remote audio down, data channel `oai-events`) and POSTs the SDP offer to `callsUrl` with the ephemeral
+  secret; `call-gemini.js` opens the Live WebSocket, sends `setup`, streams the mic as 16 kHz PCM (`pcm.js`: AudioWorklet, ScriptProcessor
+  fallback) and plays the 24 kHz PCM parts back to back; `interrupted` drops the queue; a `goAway`/dropped socket is reopened with the
+  resumption handle (≤ 3 times, same token). Both report the same phases: the HUD shows connecting / listening / speaking / checking (tool
+  name), with Mute and Hang up (Esc too). A connection that fails falls back to the 1b hands-free mode with one line (or a toast without 1b).
   `unlockAudio()` runs inside the tap (iOS).
 - **Privacy**: everything the clerk hears, everything it says and every tool result passes through the provider as audio/text. Connecting
   the provider is the consent; Settings → Voice & phone says so next to each provider.
-- **Tests**: `test/voice-realtime.test.ts` (mint, call window, executor, audit cards), `test/voice-realtime-host.test.ts` (the routes on an
-  isolated host against a fake OpenAI via `ARIGAMI_OPENAI_API_BASE`), `test/voice-call-web.test.js` (gating, fake WebRTC flow, tool
-  round-trip, transcript, hang-up, fallback).
+- **Tests**: `test/voice-realtime.test.ts` (both mints, call window, executor, audit cards, Gemini order/pricing), `test/voice-realtime-host.test.ts`
+  (the routes on an isolated host against a fake OpenAI via `ARIGAMI_OPENAI_API_BASE`; `ARIGAMI_GEMINI_API_BASE` is the Gemini twin),
+  `test/voice-call-web.test.js` (gating, fake WebRTC flow, fake Live socket flow incl. resumption, tool round-trips, transcripts, hang-up,
+  fallback, PCM helpers).

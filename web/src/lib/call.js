@@ -1,6 +1,7 @@
-// Call mode (stage 1c, docs/VOICE.md): a WebRTC call with the realtime voice clerk — the mic goes up, the clerk's
-// voice comes down, its tool calls are run by the host and the transcript is posted back. Only reachable when a
-// realtime provider is connected (config.voiceProviders.realtime); otherwise nothing here is ever imported into the UI.
+// Call mode (stage 1c, docs/VOICE.md): a live call with the realtime voice clerk — the mic goes up, the clerk's voice comes
+// down, its tool calls are run by the host and the transcript is posted back. The host's mint names the transport
+// (OpenAI over WebRTC, Gemini Live over a WebSocket). Only reachable when a realtime provider is connected
+// (config.voiceProviders.realtime); otherwise nothing here is ever reached from the UI.
 import { useSyncExternalStore } from 'react';
 import { api } from './api.js';
 import { getPrefs } from './prefs.js';
@@ -9,13 +10,15 @@ import { unlockAudio, handsFreeAvailable } from './speak.js';
 import { startHandsFree, setHandsFreeNote } from './handsfree.js';
 import { toastError } from './toast.js';
 import { t as tr } from './i18n.js';
+import { connectOpenAI } from './call-openai.js';
+import { connectGemini } from './call-gemini.js';
 
 export const callAvailable = (config) => {
   const vp = config?.voiceProviders;
   return !!vp && vp.enabled !== false && Array.isArray(vp.realtime) && vp.realtime.length > 0;
 };
 
-let state = { active: false, phase: 'idle', sessionId: null, callId: null, muted: false, lastText: '', note: '', tool: '', since: 0 };
+let state = { active: false, phase: 'idle', sessionId: null, callId: null, provider: null, muted: false, lastText: '', note: '', tool: '', since: 0 };
 const listeners = new Set();
 function set(patch) {
   state = { ...state, ...patch };
@@ -27,19 +30,22 @@ export function useCall() {
   return useSyncExternalStore(subscribe, getCall, getCall);
 }
 
-// Browser pieces, replaceable for tests (a fake RTCPeerConnection, no real mic).
+// Browser pieces, replaceable for tests (a fake RTCPeerConnection / WebSocket, no real mic or speaker).
 let deps = null;
 const defaultDeps = () => ({
   RTCPeerConnection: typeof RTCPeerConnection === 'function' ? RTCPeerConnection : null,
+  WebSocket: typeof WebSocket === 'function' ? WebSocket : null,
+  AudioContext: typeof window !== 'undefined' ? window.AudioContext || window.webkitAudioContext || null : null,
   getUserMedia: (c) => navigator.mediaDevices.getUserMedia(c),
   fetchImpl: (...a) => fetch(...a),
   audio: () => { const a = new Audio(); a.autoplay = true; a.setAttribute('playsinline', ''); return a; },
 });
 export function setCallDeps(d) { deps = d ? { ...defaultDeps(), ...d } : null; }
 const D = () => deps || (deps = defaultDeps());
+const TRANSPORTS = { 'openai-webrtc': connectOpenAI, 'gemini-ws': connectGemini };
 
 const TRANSCRIPT_DEBOUNCE_MS = 400;
-let live = null; // { pc, dc, stream, audio, turns, posted, timer, connected }
+let live = null; // { sessionId, callId, conn, turns, timer }
 let lastEnd = null;
 export const lastCallEnd = () => lastEnd;
 
@@ -49,50 +55,46 @@ const micLang = () => {
   if (p.language === 'he' || p.language === 'en') return p.language;
   return String(typeof navigator !== 'undefined' ? navigator.language || 'en' : 'en').slice(0, 2);
 };
-
 const noteOf = (r) => (r?.needs_setup ? 'needs_setup' : r?.disabled ? 'disabled' : r?.budget ? 'budget' : r?.error || 'failed');
+
+// What a transport reports back; `only` = change the phase only while it is that one (a tool run is never overwritten by 'listening').
+const hooksFor = (l) => ({
+  phase(p, only) {
+    if (live !== l) return;
+    if (only && state.phase !== only) return;
+    if (p === 'listening' && state.phase === 'tool') return;
+    set({ phase: p });
+  },
+  turn(t) { if (live === l) addTurn(l, t); },
+  tool(ev) { if (live === l) runTool(l, ev); },
+  error(msg) { if (live === l) set({ note: String(msg || 'error') }); },
+  lost(connected) { if (live === l && state.active) hangUp(connected ? 'lost' : 'failed'); },
+});
 
 /** Start a call for `sessionId`; a failed connection falls back to the 1b hands-free mode with one line. */
 export async function startCall(sessionId) {
   if (!sessionId) return false;
   if (state.active) await hangUp('restart');
   unlockAudio();
-  set({ active: true, phase: 'connecting', sessionId, callId: null, muted: false, lastText: '', note: '', tool: '', since: Date.now() });
-  const d = D();
-  let mint = null;
+  set({ active: true, phase: 'connecting', sessionId, callId: null, provider: null, muted: false, lastText: '', note: '', tool: '', since: Date.now() });
+  const l = { sessionId, callId: null, conn: null, turns: [], timer: null };
+  live = l;
   try {
-    mint = await api.post('/voice/realtime/session', { sessionId, lang: micLang() });
+    const mint = await api.post('/voice/realtime/session', { sessionId, lang: micLang() });
     if (!mint?.ok) throw new Error(noteOf(mint));
-    if (!d.RTCPeerConnection) throw new Error('no WebRTC in this browser');
-    const pc = new d.RTCPeerConnection();
-    const audio = d.audio();
-    const l = { pc, dc: null, stream: null, audio, turns: [], posted: 0, timer: null, connected: false, sessionId, callId: mint.callId };
-    live = l;
-    set({ callId: mint.callId });
-    pc.ontrack = (e) => { try { audio.srcObject = e.streams?.[0] || null; audio.play?.()?.catch?.(() => {}); } catch { /* ignore */ } };
-    pc.onconnectionstatechange = () => {
-      const s = pc.connectionState;
-      if (s === 'connected') { l.connected = true; return; }
-      if (s === 'failed' || s === 'closed' || s === 'disconnected') { if (live === l && state.active) hangUp(l.connected ? 'lost' : 'failed'); }
-    };
-    l.stream = await d.getUserMedia({ audio: true });
-    for (const tr of l.stream.getTracks?.() || []) pc.addTrack(tr, l.stream);
-    const dc = pc.createDataChannel('oai-events');
-    l.dc = dc;
-    dc.onmessage = (e) => { try { onEvent(JSON.parse(e.data)); } catch { /* not JSON */ } };
-    dc.onopen = () => { if (live === l) set({ phase: 'listening' }); };
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-    const res = await d.fetchImpl(mint.callsUrl, { method: 'POST', body: offer.sdp, headers: { Authorization: `Bearer ${mint.clientSecret}`, 'Content-Type': 'application/sdp' } });
-    if (!res.ok) throw new Error(`SDP answer ${res.status}`);
-    await pc.setRemoteDescription({ type: 'answer', sdp: await res.text() });
+    const connect = TRANSPORTS[mint.transport];
+    if (!connect) throw new Error(`unknown transport ${mint.transport}`);
+    l.callId = mint.callId;
+    set({ callId: mint.callId, provider: mint.provider || null });
+    l.conn = await connect({ mint, deps: D(), hooks: hooksFor(l) });
+    if (live !== l) { l.conn.close(); return false; } // hung up while connecting
+    if (state.phase === 'connecting') set({ phase: 'listening' });
     return true;
   } catch (e) {
     const note = String(e?.message || e);
-    const l = live;
-    live = null;
-    teardown(l);
-    if (l?.callId) api.post('/voice/realtime/end', { sessionId, callId: l.callId, seconds: 0, reason: 'failed' }).catch(() => {});
+    if (live === l) live = null;
+    try { l.conn?.close(); } catch { /* ignore */ }
+    if (l.callId) api.post('/voice/realtime/end', { sessionId, callId: l.callId, seconds: 0, reason: 'failed' }).catch(() => {});
     set({ active: false, phase: 'idle', callId: null, note });
     lastEnd = { reason: 'failed', note, at: Date.now(), seconds: 0 };
     fallback(sessionId, note);
@@ -110,86 +112,49 @@ function fallback(sessionId, note) {
 }
 const NOTE_TEXT = { needs_setup: 'dialogs.readAloudNeedsSetup', disabled: 'dialogs.readAloudDisabled', budget: 'dialogs.readAloudBudget' };
 
-function teardown(l) {
-  if (!l) return;
-  if (l.timer) { clearTimeout(l.timer); l.timer = null; }
-  try { l.dc?.close?.(); } catch { /* ignore */ }
-  try { for (const tr of l.stream?.getTracks?.() || []) tr.stop?.(); } catch { /* ignore */ }
-  try { l.pc?.close?.(); } catch { /* ignore */ }
-  try { if (l.audio) { l.audio.srcObject = null; l.audio.pause?.(); } } catch { /* ignore */ }
-}
-
-const send = (msg) => { const dc = live?.dc; if (dc && (dc.readyState === 'open' || dc.readyState === undefined)) dc.send(JSON.stringify(msg)); };
-
-// Server events over the data channel (the model's own VAD handles barge-in: a word from the person cuts its audio).
-export function onEvent(ev) {
-  const l = live;
-  if (!l || !ev || typeof ev.type !== 'string') return;
-  switch (ev.type) {
-    case 'input_audio_buffer.speech_started':
-      if (state.phase !== 'tool') set({ phase: 'listening' });
-      return;
-    case 'output_audio_buffer.started':
-      set({ phase: 'speaking' });
-      return;
-    case 'output_audio_buffer.stopped':
-    case 'output_audio_buffer.cleared':
-      if (state.phase === 'speaking') set({ phase: 'listening' });
-      return;
-    case 'conversation.item.input_audio_transcription.completed':
-      addTurn(l, { role: 'user', text: ev.transcript, id: ev.item_id });
-      return;
-    case 'response.output_audio_transcript.done':
-      addTurn(l, { role: 'assistant', text: ev.transcript, id: ev.item_id });
-      return;
-    case 'response.function_call_arguments.done':
-      runTool(l, ev);
-      return;
-    case 'error':
-      set({ note: String(ev.error?.message || 'error') });
-      return;
-    default:
-  }
-}
-
+// A turn with a known id grows in place (Gemini streams transcript pieces); the host dedupes by id too.
 function addTurn(l, turn) {
   const text = String(turn.text || '').trim();
   if (!text) return;
-  l.turns.push({ role: turn.role, text, ...(turn.id ? { id: String(turn.id) } : {}) });
+  const id = turn.id ? String(turn.id) : '';
+  const cur = id ? l.turns.find((x) => x.id === id) : null;
+  if (cur) { cur.text = text; cur.sent = false; }
+  else l.turns.push({ role: turn.role, text, ...(id ? { id } : {}), sent: false });
   set({ lastText: text });
   if (!l.timer) l.timer = setTimeout(() => { l.timer = null; flushTranscript(l); }, TRANSCRIPT_DEBOUNCE_MS);
 }
 function flushTranscript(l) {
-  const turns = l.turns.slice(l.posted);
-  if (!turns.length) return Promise.resolve();
-  l.posted = l.turns.length;
-  return api.post('/voice/realtime/transcript', { sessionId: l.sessionId, callId: l.callId, turns }).catch(() => { l.posted -= turns.length; });
+  const pending = l.turns.filter((x) => !x.sent);
+  if (!pending.length) return Promise.resolve();
+  for (const x of pending) x.sent = true;
+  const turns = pending.map(({ role, text, id }) => ({ role, text, ...(id ? { id } : {}) }));
+  return api.post('/voice/realtime/transcript', { sessionId: l.sessionId, callId: l.callId, turns }).catch(() => { for (const x of pending) x.sent = false; });
 }
 
-// A tool call: the host runs it with the owner's authority; the result goes back as the function output.
+// A tool call: the host runs it with the owner's authority; the result goes back through the transport.
 async function runTool(l, ev) {
   const name = String(ev.name || '');
-  let args = {};
-  try { args = ev.arguments ? JSON.parse(ev.arguments) : {}; } catch { args = {}; }
   set({ phase: 'tool', tool: name });
   let out;
   try {
-    const r = await api.post('/voice/realtime/tool', { sessionId: l.sessionId, callId: l.callId, name, args });
+    const r = await api.post('/voice/realtime/tool', { sessionId: l.sessionId, callId: l.callId, name, args: ev.args || {} });
     out = r?.ok ? r.result : { error: r?.error || 'tool failed' };
   } catch (e) {
     out = { error: String(e?.message || e) };
   }
-  if (live !== l) return;
-  send({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id: ev.call_id, output: JSON.stringify(out) } });
-  send({ type: 'response.create' });
+  if (live !== l || !l.conn) return;
+  l.conn.toolResult(ev, out);
   if (state.phase === 'tool') set({ phase: 'listening', tool: '' });
 }
 
+/** OpenAI data-channel events (tests and the verification hook feed them here). */
+export function onEvent(ev) { live?.conn?.onEvent?.(ev); }
+
 export function toggleMute() {
   const l = live;
-  if (!l) return false;
+  if (!l?.conn) return false;
   const muted = !state.muted;
-  for (const tr of l.stream?.getTracks?.() || []) tr.enabled = !muted;
+  l.conn.mute(muted);
   set({ muted });
   return muted;
 }
@@ -202,10 +167,11 @@ export async function hangUp(reason = 'hangup') {
   const seconds = Math.max(0, Math.round((Date.now() - state.since) / 1000));
   const { sessionId, callId } = state;
   set({ active: false, phase: 'idle', tool: '', muted: false });
-  teardown(l);
+  if (l?.timer) { clearTimeout(l.timer); l.timer = null; }
+  try { l?.conn?.close(); } catch { /* ignore */ }
   lastEnd = { reason, at: Date.now(), seconds };
   if (!callId) return;
-  try { await flushTranscript(l); } catch { /* best effort */ }
+  if (l) { try { await flushTranscript(l); } catch { /* best effort */ } }
   await api.post('/voice/realtime/end', { sessionId, callId, seconds, reason }).catch(() => {});
 }
 

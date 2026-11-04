@@ -37,7 +37,29 @@ const sdpPosts = [];
 let sdpStatus = 200;
 const fakeTrack = () => ({ enabled: true, stopped: false, stop() { this.stopped = true; } });
 let lastStream = null;
+class FakeWS {
+  static instances = [];
+  constructor(url) { FakeWS.instances.push(this); this.url = url; this.readyState = 0; this.sent = []; this.closed = false; setTimeout(() => { this.readyState = 1; this.onopen?.(); }, 0); }
+  send(m) { this.sent.push(JSON.parse(m)); if (this.sent.length === 1 && FakeWS.completeSetup) setTimeout(() => this.receive({ setupComplete: {} }), 0); }
+  receive(msg) { this.onmessage?.({ data: JSON.stringify(msg) }); }
+  close() { this.closed = true; this.readyState = 3; }
+  drop(code = 1011) { this.readyState = 3; this.onclose?.({ code }); }
+}
+FakeWS.completeSetup = true;
+class FakeCtx {
+  constructor() { this.sampleRate = 48000; this.closedCtx = false; }
+  async resume() {}
+  async close() { this.closedCtx = true; }
+}
+let lastMic = null;
+let lastPlayer = null;
+const fakeMic = async ({ onChunk }) => { lastMic = { muted: false, stopped: false, onChunk, mute(v) { this.muted = v; }, stop() { this.stopped = true; } }; return lastMic; };
+const fakePlayer = () => { lastPlayer = { played: [], stops: 0, playing: false, play(d) { this.played.push(d); this.playing = true; }, stop() { this.stops++; this.playing = false; } }; return lastPlayer; };
 const callDeps = () => ({
+  WebSocket: FakeWS,
+  AudioContext: FakeCtx,
+  openMicPcm: fakeMic,
+  pcmPlayer: fakePlayer,
   RTCPeerConnection: FakePC,
   getUserMedia: async () => { lastStream = { tracks: [fakeTrack()], getTracks() { return this.tracks; } }; return lastStream; },
   fetchImpl: async (url, init) => { sdpPosts.push({ url, headers: init.headers, body: init.body }); return new Response('v=0 answer', { status: sdpStatus }); },
@@ -117,7 +139,7 @@ test('gating: no realtime provider → no call button and the HUD is untouched; 
 test('call: mint → offer → SDP answer with the ephemeral secret → listening; phases follow the events; a tool call round-trips through the host; transcripts are posted; mute; hang-up posts the duration', async () => {
   await withProviders(['voice:openai']);
   prefs.setPrefs({ voiceLang: 'he' });
-  mintBody = { ok: true, callId: 'call_abc12345', clientSecret: 'ek_secret_1', expiresAt: 1900000000, model: 'gpt-realtime-2.1', voice: 'marin', callsUrl: 'https://api.openai.com/v1/realtime/calls' };
+  mintBody = { ok: true, transport: 'openai-webrtc', provider: 'voice:openai', callId: 'call_abc12345', clientSecret: 'ek_secret_1', expiresAt: 1900000000, model: 'gpt-realtime-2.1', voice: 'marin', callsUrl: 'https://api.openai.com/v1/realtime/calls' };
   toolBody = (b) => (b.name === 'list_sessions' ? { ok: true, result: { sessions: [{ id: 'sess_1', title: 'Fix login', working: true }] } } : { ok: false, error: 'unknown session' });
   posts.length = 0;
   sdpPosts.length = 0;
@@ -193,6 +215,86 @@ test('call: mint → offer → SDP answer with the ephemeral secret → listenin
   prefs.setPrefs({ voiceLang: 'auto' });
 });
 
+test('Gemini Live: setup first, mic PCM up after setupComplete, audio parts play + speaking, interrupted stops playback, transcript pieces grow one turn, a tool call round-trips as toolResponse, goAway/drop resumes with the handle, hang-up closes everything', async () => {
+  await withProviders(['voice:gemini']);
+  const setup = { model: 'models/gemini-3.8-live', tools: [{ functionDeclarations: [{ name: 'list_sessions' }] }], sessionResumption: {} };
+  mintBody = { ok: true, transport: 'gemini-ws', provider: 'voice:gemini', callId: 'call_gem12345', token: 'auth_tokens/tok1', wsUrl: 'wss://generativelanguage.googleapis.com/ws/x.BidiGenerateContentConstrained', setup };
+  toolBody = { ok: true, result: { sessions: [] } };
+  posts.length = 0;
+  FakeWS.instances.length = 0;
+  expect(await call.startCall('s1')).toBe(true);
+  const ws = FakeWS.instances[0];
+  expect(ws.url).toBe('wss://generativelanguage.googleapis.com/ws/x.BidiGenerateContentConstrained?access_token=auth_tokens%2Ftok1');
+  expect(ws.sent[0]).toEqual({ setup });
+  expect(call.getCall().phase).toBe('listening');
+  expect(call.getCall().provider).toBe('voice:gemini');
+  expect(lastMic).toBeTruthy();
+  lastMic.onChunk('AAAA');
+  expect(ws.sent[1]).toEqual({ realtimeInput: { audio: { data: 'AAAA', mimeType: 'audio/pcm;rate=16000' } } });
+  ws.receive({ sessionResumptionUpdate: { newHandle: 'h1', resumable: true } });
+  ws.receive({ serverContent: { inputTranscription: { text: 'מה ' } } });
+  ws.receive({ serverContent: { inputTranscription: { text: 'המצב?' } } });
+  ws.receive({ serverContent: { modelTurn: { parts: [{ inlineData: { mimeType: 'audio/pcm;rate=24000', data: 'QUJD' } }] }, outputTranscription: { text: 'רגע, ' } } });
+  expect(call.getCall().phase).toBe('speaking');
+  expect(lastPlayer.played).toEqual(['QUJD']);
+  ws.receive({ serverContent: { outputTranscription: { text: 'בודק.' } } });
+  expect(render(h(VoiceHUD, {}))).toContain('“רגע, בודק.”');
+  await tick(500);
+  const tr = posts.filter((p) => p.url.endsWith('/voice/realtime/transcript'));
+  expect(tr.at(-1).body.turns).toEqual([{ role: 'user', text: 'מה המצב?', id: 'u1' }, { role: 'assistant', text: 'רגע, בודק.', id: 'a2' }]);
+  ws.receive({ serverContent: { interrupted: true } });
+  expect(lastPlayer.stops).toBe(1);
+  expect(call.getCall().phase).toBe('listening');
+  ws.receive({ toolCall: { functionCalls: [{ id: 'fc-1', name: 'list_sessions', args: {} }] } });
+  expect(call.getCall().phase).toBe('tool');
+  await tick(20);
+  expect(posts.find((p) => p.url.endsWith('/voice/realtime/tool')).body).toEqual({ sessionId: 's1', callId: 'call_gem12345', name: 'list_sessions', args: {} });
+  expect(ws.sent.at(-1)).toEqual({ toolResponse: { functionResponses: [{ id: 'fc-1', name: 'list_sessions', response: { result: { sessions: [] } } }] } });
+  expect(call.getCall().phase).toBe('listening');
+  ws.receive({ serverContent: { outputTranscription: { text: 'אין סשנים.' } } });
+  ws.receive({ serverContent: { turnComplete: true } });
+  // the ~10-minute connection ends: goAway, then the socket drops → a new socket with the handle, same token
+  ws.receive({ goAway: { timeLeft: '5s' } });
+  ws.drop();
+  await tick(10);
+  const ws2 = FakeWS.instances[1];
+  expect(ws2.sent[0]).toEqual({ setup: { ...setup, sessionResumption: { handle: 'h1' } } });
+  expect(call.getCall().active).toBe(true);
+  expect(call.getCall().phase).toBe('listening');
+  lastMic.onChunk('BBBB');
+  expect(ws2.sent.at(-1).realtimeInput.audio.data).toBe('BBBB');
+  expect(call.toggleMute()).toBe(true);
+  expect(lastMic.muted).toBe(true);
+  await call.hangUp('hangup');
+  expect(ws2.closed).toBe(true);
+  expect(lastMic.stopped).toBe(true);
+  expect(lastStream.tracks[0].stopped).toBe(true);
+  expect(posts.at(-1).url).toBe('/__api/voice/realtime/end');
+  expect(posts.at(-1).body.callId).toBe('call_gem12345');
+  expect(posts.at(-2).body.turns).toEqual([{ role: 'assistant', text: 'אין סשנים.', id: 'a3' }]);
+  expect(JSON.stringify(posts)).not.toContain('tok1'); // the token only ever goes to the vendor socket
+});
+
+test('Gemini Live: a socket that never completes setup fails the call → hands-free fallback with one line', async () => {
+  await withProviders(['voice:gemini'], {});
+  configBody = { ...configBody, voiceProviders: { ...configBody.voiceProviders, tts: ['voice:elevenlabs'] } };
+  await store.loadConfig();
+  prefs.setPrefs({ voiceReadAloud: true });
+  mintBody = { ok: true, transport: 'gemini-ws', provider: 'voice:gemini', callId: 'call_gem22222', token: 'auth_tokens/tok2', wsUrl: 'wss://x', setup: {} };
+  FakeWS.completeSetup = false;
+  FakeWS.instances.length = 0;
+  posts.length = 0;
+  const p = call.startCall('s1');
+  await tick(5);
+  FakeWS.instances[0].drop(1008);
+  expect(await p).toBe(false);
+  FakeWS.completeSetup = true;
+  expect(posts.find((x) => x.url.endsWith('/voice/realtime/end')).body).toEqual({ sessionId: 's1', callId: 'call_gem22222', seconds: 0, reason: 'failed' });
+  expect(handsfree.getHandsFree().note).toBe('The call could not connect (Live socket closed (1008)). Continuing hands-free instead.');
+  handsfree.stopHandsFree('test');
+  prefs.setPrefs({ voiceReadAloud: false });
+});
+
 test('fallback: a gate answer or a failed SDP exchange ends the attempt, tells the host, and hands over to hands-free with one line when 1b is available', async () => {
   await withProviders(['voice:openai']);
   configBody = { ...configBody, voiceProviders: { ...configBody.voiceProviders, tts: ['voice:elevenlabs'] } };
@@ -212,7 +314,7 @@ test('fallback: a gate answer or a failed SDP exchange ends the attempt, tells t
   expect(posts.some((p) => p.url.endsWith('/voice/realtime/end'))).toBe(false); // nothing was minted
   handsfree.stopHandsFree('test');
 
-  mintBody = { ok: true, callId: 'call_def12345', clientSecret: 'ek_secret_2', callsUrl: 'https://api.openai.com/v1/realtime/calls' };
+  mintBody = { ok: true, transport: 'openai-webrtc', callId: 'call_def12345', clientSecret: 'ek_secret_2', callsUrl: 'https://api.openai.com/v1/realtime/calls' };
   sdpStatus = 500;
   posts.length = 0;
   expect(await call.startCall('s1')).toBe(false);
@@ -232,4 +334,29 @@ test('fallback: a gate answer or a failed SDP exchange ends the attempt, tells t
   expect(handsfree.getHandsFree().active).toBe(false);
   expect(call.getCall().active).toBe(false);
   expect(render(h(VoiceHUD, {}))).toBe('');
+});
+
+test('pcm helpers: float ↔ int16 base64 round-trips, 48 kHz → 16 kHz keeps a third of the samples, the player schedules back to back and stop() drops the queue', async () => {
+  const pcm = await import(web('lib/pcm.js'));
+  const src = new Float32Array([0, 0.5, -0.5, 1, -1, 0.25]);
+  const b64 = pcm.floatToPcm16Base64(src, 16000, 16000);
+  const back = pcm.pcm16Base64ToFloat(b64);
+  expect(back.length).toBe(6);
+  for (let i = 0; i < 6; i++) expect(Math.abs(back[i] - src[i])).toBeLessThan(0.001);
+  expect(pcm.pcm16Base64ToFloat(pcm.floatToPcm16Base64(new Float32Array(4800).fill(0.1), 48000, 16000)).length).toBe(1600);
+  const started = [];
+  const ctx = {
+    currentTime: 1,
+    destination: {},
+    createBuffer: (ch, n, rate) => ({ duration: n / rate, data: new Float32Array(n), copyToChannel(a) { this.data.set(a); } }),
+    createBufferSource: () => { const s = { connect() {}, start(at) { started.push(at); }, stop() { s.stopped = true; } }; return s; },
+  };
+  const player = pcm.pcmPlayer(ctx, 24000);
+  player.play(pcm.floatToPcm16Base64(new Float32Array(2400), 24000, 24000)); // 100 ms
+  player.play(pcm.floatToPcm16Base64(new Float32Array(2400), 24000, 24000));
+  expect(started[0]).toBeCloseTo(1.02, 5);
+  expect(started[1]).toBeCloseTo(1.12, 5);
+  expect(player.playing).toBe(true);
+  player.stop();
+  expect(player.playing).toBe(false);
 });
