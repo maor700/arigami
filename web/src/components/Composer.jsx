@@ -37,7 +37,7 @@ import { contextColor } from './ui.jsx';
 import ContextModal from './ContextModal.jsx';
 import MicButton from './MicButton.jsx';
 import { HandsFreeButton, ReadAloudButton } from './VoiceOutButtons.jsx';
-import { armReadAloud, readAloudOn } from '../lib/speak.js';
+import { armReadAloud, readAloudOn, unlockAudio } from '../lib/speak.js';
 import { getPrefs } from '../lib/prefs.js';
 import ComposerPill from './ComposerPill.jsx';
 import { Button, Switch, Tip, TooltipProvider, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from './ui/index.js';
@@ -434,7 +434,7 @@ export function ChatFooter({ session }) {
     setText('');
     setAttachments([]);
     setQuoted(null);
-    if (readAloudOn(getState().config, getPrefs())) armReadAloud(session.id); // stage 1b: this device speaks the answer
+    if (readAloudOn(getState().config, getPrefs())) { unlockAudio(); armReadAloud(session.id); } // stage 1b: this device speaks the answer (unlock inside the send gesture, iOS)
     try {
       await api.post(`/sessions/${session.id}/message`, payload);
     } catch (e) {
