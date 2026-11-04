@@ -23,6 +23,12 @@ the agent surface instead of a rail row — see the last section.)
 that CLI and "Claude" below means whichever engine the session runs. A3 allowlists, budgets and the ledger
 hold on both; differences (no `--disallowedTools` on codex, cost `null`) are in §Engine and docs/ENGINES.md.
 
+**Outbound (system principle, 2026-11-04).** When the owner asks, the agent initiates and operates the communication
+modules — email, WhatsApp, Slack, messages, and the sessions it creates/tasks for that — and never deflects with
+"I can't send / I have no access" while the capability exists. Delivery is unchanged: a third party gets a Send card the
+owner presses, the owner's own notify target is direct, cron `deliver.whatsapp` / extension `notify()` send directly.
+The wording the agent reads is the `host-rules` and `identity` blocks in `server/prompt-blocks.ts`.
+
 ## Storage — `$ARIGAMI_DIR/agents/<slug>/`
 
 ```

@@ -1140,7 +1140,8 @@ request_setup → QR card); connected → proxied to the WhatsApp MCP server (`s
 stdio client, spawned lazily from `ARIGAMI_WA_MCP_DIR`). The first turn of every session carries an
 identity reminder ("the agent inside Arigami", answer in the human's language) plus the cached
 connectable-capabilities line (`refreshCapabilitiesHint()` in claude.js), so the model knows WhatsApp,
-Gmail… exist before they are connected.
+Gmail… exist before they are connected. The same blocks state the outbound principle: asked to reach someone, the
+agent initiates and sends through the card path — the card is the mechanism, never a reason to answer "no access".
 
 ### Claude PKCE without pasting (F8)
 Session Chrome starts with `--remote-debugging-port=0` (loopback; port in `<profile>/DevToolsActivePort`).

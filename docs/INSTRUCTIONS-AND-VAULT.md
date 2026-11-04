@@ -59,6 +59,7 @@ A missing file = the built-in default, so Arigami updates keep improving untouch
 **Guidance, not enforcement.** Blocks are advice to the model. Every rule that matters is enforced in code regardless
 of the text (outbound cards, the login card's session-token 403, `humanGate` on password fields, A3 domains). The
 Settings page says so next to the guardrail blocks (`login`, `host-rules`) and warns before they are turned off.
+`host-rules` also tells the agent to initiate outbound messages the owner asks for (the card is the mechanism, not a refusal).
 
 **API** (admin only): `GET /__api/prompts` (blocks: default, override, effective), `PUT /__api/prompts/:id`,
 `DELETE /__api/prompts/:id` (reset), `GET /__api/prompts/effective?session=|agent=&engine=` (the exact text a session

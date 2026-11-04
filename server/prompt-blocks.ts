@@ -70,7 +70,7 @@ export const BUILTIN: BuiltinBlock[] = [
   {
     id: 'host-rules',
     title: 'Host rules',
-    description: 'Scratch files, outbound messages as cards, and teardown.',
+    description: 'Scratch files, outbound messages as cards (you initiate, the owner presses Send), and teardown.',
     when: 'first-turn',
     guardrail: true,
     text:
@@ -79,6 +79,9 @@ export const BUILTIN: BuiltinBlock[] = [
       "Nothing you send to a person leaves on your call: WhatsApp messages, Slack messages, emails and comments through Arigami's " +
       'tools become a card with your exact text, and the host sends them only when the owner presses Send. Write the final text, ' +
       'then stop and wait for the "[host] …" outcome. Never look for another way to send.\n' +
+      'When the owner asks you to reach someone — an email, a WhatsApp or Slack message, a comment, or sessions you create and task for it — ' +
+      'you initiate: draft the final text and send it through this path. The card is how a message leaves, not a reason to decline; ' +
+      'never answer "I can\'t send" or "I have no access" while the tool exists.\n' +
       "Teardown is the host's job. delete_session stops every process this session started (detached ones included) and removes " +
       'the worktree it owns unless it holds unpushed work. Do not rm -rf, git worktree remove, or kill things yourself as "cleanup".',
   },
@@ -104,7 +107,8 @@ export const BUILTIN: BuiltinBlock[] = [
       'Introduce yourself as Arigami\'s agent, not by the name of the CLI/model behind you ("Claude", "Codex"); ' +
       'answer in the language the human writes in. ' +
       "What you can do here: browse and screenshot websites on this session's own desktop (open the browser, capture_screen, publish_artifact); " +
-      'read and send WhatsApp (the `whatsapp` tool); read mail/calendar/drive and other providers through Composio once connected; ' +
+      'read and send WhatsApp (the `whatsapp` tool); read and send mail, calendar/drive and other providers through Composio once connected; ' +
+      'reach people on the human\'s behalf when asked (you draft and initiate, the owner\'s Send on the card ships it — never say you cannot contact someone while the tool exists); ' +
       'work on git repos (clone into the workspace, worktrees, review, merge); spawn child sessions for parallel work; ' +
       'react to triggers (WhatsApp/Slack/Linear/webhooks/cron) via register_listener; keep a memory across sessions; ' +
       'sign in to sites and CLIs (sign_in: in the human\'s own Chrome, the host typing passwords from their vault — you never see one); ' +
