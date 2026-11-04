@@ -87,6 +87,9 @@ export const handsFreeHooks = {
   },
 };
 
+/** One line under the hands-free HUD (the call fallback uses it). */
+export function setHandsFreeNote(note) { if (state.active) set({ note: String(note || '') }); }
+
 export function startHandsFree(sessionId) {
   if (!sessionId) return;
   if (state.active) stopHandsFree('restart');

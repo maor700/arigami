@@ -47,13 +47,16 @@ export function VoicePhoneSection({ caps, budget, admin, busy, onConnect, onDisc
           return (
             <div key={c.id} className={ROW} data-voice-row={c.id}>
               <StatusPill status={c.ok ? 'ok' : stopped ? 'todo' : 'off'} label={c.ok ? (stopped ? t('settings.connections.voice.softStopped') : t('setup.connections.on')) : c.data?.disabled ? t('setup.connections.off') : c.data?.rejected ? t('setup.state.failed') : t('settings.connections.voice.keyStored')} />
-              <span className="min-w-0 flex-1 truncate">
-                <span className="font-medium">{c.title || capTitle(t, c.id)}</span>
-                <span dir="ltr" className="ms-2 font-mono text-xs text-fgdim">
-                  {(c.data?.kinds || []).join('/')}
-                  {u ? ` · ${t('settings.connections.voice.usage', { usd: fmtUsd(u.usd) })}` : ''}
-                  {cap ? ` / $${fmtUsd(cap)}` : ''}
+              <span className="min-w-0 flex-1">
+                <span className="block truncate">
+                  <span className="font-medium">{c.title || capTitle(t, c.id)}</span>
+                  <span dir="ltr" className="ms-2 font-mono text-xs text-fgdim">
+                    {(c.data?.kinds || []).join('/')}
+                    {u ? ` · ${t('settings.connections.voice.usage', { usd: fmtUsd(u.usd) })}` : ''}
+                    {cap ? ` / $${fmtUsd(cap)}` : ''}
+                  </span>
                 </span>
+                <span className="block truncate text-[11px] text-fgdim" data-voice-privacy>{t('settings.connections.voice.privacy')}</span>
               </span>
               {admin && (
                 <input

@@ -4,8 +4,9 @@ import { useStore } from '../lib/store.js';
 import { usePrefs, setPrefs } from '../lib/prefs.js';
 import { ttsSource, handsFreeAvailable, useSpeak, bargeIn, unlockAudio } from '../lib/speak.js';
 import { useHandsFree, toggleHandsFree } from '../lib/handsfree.js';
+import { useCall, toggleCall, callAvailable } from '../lib/call.js';
 import { useT } from '../lib/i18n.js';
-import { HeadphonesIcon, SquareIcon, Volume2Icon, VolumeXIcon } from 'lucide-react';
+import { HeadphonesIcon, PhoneCallIcon, SquareIcon, Volume2Icon, VolumeXIcon } from 'lucide-react';
 import { Tip, TooltipProvider } from './ui/index.js';
 
 const BOX = 'relative flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md text-sm coarse:size-11 [&_svg]:size-4';
@@ -61,6 +62,32 @@ export function HandsFreeButton({ sessionId, className = BOX }) {
           className={`${className} ${active ? LIVE : IDLE}`}
         >
           <HeadphonesIcon />
+        </button>
+      </Tip>
+    </TooltipProvider>
+  );
+}
+
+// Stage 1c: a call with the realtime clerk — only while a realtime provider is connected (nothing otherwise).
+export function CallButton({ sessionId, className = BOX }) {
+  const t = useT();
+  const { config } = useStore();
+  const call = useCall();
+  if (!callAvailable(config)) return null;
+  const active = call.active && call.sessionId === sessionId;
+  const label = active ? t('dialogs.call.hangUp') : t('dialogs.call');
+  return (
+    <TooltipProvider>
+      <Tip label={label}>
+        <button
+          type="button"
+          data-voice-call={active ? 'on' : 'off'}
+          aria-label={label}
+          aria-pressed={active}
+          onClick={() => { unlockAudio(); toggleCall(sessionId); }}
+          className={`${className} ${active ? LIVE : IDLE}`}
+        >
+          <PhoneCallIcon />
         </button>
       </Tip>
     </TooltipProvider>

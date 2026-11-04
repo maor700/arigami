@@ -126,4 +126,5 @@ export const strings = {
 
   // קלף צ'אט
   'ext.card.from': 'הרחבה',
+  'ext.card.voice': 'הפקיד הקולי',
 };

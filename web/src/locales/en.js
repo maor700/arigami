@@ -175,6 +175,7 @@ export const en = {
   'settings.connections.voice': 'Voice & phone',
   'settings.connections.voice.hint': 'Speech, voice and phone providers. Keys stay on this host; the agent never sees them.',
   'settings.connections.voice.enabled': 'Voice layer',
+  'settings.connections.voice.privacy': 'Project content passes through the provider: what the clerk hears, what it says and every tool result.',
   'settings.connections.voice.enabled.hint': 'Off: every voice provider reads as not connected and voice tools answer "disabled".',
   'settings.connections.voice.cap': 'Monthly cap (USD)',
   'settings.connections.voice.noCap': 'no cap',

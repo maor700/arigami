@@ -36,7 +36,7 @@ import { openAgent } from './DelegatedLine.jsx';
 import { contextColor } from './ui.jsx';
 import ContextModal from './ContextModal.jsx';
 import MicButton from './MicButton.jsx';
-import { HandsFreeButton, ReadAloudButton } from './VoiceOutButtons.jsx';
+import { CallButton, HandsFreeButton, ReadAloudButton } from './VoiceOutButtons.jsx';
 import { armReadAloud, readAloudOn, unlockAudio } from '../lib/speak.js';
 import { getPrefs } from '../lib/prefs.js';
 import ComposerPill from './ComposerPill.jsx';
@@ -738,6 +738,7 @@ export function ChatFooter({ session }) {
                 </Button>
               </Tip>
             )}
+            <CallButton sessionId={session.id} />
             <HandsFreeButton sessionId={session.id} />
             <ReadAloudButton sessionId={session.id} />
             <MicButton mode="dictate" />

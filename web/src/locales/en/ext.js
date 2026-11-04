@@ -126,4 +126,5 @@ export const strings = {
 
   // chat card
   'ext.card.from': 'extension',
+  'ext.card.voice': 'voice clerk',
 };

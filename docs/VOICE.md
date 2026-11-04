@@ -84,3 +84,36 @@ Call `requireVoiceProvider(kind)` first and return its non-ok shapes as the tool
   `AudioContext.resume()`, an empty utterance), so iOS allows the later programmatic plays.
 - **Tests**: `test/voice-tts.test.ts` (endpoint logic against a stubbed vendor), `test/speak-web.test.js` (chunker, queue, gating,
   barge-in, unlock, hands-free HUD).
+
+## Stage 1c — the voice clerk (full duplex, `server/voice-realtime.ts`, `web/src/lib/call.js`)
+
+- **What it is**: a realtime speech model (OpenAI Realtime over WebRTC) holds the conversation — turns, barge-in, "רגע, בודק" — and
+  delegates the real work to the existing sessions through tools the host runs. Claude/Codex are never in the latency path.
+- **Mint** `POST /__api/voice/realtime/session {sessionId, lang?}`: `requireVoiceProvider('realtime')` first (its shapes come back as
+  JSON 200), then `POST {base}/v1/realtime/client_secrets` with the stored key → `{callId, clientSecret, expiresAt, model, voice, callsUrl}`.
+  The secret is an ephemeral `ek_…` (10 min, SDP handshake only); the API key never leaves the host. Model = `config.voice.realtime.model`
+  (default `gpt-realtime-2.1`; `gpt-realtime-2.1-mini` is the cheap pick), voice = `config.voice.realtime.voice` (default `marin`), both file-only.
+  The session config carries the clerk persona (`CLERK_INSTRUCTIONS`), server VAD with `interrupt_response` (native barge-in), input
+  transcription (`gpt-4o-transcribe`, the mic language), and the five tool schemas.
+- **Tools** (`CLERK_TOOLS`, run by the host with the cockpit's own paths — `clerkHost()` in `api.ts`): `list_sessions` (id, title, status,
+  folder, working), `session_status(id)` (+ `metadata.result` summary), `ask_session(id, prompt)` (the normal message path, then the turn's
+  final `assistant-text` is awaited ≤ 90 s, else `still working` + what it said so far), `create_session(title, prompt)`, `interrupt_session(id)`.
+  No sending to third parties, no merge, no delete, no notify. The browser relays `response.function_call_arguments.done` to
+  `POST /__api/voice/realtime/tool {sessionId, callId, name, args}` and sends the result back as `function_call_output` + `response.create`.
+  Unknown tool / bad call → 400 / 403; a tool error comes back as `{ok:false, error}` so the clerk can say it.
+- **Calls** live in memory, keyed by `callId`, bound to the session that minted them; every post must name both. `POST …/transcript
+  {turns:[{role, text, id?}]}` grows the call's transcript (same `id` = the turn's final text). `POST …/end {seconds, reason}` records minutes
+  in the ledger — the browser's number is trusted only inside the call's own window (`now − startedAt + 5 s`, ≤ 2 h) — and writes the
+  transcript. A browser that goes quiet for 10 min is swept with the time it was last seen.
+- **Audit trail**: every tool call lands in the calling session's chat as a compact `ext-card` (`extension:'voice'`: what was asked, what came
+  back, `voice:{callId, tool, ms}`); the spoken transcript lands once per call as one more card (`voice:{seconds, turns, tools, reason}`).
+- **Web**: the phone button next to the headphones (composer) exists only while `config.voiceProviders.realtime` is non-empty and the layer
+  is on — no provider, no change. `startCall()` mints, opens `RTCPeerConnection` (mic track up, remote audio down, data channel `oai-events`),
+  POSTs the SDP offer to `callsUrl` with the ephemeral secret, and the HUD shows connecting / listening / speaking / checking (tool name),
+  with Mute and Hang up (Esc too). A connection that fails falls back to the 1b hands-free mode with one line (or a toast without 1b).
+  `unlockAudio()` runs inside the tap (iOS).
+- **Privacy**: everything the clerk hears, everything it says and every tool result passes through the provider as audio/text. Connecting
+  the provider is the consent; Settings → Voice & phone says so next to each provider.
+- **Tests**: `test/voice-realtime.test.ts` (mint, call window, executor, audit cards), `test/voice-realtime-host.test.ts` (the routes on an
+  isolated host against a fake OpenAI via `ARIGAMI_OPENAI_API_BASE`), `test/voice-call-web.test.js` (gating, fake WebRTC flow, tool
+  round-trip, transcript, hang-up, fallback).
