@@ -4,9 +4,9 @@ import { useStore } from '../lib/store.js';
 import { usePrefs, setPrefs } from '../lib/prefs.js';
 import { ttsSource, handsFreeAvailable, useSpeak, bargeIn, unlockAudio } from '../lib/speak.js';
 import { useHandsFree, toggleHandsFree } from '../lib/handsfree.js';
-import { useCall, toggleCall, callAvailable } from '../lib/call.js';
+import { useCall, toggleCall, toggleGlobalCall, callAvailable } from '../lib/call.js';
 import { useT } from '../lib/i18n.js';
-import { HeadphonesIcon, PhoneCallIcon, SquareIcon, Volume2Icon, VolumeXIcon } from 'lucide-react';
+import { HeadphonesIcon, PhoneCallIcon, PhoneOffIcon, SquareIcon, Volume2Icon, VolumeXIcon } from 'lucide-react';
 import { Tip, TooltipProvider } from './ui/index.js';
 
 const BOX = 'relative flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md text-sm coarse:size-11 [&_svg]:size-4';
@@ -88,6 +88,33 @@ export function CallButton({ sessionId, className = BOX }) {
           className={`${className} ${active ? LIVE : IDLE}`}
         >
           <PhoneCallIcon />
+        </button>
+      </Tip>
+    </TooltipProvider>
+  );
+}
+
+// Stage 1d: the rail's global phone — one call for everything, anchored in the voice home session, the open session as the
+// clerk's default subject; on while ANY call is live (one at a time). No realtime provider → nothing.
+export function RailCallButton({ contextSessionId, className = BOX }) {
+  const t = useT();
+  const { config } = useStore();
+  const call = useCall();
+  if (!callAvailable(config)) return null;
+  const active = call.active;
+  const label = active ? t('dialogs.call.hangUp') : `${t('dialogs.call')} — ${t('dialogs.call.globalHint')}`;
+  return (
+    <TooltipProvider>
+      <Tip label={label}>
+        <button
+          type="button"
+          data-rail-call={active ? 'on' : 'off'}
+          aria-label={active ? t('dialogs.call.hangUp') : t('dialogs.call')}
+          aria-pressed={active}
+          onClick={() => { unlockAudio(); toggleGlobalCall(contextSessionId); }}
+          className={`${className} border ${active ? LIVE : IDLE}`}
+        >
+          {active ? <PhoneOffIcon /> : <PhoneCallIcon />}
         </button>
       </Tip>
     </TooltipProvider>

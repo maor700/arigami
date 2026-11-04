@@ -9,13 +9,14 @@ import { armReadAloud, stopSpeaking, bargeIn, unlockAudio } from './speak.js';
 export const HANDS_FREE_IDLE_MS = 120_000; // nobody said anything for this long → exit
 const MAX_ERRORS = 3;
 
-let state = { active: false, phase: 'idle', sessionId: null, lastText: '', note: '', since: 0 };
+let state = { active: false, phase: 'idle', sessionId: null, lastText: '', note: '', muted: false, since: 0 };
 const listeners = new Set();
 function set(patch) {
   state = { ...state, ...patch };
   for (const fn of listeners) fn();
 }
 const subscribe = (fn) => { listeners.add(fn); return () => listeners.delete(fn); };
+export const subscribeHandsFree = subscribe;
 export const getHandsFree = () => state;
 export function useHandsFree() {
   return useSyncExternalStore(subscribe, getHandsFree, getHandsFree);
@@ -65,7 +66,7 @@ export const handsFreeHooks = {
       set({ note: String(e?.message || e) });
       sync();
     }
-    if (state.active) listen(); // mic back on at once: the next word is a barge-in or the next message
+    if (state.active && !state.muted) listen(); // mic back on at once: the next word is a barge-in or the next message
   },
   // the person started talking over the answer → stop playback now, interrupt the turn if it still streams
   onSpeechStart() {
@@ -75,12 +76,12 @@ export const handsFreeHooks = {
   },
   // a quiet take ended with nothing said: keep listening, or leave after a long silence
   onIdle() {
-    if (!state.active) return 'exit';
+    if (!state.active || state.muted) return 'exit';
     if (!waiting && !speaking && Date.now() - lastActivity >= HANDS_FREE_IDLE_MS) { stopHandsFree('silence'); return 'exit'; }
     return 'again';
   },
   onError(msg) {
-    if (!state.active) return 'exit';
+    if (!state.active || state.muted) return 'exit';
     set({ note: String(msg || '') });
     if (++errors >= MAX_ERRORS) { stopHandsFree('error'); return 'exit'; }
     return 'again';
@@ -99,7 +100,7 @@ export function startHandsFree(sessionId) {
   errors = 0;
   lastActivity = Date.now();
   setHandsFreeHooks(handsFreeHooks);
-  set({ active: true, sessionId, lastText: '', note: '', since: Date.now() });
+  set({ active: true, sessionId, lastText: '', note: '', muted: false, since: Date.now() });
   sync();
   listen();
 }
@@ -112,7 +113,18 @@ export function stopHandsFree(reason = 'stop') {
   waiting = false;
   speaking = false;
   lastEnd = { reason, at: Date.now() };
-  set({ active: false, phase: 'idle' });
+  set({ active: false, phase: 'idle', muted: false });
+}
+
+// Stage 1d: mute closes the mic (the answer still plays; nothing is sent), unmute opens it again. The silence
+// timeout only counts while listening, so a muted conversation stays until it is unmuted or ended.
+export function toggleHandsFreeMute() {
+  if (!state.active) return false;
+  const muted = !state.muted;
+  set({ muted });
+  if (muted) cancel();
+  else { lastActivity = Date.now(); listen(); }
+  return muted;
 }
 
 export function toggleHandsFree(sessionId) {
@@ -120,4 +132,4 @@ export function toggleHandsFree(sessionId) {
   else startHandsFree(sessionId);
 }
 
-if (typeof window !== 'undefined') window.__arigamiHandsFree = { startHandsFree, stopHandsFree, toggleHandsFree, getHandsFree, hooks: handsFreeHooks };
+if (typeof window !== 'undefined') window.__arigamiHandsFree = { startHandsFree, stopHandsFree, toggleHandsFree, toggleHandsFreeMute, getHandsFree, hooks: handsFreeHooks };

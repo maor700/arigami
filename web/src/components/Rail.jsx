@@ -1,3 +1,4 @@
+import { RailCallButton } from './VoiceOutButtons.jsx';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
@@ -1840,8 +1841,10 @@ export default function Rail({
         <Logo size="1.25rem" />
         <span className="text-sm font-semibold tracking-tight text-foreground">Arigami</span>
         <MachineChip />
+        {/* stage 1d: the global voice call (only with a realtime provider) */}
+        <span className="ms-auto flex items-center"><RailCallButton contextSessionId={selectedId} /></span>
         {!isDesktop && (
-          <Button variant="ghost" size="icon" onClick={onClose} aria-label={t('rail.closeSessions')} className="ms-auto text-muted-foreground">
+          <Button variant="ghost" size="icon" onClick={onClose} aria-label={t('rail.closeSessions')} className="text-muted-foreground">
             <X />
           </Button>
         )}

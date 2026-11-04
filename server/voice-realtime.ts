@@ -53,7 +53,7 @@ const TOOL_NAMES = new Set<string>(CLERK_TOOLS.map((t) => t.name));
 
 // ---- live calls (in memory; a host restart forgets them) ----
 export interface Turn { role: 'user' | 'assistant'; text: string; id?: string }
-interface Call { id: string; sessionId: string; provider: string; model: string; lang: string; startedAt: number; lastSeen: number; turns: Turn[]; tools: number }
+interface Call { id: string; sessionId: string; contextSessionId?: string | null; provider: string; model: string; lang: string; startedAt: number; lastSeen: number; turns: Turn[]; tools: number }
 const calls = new Map<string, Call>();
 export const liveCall = (callId: string): Readonly<Call> | null => calls.get(callId) || null;
 export const liveCallCount = (): number => calls.size;
@@ -77,12 +77,20 @@ export function geminiVoice(): string {
   return typeof v === 'string' && GEMINI_VOICE_RE.test(v) ? v : DEFAULT_GEMINI_VOICE;
 }
 /** The Live-API `setup` the browser sends first (pure; tests read it): same persona and tools, PCM audio both ways, transcripts on. */
-export function geminiSetup({ model = geminiModel(), voice = geminiVoice(), handle = '' } = {}): Record<string, unknown> {
+// Stage 1d: the session the owner has open when a global call starts — the clerk's default subject for "this one".
+export interface ClerkContext { id: string; title?: string }
+export function clerkInstructions(context: ClerkContext | null = null): string {
+  if (!context?.id) return CLERK_INSTRUCTIONS;
+  const title = String(context.title || '').replace(/["\n\r]/g, ' ').slice(0, 120);
+  return `${CLERK_INSTRUCTIONS} The owner has the session "${title || 'untitled'}" (id ${context.id}) open right now: when they say "this", "here" or name no session, they mean that one.`;
+}
+
+export function geminiSetup({ model = geminiModel(), voice = geminiVoice(), handle = '', context = null as ClerkContext | null } = {}): Record<string, unknown> {
   const blocking = /^gemini-3\.8-live$/.test(model); // 3.8-live defaults to NON_BLOCKING; the clerk waits for its tools
   return {
     model: `models/${model}`,
     generationConfig: { responseModalities: ['AUDIO'], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } } } },
-    systemInstruction: { parts: [{ text: CLERK_INSTRUCTIONS }] },
+    systemInstruction: { parts: [{ text: clerkInstructions(context) }] },
     tools: [{ functionDeclarations: CLERK_TOOLS.map((t) => ({ name: t.name, description: t.description, parameters: t.parameters, ...(blocking ? { behavior: 'BLOCKING' } : {}) })) }],
     realtimeInputConfig: { automaticActivityDetection: {}, activityHandling: 'START_OF_ACTIVITY_INTERRUPTS' },
     inputAudioTranscription: {},
@@ -94,11 +102,11 @@ export function geminiSetup({ model = geminiModel(), voice = geminiVoice(), hand
 export const geminiWsUrl = (): string => `${geminiBase().replace(/^http/, 'ws')}/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained`;
 
 /** The session config sent to OpenAI (pure; tests read it). */
-export function realtimeSessionConfig({ model = realtimeModel(), voice = realtimeVoice(), lang = '' } = {}): Record<string, unknown> {
+export function realtimeSessionConfig({ model = realtimeModel(), voice = realtimeVoice(), lang = '', context = null as ClerkContext | null } = {}): Record<string, unknown> {
   return {
     type: 'realtime',
     model,
-    instructions: CLERK_INSTRUCTIONS,
+    instructions: clerkInstructions(context),
     output_modalities: ['audio'],
     audio: {
       input: { transcription: { model: 'gpt-4o-transcribe', ...(lang ? { language: lang } : {}) }, turn_detection: { type: 'server_vad', create_response: true, interrupt_response: true } },
@@ -112,30 +120,42 @@ export function realtimeSessionConfig({ model = realtimeModel(), voice = realtim
 const sessionIdOf = (body: Record<string, unknown>): string | null => (typeof body?.sessionId === 'string' && SESSION_ID_RE.test(body.sessionId) ? body.sessionId : null);
 const langOf = (body: Record<string, unknown>): string => (typeof body?.lang === 'string' && /^[a-z]{2}$/.test(body.lang) ? body.lang : '');
 
-/** POST /__api/voice/realtime/session {sessionId, lang?} → the gate's shape, or {transport, callId, …} for the connected realtime provider. */
-export async function mintRealtimeSession(body: Record<string, unknown>, opts: { fetchImpl?: typeof fetch; now?: () => number } = {}): Promise<Json> {
-  const sessionId = sessionIdOf(body);
-  if (!sessionId) return bad('sessionId required');
+export type MintHost = Pick<ClerkHost, 'getSession'> & { voiceHome?(): { id: string } };
+/** POST /__api/voice/realtime/session {sessionId | home:true, contextSessionId?, takeover?, lang?} → the gate's shape, or
+ *  {transport, callId, sessionId, …}. Stage 1d: `home` anchors the call in the voice home session (the rail's global button);
+ *  only one call is live at a time — another one answers 409 {busy} unless `takeover` ends it first. */
+export async function mintRealtimeSession(body: Record<string, unknown>, opts: { fetchImpl?: typeof fetch; now?: () => number; host?: MintHost | null } = {}): Promise<Json> {
+  const home = body?.home === true && !body?.sessionId;
+  if (home && !opts.host?.voiceHome) return bad('no voice home session on this host', 500);
+  const sessionId = home ? null : sessionIdOf(body);
+  if (!home && !sessionId) return bad('sessionId required');
   const gate = requireVoiceProvider('realtime', 'hold a live voice conversation');
   if (!('ok' in gate) || !gate.ok) return json(200, gate);
   const provider = gate.provider;
   const token = providerSecretFields(provider)?.token;
   if (!token) return bad(`no key stored for ${provider}`, 502);
   sweep(opts.now);
+  if (calls.size && body?.takeover !== true) return json(409, { error: 'another voice call is live', busy: true });
+  const anchor = home ? opts.host!.voiceHome!().id : sessionId!;
+  const ctxId = typeof body?.contextSessionId === 'string' && SESSION_ID_RE.test(body.contextSessionId) && body.contextSessionId !== anchor ? body.contextSessionId : null;
+  const ctxSession = ctxId ? opts.host?.getSession(ctxId) : null;
+  const context = ctxSession && !ctxSession.archived ? { id: ctxSession.id, title: ctxSession.title } : null;
   const lang = langOf(body);
   const f = opts.fetchImpl || fetch;
   const t0 = Date.now();
   try {
-    const minted = provider === 'voice:gemini' ? await mintGemini(token, f, opts.now) : await mintOpenAI(token, f, lang);
+    const minted = provider === 'voice:gemini' ? await mintGemini(token, f, opts.now, context) : await mintOpenAI(token, f, lang, context);
     if ('error' in minted) {
       console.error(`[voice-realtime] ${provider} answered ${minted.status} after ${Date.now() - t0}ms`);
       return bad(scrubProviderSecrets(minted.error, provider), 502);
     }
     const now = (opts.now || Date.now)();
-    const call: Call = { id: newCallId(), sessionId, provider, model: String(minted.body.model), lang, startedAt: now, lastSeen: now, turns: [], tools: 0 };
+    // takeover: the call that was live ends only once this one is minted (a failed mint leaves it alone)
+    for (const c of [...calls.values()]) finish(c, Math.min(MAX_CALL_S, Math.round((now - c.startedAt) / 1000)), 'takeover', sweepHost);
+    const call: Call = { id: newCallId(), sessionId: anchor, contextSessionId: context?.id || null, provider, model: String(minted.body.model), lang, startedAt: now, lastSeen: now, turns: [], tools: 0 };
     calls.set(call.id, call);
-    console.log(`[voice-realtime] call ${call.id} for ${sessionId} (${call.model}) minted in ${Date.now() - t0}ms`);
-    return json(200, { ok: true, callId: call.id, provider, ...minted.body });
+    console.log(`[voice-realtime] call ${call.id} for ${anchor}${context ? ` (context ${context.id})` : ''} (${call.model}) minted in ${Date.now() - t0}ms`);
+    return json(200, { ok: true, callId: call.id, provider, sessionId: anchor, contextSessionId: context?.id || null, ...minted.body });
   } catch (e) {
     const msg = scrubProviderSecrets((e as Error)?.message || String(e), provider);
     console.error(`[voice-realtime] mint failed: ${msg}`);
@@ -151,13 +171,13 @@ const readJson = async (res: Response): Promise<{ detail: string; j: Record<stri
 };
 
 // OpenAI: an ephemeral client secret for the WebRTC handshake, the session config attached to it.
-async function mintOpenAI(token: string, f: typeof fetch, lang: string): Promise<Minted> {
+async function mintOpenAI(token: string, f: typeof fetch, lang: string, context: ClerkContext | null = null): Promise<Minted> {
   const model = realtimeModel();
   const voice = realtimeVoice();
   const res = await f(`${openaiBase()}/v1/realtime/client_secrets`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-    body: JSON.stringify({ expires_after: { anchor: 'created_at', seconds: SECRET_TTL_S }, session: realtimeSessionConfig({ model, voice, lang }) }),
+    body: JSON.stringify({ expires_after: { anchor: 'created_at', seconds: SECRET_TTL_S }, session: realtimeSessionConfig({ model, voice, lang, context }) }),
     signal: AbortSignal.timeout(MINT_TIMEOUT_MS),
   });
   const { detail, j } = await readJson(res);
@@ -167,7 +187,7 @@ async function mintOpenAI(token: string, f: typeof fetch, lang: string): Promise
 }
 
 // Gemini: an ephemeral auth token for the Live WebSocket; the browser sends the host-built `setup` itself.
-async function mintGemini(token: string, f: typeof fetch, now: () => number = Date.now): Promise<Minted> {
+async function mintGemini(token: string, f: typeof fetch, now: () => number = Date.now, context: ClerkContext | null = null): Promise<Minted> {
   const model = geminiModel();
   const voice = geminiVoice();
   const t = now();
@@ -180,7 +200,7 @@ async function mintGemini(token: string, f: typeof fetch, now: () => number = Da
   const { detail, j } = await readJson(res);
   const name = j && typeof j.name === 'string' ? j.name : '';
   if (!res.ok || !name) return { status: res.status, error: `Gemini answered ${res.status}${res.ok ? ' without a token' : detail ? `: ${detail}` : ''}` };
-  return { body: { transport: 'gemini-ws', token: name, expiresAt: Math.floor(t / 1000) + MAX_CALL_S, model, voice, wsUrl: geminiWsUrl(), setup: geminiSetup({ model, voice }) } };
+  return { body: { transport: 'gemini-ws', token: name, expiresAt: Math.floor(t / 1000) + MAX_CALL_S, model, voice, wsUrl: geminiWsUrl(), setup: geminiSetup({ model, voice, context }) } };
 }
 
 // A call the browser names must exist, belong to the session, and be alive.

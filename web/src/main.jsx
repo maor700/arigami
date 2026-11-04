@@ -5,6 +5,7 @@ import { UiProvider } from './components/ui/direction.jsx';
 import { startStore } from './lib/store.js';
 import { installViewportTracking } from './lib/viewport.js';
 import { installChatTextShortcuts } from './lib/chatTextShortcuts.js';
+import { installVoiceKeepAlive } from './lib/wakeLock.js';
 import '@fontsource-variable/inter/index.css'; // Latin UI face — self-hosted
 import '@fontsource-variable/rubik/index.css'; // Latin + Hebrew (variable) — self-hosted
 import './index.css';
@@ -21,6 +22,7 @@ if (!STYLEGUIDE) {
   startStore();
   installViewportTracking();
   installChatTextShortcuts();
+  installVoiceKeepAlive(); // stage 1d: screen stays on during a call / hands-free; a dropped call resumes on return
 }
 
 const Root = STYLEGUIDE ? React.lazy(() => import('./components/StyleGuide.jsx')) : App;

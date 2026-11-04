@@ -265,6 +265,9 @@ export const strings = {
   'dialogs.handsFree.thinking': 'Thinking…',
   'dialogs.handsFree.speaking': 'Speaking…',
   'dialogs.handsFree.hint': 'Talk over the answer to interrupt it. Esc, the button or "stop" ends the conversation.',
+  'dialogs.handsFree.muted': 'Muted',
+  // Stage 1d — the floating voice box
+  'dialogs.voiceDock.move': 'Move the box — drag it, or use the arrow keys (Home puts it back)',
   // Stage 1c — the voice clerk (call mode)
   'dialogs.call': 'Call the voice clerk',
   'dialogs.call.hangUp': 'Hang up',
@@ -277,6 +280,10 @@ export const strings = {
   'dialogs.call.hint': 'Talk over the clerk to interrupt it. It asks your sessions for the real work. Esc or Hang up ends the call.',
   'dialogs.call.failed': 'The call could not connect ({why}).',
   'dialogs.call.fallback': 'Continuing hands-free instead.',
+  'dialogs.call.busy': 'Another voice call is live (maybe on another device).',
+  'dialogs.call.takeOver': 'End it and call',
+  'dialogs.call.dropped': 'The call dropped while the screen was away, so it ended.',
+  'dialogs.call.globalHint': 'one call for everything; the open session is its default subject',
   'dialogs.voiceLangAuto': 'Auto ({lang})',
   'dialogs.voiceListeningAnswer': 'Listening for your answer…',
   'dialogs.voiceRelisten': 'Opening the mic…',

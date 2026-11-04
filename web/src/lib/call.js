@@ -18,13 +18,14 @@ export const callAvailable = (config) => {
   return !!vp && vp.enabled !== false && Array.isArray(vp.realtime) && vp.realtime.length > 0;
 };
 
-let state = { active: false, phase: 'idle', sessionId: null, callId: null, provider: null, muted: false, lastText: '', note: '', tool: '', since: 0 };
+let state = { active: false, phase: 'idle', sessionId: null, global: false, contextSessionId: null, callId: null, provider: null, muted: false, lastText: '', note: '', tool: '', since: 0 };
 const listeners = new Set();
 function set(patch) {
   state = { ...state, ...patch };
   for (const fn of listeners) fn();
 }
 const subscribe = (fn) => { listeners.add(fn); return () => listeners.delete(fn); };
+export const subscribeCall = subscribe;
 export const getCall = () => state;
 export function useCall() {
   return useSyncExternalStore(subscribe, getCall, getCall);
@@ -68,25 +69,46 @@ const hooksFor = (l) => ({
   turn(t) { if (live === l) addTurn(l, t); },
   tool(ev) { if (live === l) runTool(l, ev); },
   error(msg) { if (live === l) set({ note: String(msg || 'error') }); },
-  lost(connected) { if (live === l && state.active) hangUp(connected ? 'lost' : 'failed'); },
+  // stage 1d: a drop while the screen is off/backgrounded waits for the page to come back (resumeCall) instead of ending
+  lost(connected) {
+    if (live !== l || !state.active) return;
+    if (connected && pageHidden()) { l.suspended = true; set({ phase: 'connecting' }); return; }
+    hangUp(connected ? 'lost' : 'failed');
+  },
 });
+const pageHidden = () => typeof document !== 'undefined' && document.visibilityState === 'hidden';
 
-/** Start a call for `sessionId`; a failed connection falls back to the 1b hands-free mode with one line. */
-export async function startCall(sessionId) {
-  if (!sessionId) return false;
+// The host's mint: a 409 means another call is live (stage 1d: one at a time, on any device).
+async function mint(body) {
+  try {
+    const m = await api.post('/voice/realtime/session', { ...body, lang: micLang() });
+    if (!m?.ok) throw new Error(noteOf(m));
+    return m;
+  } catch (e) {
+    if (e?.status === 409 || e?.body?.busy) throw new Error('busy');
+    throw e;
+  }
+}
+
+/** Start a call for `sessionId`, or (stage 1d, `home`) one anchored in the voice home session with `contextSessionId` as the
+ *  clerk's default subject. A failed connection falls back to the 1b hands-free mode with one line; a busy line offers a takeover. */
+export async function startCall(sessionId, opts = {}) {
+  const home = !!opts.home;
+  if (!sessionId && !home) return false;
   if (state.active) await hangUp('restart');
   unlockAudio();
-  set({ active: true, phase: 'connecting', sessionId, callId: null, provider: null, muted: false, lastText: '', note: '', tool: '', since: Date.now() });
-  const l = { sessionId, callId: null, conn: null, turns: [], timer: null };
+  const contextSessionId = opts.contextSessionId || null;
+  set({ active: true, phase: 'connecting', sessionId: sessionId || null, global: home, contextSessionId, callId: null, provider: null, muted: false, lastText: '', note: '', tool: '', since: Date.now() });
+  const l = { sessionId: sessionId || null, contextSessionId, callId: null, conn: null, turns: [], timer: null };
   live = l;
   try {
-    const mint = await api.post('/voice/realtime/session', { sessionId, lang: micLang() });
-    if (!mint?.ok) throw new Error(noteOf(mint));
-    const connect = TRANSPORTS[mint.transport];
-    if (!connect) throw new Error(`unknown transport ${mint.transport}`);
-    l.callId = mint.callId;
-    set({ callId: mint.callId, provider: mint.provider || null });
-    l.conn = await connect({ mint, deps: D(), hooks: hooksFor(l) });
+    const m = await mint({ ...(home ? { home: true } : { sessionId }), ...(contextSessionId ? { contextSessionId } : {}), ...(opts.takeover ? { takeover: true } : {}) });
+    const connect = TRANSPORTS[m.transport];
+    if (!connect) throw new Error(`unknown transport ${m.transport}`);
+    l.callId = m.callId;
+    l.sessionId = m.sessionId || l.sessionId;
+    set({ callId: m.callId, provider: m.provider || null, sessionId: l.sessionId });
+    l.conn = await connect({ mint: m, deps: D(), hooks: hooksFor(l) });
     if (live !== l) { l.conn.close(); return false; } // hung up while connecting
     if (state.phase === 'connecting') set({ phase: 'listening' });
     return true;
@@ -94,12 +116,59 @@ export async function startCall(sessionId) {
     const note = String(e?.message || e);
     if (live === l) live = null;
     try { l.conn?.close(); } catch { /* ignore */ }
-    if (l.callId) api.post('/voice/realtime/end', { sessionId, callId: l.callId, seconds: 0, reason: 'failed' }).catch(() => {});
+    if (l.callId) api.post('/voice/realtime/end', { sessionId: l.sessionId, callId: l.callId, seconds: 0, reason: 'failed' }).catch(() => {});
     set({ active: false, phase: 'idle', callId: null, note });
     lastEnd = { reason: 'failed', note, at: Date.now(), seconds: 0 };
-    fallback(sessionId, note);
+    if (note === 'busy') toastError(tr('dialogs.call.busy'), { action: { label: tr('dialogs.call.takeOver'), onClick: () => startCall(sessionId, { ...opts, takeover: true }) } });
+    else fallback(l.sessionId || contextSessionId, note);
     return false;
   }
+}
+
+/** Stage 1d: the rail's phone button — one call anchored in the voice home session, the open session as context. */
+export function toggleGlobalCall(contextSessionId) {
+  if (state.active) return hangUp('hangup');
+  return startCall(null, { home: true, contextSessionId: contextSessionId || null });
+}
+
+/** Stage 1d: the page is visible again — a dropped call resumes (Gemini: its session handle; OpenAI: re-mint and reconnect
+ *  once), else it ends with one line. Returns 'none' | 'alive' | 'resumed' | 'reconnected' | 'ended'. */
+export async function resumeCall() {
+  const l = live;
+  if (!l || !state.active || !l.conn || l.resuming) return 'none';
+  if (!l.suspended && (l.conn.alive?.() ?? true)) return 'alive';
+  l.resuming = true;
+  let out = 'ended';
+  try {
+    if (l.conn.resume) out = (await l.conn.resume()) ? 'resumed' : 'ended';
+    else out = (await reconnectOnce(l)) ? 'reconnected' : 'ended';
+  } catch { out = 'ended'; }
+  l.resuming = false;
+  if (live !== l) return 'ended';
+  if (out !== 'ended') { l.suspended = false; if (state.phase === 'connecting') set({ phase: 'listening' }); return out; }
+  await hangUp('lost');
+  toastError(tr('dialogs.call.dropped'));
+  return 'ended';
+}
+
+// OpenAI: the peer connection cannot be revived — close it, end the old call on the host, mint a new one for the same anchor.
+async function reconnectOnce(l) {
+  try { l.conn?.close(); } catch { /* ignore */ }
+  if (l.timer) { clearTimeout(l.timer); l.timer = null; }
+  try { await flushTranscript(l); } catch { /* best effort */ }
+  const seconds = Math.max(0, Math.round((Date.now() - state.since) / 1000));
+  await api.post('/voice/realtime/end', { sessionId: l.sessionId, callId: l.callId, seconds, reason: 'resume' }).catch(() => {});
+  l.conn = null;
+  l.turns = [];
+  const m = await mint({ sessionId: l.sessionId, ...(l.contextSessionId ? { contextSessionId: l.contextSessionId } : {}) });
+  if (live !== l) return false;
+  const connect = TRANSPORTS[m.transport];
+  if (!connect) return false;
+  l.callId = m.callId;
+  set({ callId: m.callId, provider: m.provider || null, since: Date.now() });
+  l.conn = await connect({ mint: m, deps: D(), hooks: hooksFor(l) });
+  if (live !== l) { l.conn.close(); return false; }
+  return true;
 }
 
 // The one line the person gets when the call never connected: hands-free (1b) if it exists, else a toast.
@@ -166,7 +235,7 @@ export async function hangUp(reason = 'hangup') {
   live = null;
   const seconds = Math.max(0, Math.round((Date.now() - state.since) / 1000));
   const { sessionId, callId } = state;
-  set({ active: false, phase: 'idle', tool: '', muted: false });
+  set({ active: false, phase: 'idle', tool: '', muted: false, global: false, contextSessionId: null });
   if (l?.timer) { clearTimeout(l.timer); l.timer = null; }
   try { l?.conn?.close(); } catch { /* ignore */ }
   lastEnd = { reason, at: Date.now(), seconds };
@@ -180,4 +249,4 @@ export function toggleCall(sessionId) {
   return startCall(sessionId);
 }
 
-if (typeof window !== 'undefined') window.__arigamiCall = { startCall, hangUp, toggleCall, toggleMute, getCall, onEvent, setCallDeps, callAvailable };
+if (typeof window !== 'undefined') window.__arigamiCall = { startCall, hangUp, toggleCall, toggleGlobalCall, resumeCall, toggleMute, getCall, onEvent, setCallDeps, callAvailable };

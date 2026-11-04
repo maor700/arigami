@@ -2868,6 +2868,16 @@ function clerkHost(): import('./voice-realtime.js').ClerkHost {
   };
 }
 
+// Stage 1d: where a global call (the rail's phone button) lands its audit cards and transcript — one worktree-less session,
+// created on first use and NOT spawned (an agent starts only if the owner types in it), restored if archived.
+function voiceHomeSession(): { id: string } {
+  const all = state.listSessions({ archived: true }).filter((s) => s.metadata?.voiceHome);
+  let s = all[0] || null;
+  if (s?.archived) state.patchSession(s.id, { archived: false });
+  if (!s) s = state.createSession({ title: 'Voice calls', cwd: (cfg as any).reposDir || cfg.defaultCwd, metadata: { voiceHome: true } });
+  return { id: s.id };
+}
+
 function spawnSafe(id: string): void {
   try {
     claude.ensureRunning(id);
@@ -5421,7 +5431,7 @@ export async function handle(
       rt.setSweepHost(clerkHost());
       const sub = p.slice('/__api/voice/realtime/'.length);
       const r =
-        sub === 'session' ? await rt.mintRealtimeSession(body)
+        sub === 'session' ? await rt.mintRealtimeSession(body, { host: { getSession: clerkHost().getSession, voiceHome: voiceHomeSession } })
         : sub === 'tool' ? await rt.handleClerkTool(body, clerkHost())
         : sub === 'transcript' ? rt.addRealtimeTranscript(body)
         : sub === 'end' ? rt.endRealtimeCall(body, clerkHost())

@@ -265,6 +265,9 @@ export const strings = {
   'dialogs.handsFree.thinking': 'חושב…',
   'dialogs.handsFree.speaking': 'מדבר…',
   'dialogs.handsFree.hint': 'אפשר לדבר תוך כדי התשובה כדי לעצור אותה. Esc, הכפתור או "עצור" מסיימים את השיחה.',
+  'dialogs.handsFree.muted': 'מושתק',
+  // Stage 1d — the floating voice box
+  'dialogs.voiceDock.move': 'הזזת התיבה — גרירה או מקשי החצים (Home מחזיר למקום)',
   // שלב 1ג — הפקיד הקולי (מצב שיחה)
   'dialogs.call': 'שיחה עם הפקיד הקולי',
   'dialogs.call.hangUp': 'ניתוק',
@@ -277,6 +280,10 @@ export const strings = {
   'dialogs.call.hint': 'אפשר לדבר תוך כדי כדי לקטוע את הפקיד. את העבודה עצמה הוא מבקש מהסשנים. Esc או ניתוק מסיימים את השיחה.',
   'dialogs.call.failed': 'השיחה לא התחברה ({why}).',
   'dialogs.call.fallback': 'ממשיך בשיחה ללא ידיים במקום.',
+  'dialogs.call.busy': 'כבר יש שיחה קולית פעילה (אולי במכשיר אחר).',
+  'dialogs.call.takeOver': 'לסיים אותה ולהתקשר',
+  'dialogs.call.dropped': 'השיחה נותקה כשהמסך לא היה פעיל, ולכן הסתיימה.',
+  'dialogs.call.globalHint': 'שיחה אחת על הכול; הסשן הפתוח הוא נושא ברירת המחדל',
   'dialogs.voiceLangAuto': 'אוטומטי ({lang})',
   'dialogs.voiceListeningAnswer': 'מקשיב לתשובה שלך…',
   'dialogs.voiceRelisten': 'פותח את המיקרופון…',

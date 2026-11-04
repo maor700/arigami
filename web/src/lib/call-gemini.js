@@ -106,6 +106,14 @@ export async function connectGemini({ mint, deps, hooks }) {
     onMessage: onMsg,
     mute(v) { mic?.mute(!!v); },
     toolResult({ callId, name }, out) { send({ toolResponse: { functionResponses: [{ id: callId, name, response: out && out.error ? out : { result: out } }] } }); },
+    // stage 1d: back from the background — the socket is checked and, if it dropped, reopened once with the session handle
+    alive: () => !closed && !!ws && (ws.readyState === 1 || ws.readyState === undefined),
+    async resume() {
+      if (closed) return false;
+      if (ws && (ws.readyState === 1 || ws.readyState === undefined)) return true;
+      if (!handle) return false;
+      try { ws = await open(true); hooks.phase('listening'); return true; } catch { return false; }
+    },
     close,
   };
 }
