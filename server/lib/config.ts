@@ -214,6 +214,12 @@ export interface MemoryConfig {
   learning: MemoryLearningConfig;
 }
 
+// Voice & phone layer (docs/VOICE.md): one kill-switch + a monthly USD cap per provider id (absent = no cap).
+export interface VoiceConfig {
+  enabled: boolean;
+  caps: Record<string, number>;
+}
+
 export interface NotifyConfig {
   /** WhatsApp JID (…@s.whatsapp.net / …@lid / …@g.us) the host may message. */
   whatsappJid?: string;
@@ -262,6 +268,7 @@ export interface Config {
   share: ShareConfig;
   host: HostConfig;
   telemetry: TelemetryConfig;
+  voice: VoiceConfig;
   memory: MemoryConfig;
   // Model every NEW session starts on (a `claude --model` value: 'opus',
   // 'sonnet', 'haiku', 'opus[1m]', 'best', or a full id). Default 'opus' = the
@@ -405,6 +412,7 @@ export const DEFAULTS: Config = {
   memory: {
     learning: { mode: 'auto', minBatch: 40, maxAgeHours: 48, minFreeMb: 600 },
   },
+  voice: { enabled: true, caps: {} },
   defaultModel: 'opus',
   defaultEffort: 'high',
   defaultEngine: 'claude',
@@ -763,6 +771,21 @@ export function updateTelemetryConfig(patch: Partial<TelemetryConfig>): Telemetr
   const out = { ...file, telemetry: { ...(file.telemetry || {}), ...patch } } as any;
   writeConfigFile(out);
   cfg.telemetry = next;
+  return next;
+}
+
+// Voice kill-switch + caps; a null cap removes it. Same merge pattern as updateTelemetryConfig.
+export function updateVoiceConfig(patch: { enabled?: boolean; caps?: Record<string, number | null> }): VoiceConfig {
+  ensureConfigFile();
+  const file = loadFile() as Partial<Config>;
+  const caps: Record<string, number> = { ...(cfg.voice?.caps || {}) };
+  for (const [k, v] of Object.entries(patch.caps || {})) {
+    if (v === null || !(Number(v) > 0)) delete caps[k];
+    else caps[k] = Number(v);
+  }
+  const next: VoiceConfig = { enabled: typeof patch.enabled === 'boolean' ? patch.enabled : cfg.voice?.enabled !== false, caps };
+  writeConfigFile({ ...file, voice: next } as any);
+  cfg.voice = next;
   return next;
 }
 

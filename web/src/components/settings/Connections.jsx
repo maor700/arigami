@@ -27,13 +27,14 @@ import AddConnection, { composioCap } from './AddConnection.jsx';
 import { Webhooks } from './Channels.jsx';
 import AgentConnectionsPanel from './AgentConnections.jsx';
 import Passwords from './Passwords.jsx';
+import { VoicePhoneSection, voicePresent, useVoiceBudget } from './VoicePhone.jsx';
 import { AgentAvatar } from '../AgentCard.jsx';
 import { Tip } from '../ui/tooltip.jsx';
 import { Section, SettingCard, StatusPill, Field, Toggle, CopyRow, ErrorLine, BTN, BTN_SM, BTN_PRIMARY, BTN_DANGER, ROW, LIST, INPUT, fmtWhen, Advanced } from './shared.jsx';
 
 // Families rendered by a section of their own — everything else falls into the
 // "infrastructure status" list in the drawer (git, desktop, repo:*).
-const OWN_SECTION = new Set(['identity', 'claude', 'codex', 'whatsapp', 'remote', 'push', 'telemetry', 'composio', 'mcp']);
+const OWN_SECTION = new Set(['identity', 'claude', 'codex', 'whatsapp', 'remote', 'push', 'telemetry', 'composio', 'mcp', 'voice', 'telephony']);
 export const CONNECTIONS_ADVANCED_IDS = ['owner', 'claude-more', 'channels', 'remote-advanced', 'status', 'audit'];
 const PICKER_SECTIONS = new Set(['mcp', 'integrations', 'add']);
 
@@ -195,6 +196,7 @@ export default function Connections({ initialAdd = false, section = '' }) {
   const [dialog, setDialog] = useState(null); // capability object → ConnectDialog
   const [picker, setPicker] = useState(PICKER_SECTIONS.has(section));
   const [busy, setBusy] = useState(false);
+  const [voiceTick, setVoiceTick] = useState(0);
 
   const load = useCallback(() => {
     setupApi.overview().then((r) => { setOv(r); setErr(null); }).catch((e) => setErr(e.message));
@@ -226,6 +228,9 @@ export default function Connections({ initialAdd = false, section = '' }) {
   const allCaps = ov?.capabilities || [];
   const leftovers = allCaps.filter((c) => !OWN_SECTION.has(capFamily(c.id)));
   const mcpCaps = allCaps.filter((c) => c.provider === 'native-mcp' || capFamily(c.id) === 'mcp');
+  // Voice & phone (VoicePhone.jsx): its section exists only once a provider holds a key; the rest sit in the picker.
+  const voiceCaps = allCaps.filter((c) => capFamily(c.id) === 'voice' || capFamily(c.id) === 'telephony');
+  const voiceBudget = useVoiceBudget(voicePresent(voiceCaps).length > 0, `${setupTick}:${voiceTick}`);
   const claudeCap = allCaps.find((c) => c.id === 'claude');
   const whatsappCap = { ...(allCaps.find((c) => c.id === 'whatsapp') || { id: 'whatsapp', ...manualFor('whatsapp') }), ok: wa?.status === 'connected' };
   const audit = (ov?.audit || []).slice(-10).reverse();
@@ -317,6 +322,8 @@ export default function Connections({ initialAdd = false, section = '' }) {
         </div>
       </Section>
 
+      <VoicePhoneSection caps={voiceCaps} budget={voiceBudget} admin={admin} busy={busy} onConnect={(c) => setDialog(c)} onDisconnect={disconnect} onChanged={() => { setVoiceTick((n) => n + 1); load(); }} />
+
       {admin && <Passwords />}
 
       <Notifications wa={wa} />
@@ -401,6 +408,7 @@ export default function Connections({ initialAdd = false, section = '' }) {
           mcpCaps={mcpCaps}
           composio={composio}
           whatsappCap={whatsappCap}
+          voiceCaps={voiceCaps}
           busy={busy}
           onPick={(cap) => { setPicker(false); setDialog(cap); }}
           onClose={() => setPicker(false)}

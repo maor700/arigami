@@ -10,7 +10,7 @@ import * as claude from './claude.js';
 import { broadcast, emitLocal } from './bus.js';
 import { cfg, nano, untildify } from './state.js';
 import { skillDir, NAME_RE as SKILL_NAME_RE } from './skills.js';
-import { updateScreenConfig, updateAuthConfig, updateDefaultEngine, defaultEngine } from './lib/config.js';
+import { updateScreenConfig, updateAuthConfig, updateDefaultEngine, defaultEngine, updateVoiceConfig } from './lib/config.js';
 import { syncComposioKey } from './lib/mcp-servers.js';
 import { auth, canReadFullList } from './auth.js';
 import { COMPRESS_MIN, compress, pickEncoding } from './lib/http-compress.js';
@@ -34,6 +34,7 @@ import * as ticketProvision from './ticket-provision.js';
 import * as browserActions from './lib/browser-actions.js';
 import * as sharedDesktop from './lib/shared-desktop.js';
 import * as caps from './capabilities.js';
+import * as vp from './voice-providers.js';
 import * as agents from './agents.js';
 import * as policy from './agent-policy.js';
 import * as ledger from './agent-ledger.js';
@@ -2271,6 +2272,7 @@ async function disconnectCapability(capability: string, owner: caps.Owner = caps
     const tm = await import('./telemetry.js');
     return { ok: true, telemetry: tm.setEnabled(false) };
   }
+  if (vp.isVoiceProviderId(capability)) return { ok: vp.clearProviderSecret(capability) };
   if (capability === 'desktop') {
     updateScreenConfig({ enabled: false });
     return { ok: true };
@@ -2795,6 +2797,10 @@ async function applyManualSetup(capability: string, body: any, req: IncomingMess
     }
   } else if (capability.startsWith('mcp:')) {
     return await applyMcpSetup(capability.slice(4), body, owner, setupEngine(body, req), browserOrigin(req));
+  } else if (vp.isVoiceProviderId(capability)) {
+    // {token} or {sid, token} → voice-providers.ts stores it, verifies once, drops it again on rejection.
+    if (action === 'poll') return { ok: (await caps.statusOf(cap)).ok };
+    out = await vp.connectProvider(capability, body || {});
   } else if (capability === 'identity') {
     // {action:'verify', email?} — the take-over already happened on the desktop; record who signed in.
     // F6: no email typed → read the signed-in account from the session's Chrome profile (or chrome-base).
@@ -4449,6 +4455,26 @@ export async function handle(
       try { (await import('./onboarding.js')).wizardAct('telemetry', 'complete'); } catch { /* wizard may not care */ }
       return json(res, await tm.status());
     }
+    // Voice & phone (docs/VOICE.md): kill-switch + monthly caps + this month's usage. Keys never appear here.
+    if (p === '/__api/voice/budget' && (m === 'GET' || m === 'POST')) {
+      const vu = await import('./voice-usage.js');
+      if (m === 'POST') {
+        const me = (req as any).auth as import('./auth.js').Principal | null;
+        if (!auth.isAdmin(me)) return json(res, { error: 'admin only' }, 403);
+        const body = (await readBody(req)) as any;
+        if (body?.enabled !== undefined && typeof body.enabled !== 'boolean') return badRequest(res, 'enabled must be a boolean');
+        const capsIn: Record<string, number | null> = {};
+        for (const [k, v] of Object.entries((body?.caps && typeof body.caps === 'object' ? body.caps : {}) as Record<string, unknown>)) {
+          if (!vp.isVoiceProviderId(k)) return badRequest(res, `unknown voice provider: ${k}`);
+          if (v !== null && !(Number(v) >= 0)) return badRequest(res, `${k}: cap must be a number of USD or null`);
+          capsIn[k] = v === null ? null : Number(v);
+        }
+        updateVoiceConfig({ ...(typeof body?.enabled === 'boolean' ? { enabled: body.enabled } : {}), caps: capsIn });
+        vp.invalidateVoiceChecks();
+        broadcast({ type: 'setup.changed', capability: 'voice', owner: caps.GLOBAL_OWNER });
+      }
+      return json(res, { enabled: vp.voiceEnabled(), caps: cfg.voice?.caps || {}, month: vu.monthKey(), usage: vu.voiceUsageThisMonth(), providers: vp.voiceProviders() });
+    }
     if (p === '/__api/telemetry/rotate' && m === 'POST') {
       const me = (req as any).auth as import('./auth.js').Principal | null;
       if (!auth.isAdmin(me)) return json(res, { error: 'admin only' }, 403);
@@ -4780,6 +4806,7 @@ export async function handle(
         ...auth.publicInfo(),
         screen: { ...screenPub, hasVncPassword: !!vncPassword },
         voiceEnabled: !!(groqApiKey || process.env.GROQ_API_KEY),
+        voiceProviders: vp.voiceProviders(),
       });
     }
     // Host default engine (Settings › Host): {engine} → {defaultEngine}; unknown → claude.

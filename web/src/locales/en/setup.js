@@ -22,6 +22,8 @@ export const strings = {
   'setup.cap.composio.bare': 'Composio integrations',
   'setup.cap.repo.bare': 'repositories',
   'setup.cap.telemetry': 'telemetry',
+  'setup.cap.voice': '{name} (voice)',
+  'setup.cap.telephony': '{name} (phone)',
 
   // card states
   'setup.state.pending': 'needs you',

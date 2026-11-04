@@ -46,6 +46,7 @@ human can flip it. Nothing runs automatically without that click.
 | `git` | `connect-github` | `gh auth login --web` under the host pty-bridge, open the device page, type the one-time device code, Authorize, poll gh | GitHub login page, org SSO |
 | `whatsapp` | — (manual only) | — | the QR is scanned by the human on the phone; the card shows it |
 | `repo:<name>` | — (manual only) | — | the human picks/enters the repo on the card |
+| `voice:<openai\|elevenlabs\|cartesia\|deepgram>`, `telephony:twilio` | — (manual only) | — | the human pastes the vendor key (Twilio: SID + token) on the card or in Settings → Connections → Voice & phone; docs/VOICE.md |
 
 All playbooks share `skills/_lib/connect.sh` (open in the session Chrome with
 an allowlist check, `wait-url`, screenshot, click/type, REST, report). Screen-

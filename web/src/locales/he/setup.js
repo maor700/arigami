@@ -21,6 +21,8 @@ export const strings = {
   'setup.cap.composio.bare': 'אינטגרציות Composio',
   'setup.cap.repo.bare': 'ריפוזיטוריים',
   'setup.cap.telemetry': 'טלמטריה',
+  'setup.cap.voice': '{name} (קול)',
+  'setup.cap.telephony': '{name} (טלפון)',
 
   'setup.state.pending': 'ממתין לך',
   'setup.state.auto': 'מתחבר',

@@ -23,7 +23,12 @@ export const FAMILIES = {
   push: { manual: { kind: 'toggle' }, autoCapable: false, icon: 'bell' },
   remote: { manual: { kind: 'toggle' }, autoCapable: true, playbook: 'connect-tailscale', icon: 'globe' },
   telemetry: { manual: { kind: 'toggle' }, autoCapable: false, icon: 'chart' },
+  // Voice & phone providers (docs/VOICE.md): a pasted key, verified by the host, kept there.
+  voice: { manual: { kind: 'token' }, autoCapable: false, icon: 'plug' },
+  telephony: { manual: { kind: 'token' }, autoCapable: false, icon: 'plug' },
 };
+export const VOICE_NAMES = { openai: 'OpenAI', elevenlabs: 'ElevenLabs', cartesia: 'Cartesia', deepgram: 'Deepgram', twilio: 'Twilio' };
+export const isVoiceFamily = (id) => ['voice', 'telephony'].includes(capFamily(id));
 
 // 'composio:gmail' → 'composio'; 'repo:app' → 'repo'; 'claude' → 'claude'.
 export function capFamily(id) {
@@ -51,7 +56,7 @@ export function capTitle(t, id) {
   if (!FAMILIES[fam]) return id;
   // 'composio' / 'repo' / 'mcp' without an argument (legacy hosts, Settings rows).
   if (!arg && (fam === 'composio' || fam === 'repo' || fam === 'mcp')) return t(`setup.cap.${fam}.bare`);
-  return t(`setup.cap.${fam}`, { name: arg });
+  return t(`setup.cap.${fam}`, { name: VOICE_NAMES[arg] || arg });
 }
 
 // The consent list for AUTO mode — exactly what the agent will do. Keys are

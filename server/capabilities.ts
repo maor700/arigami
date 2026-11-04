@@ -20,6 +20,7 @@ import * as hostGrants from './lib/mcp-grants.js';
 import { cfg } from './lib/config.js';
 import { ARIGAMI_DIR } from './lib/instance.js';
 import * as ob from './onboarding.js';
+import * as vp from './voice-providers.js';
 
 // ---------------------------------------------------------------------------
 // Shared contract (ids, shapes) — S2 (web) and S3 (skills) depend on these.
@@ -66,7 +67,7 @@ export interface Capability {
   id: string;
   title: string;
   // Group for Settings → Connections / doctor output.
-  group: 'core' | 'code' | 'messaging' | 'integrations' | 'machine' | 'host';
+  group: 'core' | 'code' | 'messaging' | 'integrations' | 'machine' | 'host' | 'voice';
   // M1: which provider backs it (native-mcp / composio / local).
   provider: Provider;
   check: () => CheckResult | Promise<CheckResult>;
@@ -128,7 +129,7 @@ export const KNOWN_COMPOSIO_TOOLKITS = ['gmail', 'googledrive', 'googlecalendar'
 export const knownMcpServices = (): string[] => connectableMcp().map((s) => s.slug);
 /** @deprecated snapshot taken at import; call knownMcpServices() for the live list. */
 export const KNOWN_MCP_SERVICES: readonly string[] = connectableMcp().map((s) => s.slug);
-const CAP_ID_RE = /^(identity|claude|codex|git|whatsapp|desktop|push|remote|telemetry|repo:[A-Za-z0-9._-]{1,64}|composio:[a-z0-9_-]{1,40}|mcp:[a-z0-9-]{1,40})$/;
+const CAP_ID_RE = /^(identity|claude|codex|git|whatsapp|desktop|push|remote|telemetry|repo:[A-Za-z0-9._-]{1,64}|composio:[a-z0-9_-]{1,40}|mcp:[a-z0-9-]{1,40}|voice:(openai|elevenlabs|cartesia|deepgram)|telephony:twilio)$/;
 export const isCapabilityId = (id: unknown): id is string => typeof id === 'string' && CAP_ID_RE.test(id);
 
 // ---------------------------------------------------------------------------
@@ -328,6 +329,8 @@ export interface CapabilityProbes {
   codexMcp: () => Map<string, boolean>;
   // P2-4: the engine asking (a session's), or null for Settings/doctor — mcp:* then counts any engine's grant.
   engine: () => mcpConn.McpEngine | null;
+  // Voice & phone providers: one cheap authenticated call (cached), offline in doctor.
+  voice: (id: string) => Promise<vp.ProviderCheck>;
 }
 
 // Connected-accounts probe: one network call, cached — a tool that checks
@@ -466,6 +469,7 @@ export const defaultProbes: CapabilityProbes = {
   mcpConnections: (owner) => mcpConn.readConnections(owner),
   codexMcp: () => mcpConn.readCodexMcpGrants(),
   engine: () => null,
+  voice: (id) => vp.checkProvider(id),
 };
 
 // ---------------------------------------------------------------------------
@@ -778,7 +782,22 @@ function mcpCapability(slug: string, p: CapabilityProbes, owner: Owner = GLOBAL_
   };
 }
 
-/** All capabilities currently worth listing: statics + every registered repo + known/seen toolkits. */
+/** A voice / phone provider (`voice:<name>`, `telephony:twilio`): a pasted key, verified by one call, kept on this host. */
+function voiceCapability(id: vp.VoiceProviderId, p: CapabilityProbes): Capability {
+  const spec = vp.VOICE_PROVIDERS[id];
+  return {
+    id,
+    title: spec.title,
+    group: 'voice',
+    provider: 'local',
+    check: () => p.voice(id),
+    manual: { kind: 'token', fields: spec.fields, help: spec.help },
+    autoCapable: false,
+    events: [...SETUP_EVENTS, 'voice'],
+  };
+}
+
+/** All capabilities currently worth listing: statics + every registered repo + known/seen toolkits + voice providers. */
 export function listCapabilities(probes: Partial<CapabilityProbes> = {}, owner: Owner = GLOBAL_OWNER): Capability[] {
   const p: CapabilityProbes = { ...defaultProbes, ...probes };
   const repos = p.repos().map((r) => repoCapability(r.name, p));
@@ -791,7 +810,8 @@ export function listCapabilities(probes: Partial<CapabilityProbes> = {}, owner: 
   // A container reaches the world through its own ingress, and can't run tailscaled (no TUN, no caps): offering
   // `remote` there is a card nobody can complete.
   const statics = staticCapabilities(p, owner).filter((c) => c.id !== 'remote' || !p.container() || p.remote().available);
-  return [...statics, ...repos, ...native, ...toolkits];
+  const voice = vp.VOICE_PROVIDER_IDS.map((id) => voiceCapability(id, p));
+  return [...statics, ...repos, ...native, ...toolkits, ...voice];
 }
 
 // Toolkits somebody asked about (request_setup / check) join the listing.
@@ -807,6 +827,7 @@ export function getCapability(id: string, probes: Partial<CapabilityProbes> = {}
     return composioCapability(id.slice(9), p, owner);
   }
   if (id.startsWith('mcp:')) return mcpCapability(id.slice(4), p, owner);
+  if (vp.isVoiceProviderId(id)) return voiceCapability(id, p);
   return staticCapabilities(p, owner).find((c) => c.id === id) ?? null;
 }
 
@@ -882,7 +903,7 @@ export async function ensure(id: string, why: string, probes: Partial<Capability
 // ---------------------------------------------------------------------------
 
 export async function formatDoctor(probes: Partial<CapabilityProbes> = {}): Promise<string> {
-  const view = await capabilitiesStatus({ composioConnected: async () => null, ...probes });
+  const view = await capabilitiesStatus({ composioConnected: async () => null, voice: async (id) => vp.checkProviderOffline(id), ...probes });
   const lines = view.capabilities
     .filter((c) => !(c.id.startsWith('composio:') && c.data?.unknown))
     .map((c) => `  ${c.ok ? '✓' : '○'} ${c.id.padEnd(22)} ${c.detail}${c.autoCapable ? '  [auto]' : ''}`);
