@@ -4788,6 +4788,15 @@ export async function handle(
       const body = (await readBody(req)) as any;
       return json(res, { defaultEngine: updateDefaultEngine(body?.engine) });
     }
+    // Owner's WhatsApp target for notify.ts (Settings › Connections › Notifications): {whatsappJid} ('' clears) → {notify}.
+    if (p === '/__api/config/notify' && m === 'POST') {
+      if (!auth.isAdmin((req as any).auth)) return json(res, { error: 'admin only' }, 403);
+      const body = (await readBody(req)) as any;
+      const jid = String(body?.whatsappJid ?? '').trim();
+      if (jid && !/^\d+@(s\.whatsapp\.net|lid|g\.us)$/.test(jid)) return badRequest(res, 'whatsappJid must look like <number>@s.whatsapp.net, <number>@lid or <id>@g.us (or be empty)');
+      const { updateNotifyConfig } = await import('./lib/config.js');
+      return json(res, { notify: updateNotifyConfig({ whatsappJid: jid }) });
+    }
     // ---- Auth (C1) ------------------------------------------------------------
     if (p.startsWith('/__api/auth/')) return await handleAuth(req, res, u, p, m || 'GET');
     // ---- Profile rollout (server/profile-rollout.ts) — the control-plane's
@@ -6027,7 +6036,7 @@ export async function handle(
     }
     if (p === '/__api/whatsapp/status' && m === 'GET') {
       const wb = await import('./whatsapp-bridge.js');
-      return json(res, wb.getBridgeStatus());
+      return json(res, { ...wb.getBridgeStatus(), ownJids: wb.ownJids() }); // ownJids: the Settings default for notify.whatsappJid
     }
     if (p === '/__api/whatsapp/connect' && m === 'POST') {
       const wb = await import('./whatsapp-bridge.js');

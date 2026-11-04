@@ -186,6 +186,20 @@ export function isPaired(): boolean {
   return fs.existsSync(CREDS_FILE) && !credsCorrupt();
 }
 
+/** The paired account's own JIDs (phone form + LID) from creds.json; null when not paired. */
+export function ownJids(): { phone: string | null; lid: string | null } | null {
+  try {
+    const me = JSON.parse(fs.readFileSync(CREDS_FILE, 'utf8'))?.me;
+    if (!me || typeof me !== 'object') return null;
+    const norm = (v: unknown) => (typeof v === 'string' && v.includes('@') ? v.replace(/:\d+@/, '@') : null);
+    const phone = norm(me.id);
+    const lid = norm(me.lid);
+    return phone || lid ? { phone, lid } : null;
+  } catch {
+    return null;
+  }
+}
+
 // CONN1: Baileys rewrites creds.json with a plain (truncate-then-write) writeFile
 // on every key rotation (~every 10 min while connected). A host restart that
 // kills the process mid-write — 2026-09-02 17:06Z, the good process had just

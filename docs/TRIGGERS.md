@@ -245,7 +245,8 @@ Reuses existing channels — no new transport:
   calls `send_message` on it), so no second Baileys connection is opened and
   the live pairing is never replaced. The value is either a JID
   (`…@s.whatsapp.net` / `…@lid` / `…@g.us`) or `true`, which means "the default
-  target", `notify.whatsappJid` in `config.json`. Not paired, or no target
+  target", `notify.whatsappJid` in `config.json` (Settings › Connections ›
+  Notifications, or `POST /__api/config/notify {whatsappJid}`). Not paired, or no target
   resolved → the delivery is skipped with a `tlog` warning; a notification is
   never allowed to become an error. Delivery goes through `server/notify.ts`,
   which is also where an extension registers extra channels (Telegram, mail…).

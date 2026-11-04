@@ -119,6 +119,17 @@ test('config: POST /__api/config/default-engine sets it, GET /__api/config shows
   expect(JSON.parse(fs.readFileSync(path.join(dir, 'config.json'), 'utf8')).defaultEngine).toBe('codex');
 });
 
+test('config: POST /__api/config/notify sets the owner WhatsApp target, rejects junk, empty clears', async () => {
+  const bad = await api('POST', '/__api/config/notify', { whatsappJid: 'not a jid' });
+  expect(bad.status).toBe(400);
+  const r = await api('POST', '/__api/config/notify', { whatsappJid: ' 972500000000@s.whatsapp.net ' });
+  expect(r.json.notify.whatsappJid).toBe('972500000000@s.whatsapp.net');
+  expect((await api('GET', '/__api/config')).json.notify.whatsappJid).toBe('972500000000@s.whatsapp.net');
+  expect(JSON.parse(fs.readFileSync(path.join(dir, 'config.json'), 'utf8')).notify.whatsappJid).toBe('972500000000@s.whatsapp.net');
+  expect((await api('POST', '/__api/config/notify', { whatsappJid: '' })).json.notify.whatsappJid).toBe('');
+  expect((await api('GET', '/__api/whatsapp/status')).json).toHaveProperty('ownJids'); // null here: nothing is paired
+});
+
 test('create_session: no engine → the default; explicit claude wins; an agent\'s engine beats the default', async () => {
   const a = await api('POST', '/__api/sessions', { title: 'plain' });
   expect((await session(a.json.id)).engine).toBe('codex');

@@ -699,6 +699,17 @@ export function updateBrainConfig(patch: Partial<BrainConfig>): BrainConfig {
   return next;
 }
 
+// Settings › Connections › Notifications: the owner's WhatsApp target for notify.ts.
+export function updateNotifyConfig(patch: Partial<NotifyConfig>): NotifyConfig {
+  ensureConfigFile();
+  const file = loadFile() as Partial<Config>;
+  const next: NotifyConfig = { ...(cfg.notify || {}), ...patch };
+  const out = { ...file, notify: { ...(file.notify || {}), ...patch } } as any;
+  writeConfigFile(out);
+  cfg.notify = next;
+  return next;
+}
+
 // Persist a partial telemetry config (Settings toggle, wizard step, `bin/host`).
 // Same merge pattern as updateBrainConfig. Note: env ARIGAMI_TELEMETRY and
 // DO_NOT_TRACK still win at runtime — see server/telemetry.ts effective().

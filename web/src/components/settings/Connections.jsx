@@ -13,7 +13,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../../lib/api.js';
 import { useT } from '../../lib/i18n.js';
-import { useStore } from '../../lib/store.js';
+import { useStore, loadConfig } from '../../lib/store.js';
 import { toastError } from '../../lib/toast.js';
 import { confirmDialog } from '../../lib/confirm.js';
 import { subscribePush, unsubscribePush, isPushSubscribed } from '../../lib/push.js';
@@ -37,20 +37,39 @@ const OWN_SECTION = new Set(['identity', 'claude', 'codex', 'whatsapp', 'remote'
 export const CONNECTIONS_ADVANCED_IDS = ['owner', 'claude-more', 'channels', 'remote-advanced', 'status', 'audit'];
 const PICKER_SECTIONS = new Set(['mcp', 'integrations', 'add']);
 
-function Notifications() {
+// `wa` = GET /whatsapp/status; its `ownJids` (the paired account) is the suggested notify target.
+function Notifications({ wa }) {
   const t = useT();
+  const { config } = useStore();
   const [on, setOn] = useState(false);
   const [loading, setLoading] = useState(true);
+  const saved = config?.notify?.whatsappJid || '';
+  const [jid, setJid] = useState(saved);
+  const [saving, setSaving] = useState(false);
   useEffect(() => { isPushSubscribed().then(setOn).finally(() => setLoading(false)); }, []);
+  useEffect(() => { setJid(saved); }, [saved]);
   const toggle = async (v) => {
     setLoading(true);
     try { if (v) await subscribePush(); else await unsubscribePush(); setOn(v); } catch (e) { toastError(String(e?.message || e)); } finally { setLoading(false); }
   };
   const supported = typeof window !== 'undefined' && 'PushManager' in window;
+  const own = [wa?.ownJids?.phone, wa?.ownJids?.lid].filter(Boolean);
+  const saveJid = async () => {
+    setSaving(true);
+    try { await api.post('/config/notify', { whatsappJid: jid.trim() }); await loadConfig(); } catch (e) { toastError(String(e?.message || e)); } finally { setSaving(false); }
+  };
   return (
     <Section id="notifications" title={t('settings.pushTitle')}>
       <Field label={t('settings.pushEnable')} hint={supported ? t('settings.pushHint') : t('settings.push.unsupported')}>
         <Toggle on={on} onChange={toggle} disabled={loading || !supported} />
+      </Field>
+      <Field label={t('settings.notify.whatsapp')} hint={t('settings.notify.whatsapp.hint')} wrap>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <input data-notify-jid list="notify-own-jids" dir="ltr" value={jid} onChange={(e) => setJid(e.target.value)} placeholder="9725…@s.whatsapp.net" aria-label={t('settings.notify.whatsapp')} className={`${INPUT} w-64 font-mono text-xs`} />
+          {own.length > 0 && <datalist id="notify-own-jids">{own.map((j) => <option key={j} value={j} />)}</datalist>}
+          {own[0] && jid.trim() !== own[0] && <button type="button" className={BTN_SM} onClick={() => setJid(own[0])}>{t('settings.notify.whatsapp.useMine')}</button>}
+          <button type="button" className={BTN_SM} disabled={saving || jid.trim() === saved} onClick={saveJid}>{t('settings.notify.whatsapp.save')}</button>
+        </div>
       </Field>
     </Section>
   );
@@ -300,7 +319,7 @@ export default function Connections({ initialAdd = false, section = '' }) {
 
       {admin && <Passwords />}
 
-      <Notifications />
+      <Notifications wa={wa} />
 
       <Advanced section={section} ids={CONNECTIONS_ADVANCED_IDS}>
         <Section id="owner" title={t('agent.conn.ownerLabel')}>
