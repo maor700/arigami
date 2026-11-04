@@ -219,6 +219,7 @@ export interface VoiceConfig {
   enabled: boolean;
   caps: Record<string, number>;
   tts?: { voice?: Record<string, string>; model?: Record<string, string> }; // per provider id; stage 1b, file-only
+  realtime?: { model?: string; voice?: string; baseUrl?: string }; // stage 1c clerk; file-only
 }
 
 export interface NotifyConfig {
@@ -784,7 +785,7 @@ export function updateVoiceConfig(patch: { enabled?: boolean; caps?: Record<stri
     if (v === null || !(Number(v) > 0)) delete caps[k];
     else caps[k] = Number(v);
   }
-  const next: VoiceConfig = { enabled: typeof patch.enabled === 'boolean' ? patch.enabled : cfg.voice?.enabled !== false, caps, ...(cfg.voice?.tts ? { tts: cfg.voice.tts } : {}) };
+  const next: VoiceConfig = { enabled: typeof patch.enabled === 'boolean' ? patch.enabled : cfg.voice?.enabled !== false, caps, ...(cfg.voice?.tts ? { tts: cfg.voice.tts } : {}), ...(cfg.voice?.realtime ? { realtime: cfg.voice.realtime } : {}) };
   writeConfigFile({ ...file, voice: next } as any);
   cfg.voice = next;
   return next;

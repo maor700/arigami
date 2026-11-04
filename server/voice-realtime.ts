@@ -1,0 +1,334 @@
+// Stage 1c "voice clerk" (docs/VOICE.md): mint OpenAI Realtime client secrets, run the clerk's tools host-side,
+// keep one transcript + an audit card per call. The API key never leaves this process.
+import { cfg } from './lib/config.js';
+import { requireVoiceProvider, providerSecretFields, scrubProviderSecrets, openaiBase, type VoiceRequirement } from './voice-providers.js';
+import { recordVoiceUsage } from './voice-usage.js';
+
+export const DEFAULT_REALTIME_MODEL = 'gpt-realtime-2.1'; // PLAN.md's gpt-realtime-2 family; the mini is selectable via config
+export const REALTIME_MINI_MODEL = 'gpt-realtime-2.1-mini';
+export const DEFAULT_REALTIME_VOICE = 'marin';
+const VOICES = ['alloy', 'ash', 'ballad', 'coral', 'echo', 'sage', 'shimmer', 'verse', 'marin', 'cedar'];
+const MODEL_RE = /^gpt-realtime[A-Za-z0-9.-]{0,40}$/;
+export const SECRET_TTL_S = 600;
+export const MAX_CALL_S = 2 * 3600;
+export const CALL_IDLE_MS = 10 * 60_000; // no browser post for this long → the call is treated as lost
+export const ASK_TIMEOUT_MS = 90_000;
+export const ASK_MAX_TIMEOUT_MS = 120_000;
+export const ANSWER_MAX_CHARS = 1500;
+export const PROMPT_MAX_CHARS = 4000;
+const TURN_MAX_CHARS = 2000;
+const TURNS_MAX = 400;
+const MINT_TIMEOUT_MS = 15_000;
+const SESSION_ID_RE = /^sess_[A-Za-z0-9_-]{1,64}$/;
+const CALL_ID_RE = /^call_[a-z0-9]{8,40}$/;
+
+export type Json = { kind: 'json'; status: number; body: Record<string, unknown> | VoiceRequirement };
+const json = (status: number, body: Record<string, unknown> | VoiceRequirement): Json => ({ kind: 'json', status, body });
+const bad = (error: string, status = 400): Json => json(status, { error });
+
+// ---- the clerk: persona + tool schemas (OpenAI function format) ----
+export const CLERK_INSTRUCTIONS =
+  "You are Arigami's voice clerk: the fast front desk for the owner's work sessions (each session is an AI agent working on a task). " +
+  'Keep every reply to one or two short spoken sentences, in the language the person speaks (Hebrew or English). ' +
+  'Everything about sessions comes from the tools; never invent a session, a status or a result. ' +
+  "Before a tool that takes time (ask_session, create_session) say a short 'רגע, בודק' (or 'one moment, checking'), then report what came back, summarized. " +
+  "If a tool answers 'still working', say so and offer to check again later. Refer to sessions by title, never read ids aloud. " +
+  'You cannot send anything to other people, merge, delete, or do work yourself: offer only what a tool can do.';
+
+const idParam = { id: { type: 'string', description: 'A session id from list_sessions' } };
+export const CLERK_TOOLS = [
+  { type: 'function', name: 'list_sessions', description: 'The open work sessions: id, title, status, folder, and whether its agent is working right now.', parameters: { type: 'object', properties: {}, required: [] } },
+  { type: 'function', name: 'session_status', description: "One session: what it is doing now and its last reported result.", parameters: { type: 'object', properties: idParam, required: ['id'] } },
+  { type: 'function', name: 'ask_session', description: "Send a question or instruction to a session's agent and wait up to 90 seconds for its answer. Returns the final text, or 'still working' with what it said so far.", parameters: { type: 'object', properties: { ...idParam, prompt: { type: 'string', description: 'What to ask or tell the agent, in full sentences' } }, required: ['id', 'prompt'] } },
+  { type: 'function', name: 'create_session', description: 'Start a new work session with a title and its first instruction.', parameters: { type: 'object', properties: { title: { type: 'string', description: 'A short title' }, prompt: { type: 'string', description: 'The first instruction for the agent' } }, required: ['title', 'prompt'] } },
+  { type: 'function', name: 'interrupt_session', description: "Stop what a session's agent is doing right now.", parameters: { type: 'object', properties: idParam, required: ['id'] } },
+] as const;
+export type ClerkToolName = (typeof CLERK_TOOLS)[number]['name'];
+const TOOL_NAMES = new Set<string>(CLERK_TOOLS.map((t) => t.name));
+
+// ---- live calls (in memory; a host restart forgets them) ----
+export interface Turn { role: 'user' | 'assistant'; text: string; id?: string }
+interface Call { id: string; sessionId: string; provider: string; model: string; lang: string; startedAt: number; lastSeen: number; turns: Turn[]; tools: number }
+const calls = new Map<string, Call>();
+export const liveCall = (callId: string): Readonly<Call> | null => calls.get(callId) || null;
+export const liveCallCount = (): number => calls.size;
+const newCallId = (): string => `call_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
+
+export function realtimeModel(): string {
+  const m = cfg.voice?.realtime?.model;
+  return typeof m === 'string' && MODEL_RE.test(m) ? m : DEFAULT_REALTIME_MODEL;
+}
+export function realtimeVoice(): string {
+  const v = cfg.voice?.realtime?.voice;
+  return typeof v === 'string' && VOICES.includes(v) ? v : DEFAULT_REALTIME_VOICE;
+}
+
+/** The session config sent to OpenAI (pure; tests read it). */
+export function realtimeSessionConfig({ model = realtimeModel(), voice = realtimeVoice(), lang = '' } = {}): Record<string, unknown> {
+  return {
+    type: 'realtime',
+    model,
+    instructions: CLERK_INSTRUCTIONS,
+    output_modalities: ['audio'],
+    audio: {
+      input: { transcription: { model: 'gpt-4o-transcribe', ...(lang ? { language: lang } : {}) }, turn_detection: { type: 'server_vad', create_response: true, interrupt_response: true } },
+      output: { voice },
+    },
+    tools: CLERK_TOOLS,
+    tool_choice: 'auto',
+  };
+}
+
+const sessionIdOf = (body: Record<string, unknown>): string | null => (typeof body?.sessionId === 'string' && SESSION_ID_RE.test(body.sessionId) ? body.sessionId : null);
+const langOf = (body: Record<string, unknown>): string => (typeof body?.lang === 'string' && /^[a-z]{2}$/.test(body.lang) ? body.lang : '');
+
+/** POST /__api/voice/realtime/session {sessionId, lang?} → the gate's shape, or {callId, clientSecret, expiresAt, model, voice, callsUrl}. */
+export async function mintRealtimeSession(body: Record<string, unknown>, opts: { fetchImpl?: typeof fetch; now?: () => number } = {}): Promise<Json> {
+  const sessionId = sessionIdOf(body);
+  if (!sessionId) return bad('sessionId required');
+  const gate = requireVoiceProvider('realtime', 'hold a live voice conversation');
+  if (!('ok' in gate) || !gate.ok) return json(200, gate);
+  const provider = gate.provider;
+  const token = providerSecretFields(provider)?.token;
+  if (!token) return bad(`no key stored for ${provider}`, 502);
+  sweep(opts.now);
+  const model = realtimeModel();
+  const voice = realtimeVoice();
+  const lang = langOf(body);
+  const f = opts.fetchImpl || fetch;
+  const t0 = Date.now();
+  try {
+    const res = await f(`${openaiBase()}/v1/realtime/client_secrets`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ expires_after: { anchor: 'created_at', seconds: SECRET_TTL_S }, session: realtimeSessionConfig({ model, voice, lang }) }),
+      signal: AbortSignal.timeout(MINT_TIMEOUT_MS),
+    });
+    let detail = '';
+    let j: Record<string, unknown> | null = null;
+    try { detail = (await res.text()).slice(0, 400); j = JSON.parse(detail); } catch { /* not JSON */ }
+    const value = j && typeof j.value === 'string' ? j.value : '';
+    if (!res.ok || !value) {
+      console.error(`[voice-realtime] ${provider} answered ${res.status} after ${Date.now() - t0}ms`);
+      return bad(scrubProviderSecrets(`OpenAI answered ${res.status}${res.ok ? ' without a client secret' : detail ? `: ${detail}` : ''}`, provider), 502);
+    }
+    const now = (opts.now || Date.now)();
+    const call: Call = { id: newCallId(), sessionId, provider, model, lang, startedAt: now, lastSeen: now, turns: [], tools: 0 };
+    calls.set(call.id, call);
+    console.log(`[voice-realtime] call ${call.id} for ${sessionId} (${model}) minted in ${Date.now() - t0}ms`);
+    return json(200, { ok: true, callId: call.id, clientSecret: value, expiresAt: typeof j?.expires_at === 'number' ? j.expires_at : null, model, voice, provider, callsUrl: `${openaiBase()}/v1/realtime/calls` });
+  } catch (e) {
+    const msg = scrubProviderSecrets((e as Error)?.message || String(e), provider);
+    console.error(`[voice-realtime] mint failed: ${msg}`);
+    return bad(msg, 502);
+  }
+}
+
+// A call the browser names must exist, belong to the session, and be alive.
+function callOf(body: Record<string, unknown>): Call | Json {
+  const sessionId = sessionIdOf(body);
+  if (!sessionId) return bad('sessionId required');
+  const callId = typeof body?.callId === 'string' && CALL_ID_RE.test(body.callId) ? body.callId : '';
+  const c = callId ? calls.get(callId) : null;
+  if (!c || c.sessionId !== sessionId) return bad('unknown call for this session', 403);
+  return c;
+}
+const isJson = (x: unknown): x is Json => !!x && typeof x === 'object' && (x as Json).kind === 'json';
+
+/** POST /__api/voice/realtime/transcript {sessionId, callId, turns:[{role, text, id?}]} → the call's turn count. */
+export function addRealtimeTranscript(body: Record<string, unknown>, opts: { now?: () => number } = {}): Json {
+  const c = callOf(body);
+  if (isJson(c)) return c;
+  const turns = Array.isArray(body.turns) ? body.turns : [];
+  for (const t of turns) {
+    if (!t || typeof t !== 'object') continue;
+    const role = (t as Turn).role === 'user' ? 'user' : (t as Turn).role === 'assistant' ? 'assistant' : null;
+    const text = String((t as Turn).text ?? '').trim().slice(0, TURN_MAX_CHARS);
+    const id = typeof (t as Turn).id === 'string' ? (t as Turn).id!.slice(0, 64) : undefined;
+    if (!role || !text) continue;
+    const dup = id ? c.turns.find((x) => x.id === id) : null;
+    if (dup) dup.text = text;
+    else if (c.turns.length < TURNS_MAX) c.turns.push({ role, text, ...(id ? { id } : {}) });
+  }
+  c.lastSeen = (opts.now || Date.now)();
+  return json(200, { ok: true, turns: c.turns.length });
+}
+
+export interface ClerkHost {
+  listSessions(): SessionLite[];
+  getSession(id: string): SessionLite | null;
+  sendMessage(id: string, text: string): void;
+  interrupt(id: string): boolean;
+  createSession(o: { title: string; prompt: string }): { id: string; title: string };
+  chatSeq(id: string): number;
+  getChat(id: string, since: number): ChatEvent[];
+  appendChat(id: string, ev: Record<string, unknown>): void;
+  folderName?(folderId: string): string | null;
+}
+export interface SessionLite {
+  id: string;
+  title?: string;
+  status?: string;
+  cwd?: string;
+  archived?: boolean;
+  folderId?: string | null;
+  engine?: string;
+  claude?: { state?: string } | null;
+  metadata?: { result?: { state?: string; summary?: unknown } | null } | null;
+  progress?: unknown;
+}
+export interface ChatEvent { kind?: string; text?: string; partial?: boolean; seq?: number; isError?: boolean }
+
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+const clip = (s: string, n: number): string => (s.length > n ? `…${s.slice(s.length - n)}` : s);
+const head = (s: string, n: number): string => (s.length > n ? `${s.slice(0, n)}…` : s);
+const working = (s: SessionLite): boolean => s.claude?.state === 'working';
+const liveSession = (host: ClerkHost, id: unknown): SessionLite => {
+  const s = typeof id === 'string' && SESSION_ID_RE.test(id) ? host.getSession(id) : null;
+  if (!s || s.archived) throw new Error('unknown session');
+  return s;
+};
+const thin = (host: ClerkHost, s: SessionLite) => ({
+  id: s.id,
+  title: s.title || '',
+  status: s.status || '',
+  folder: (s.folderId && host.folderName?.(s.folderId)) || null,
+  working: working(s),
+});
+
+/** ask_session: deliver through the normal message path, then wait (bounded) for the turn's final text. */
+export async function askSession(host: ClerkHost, id: string, prompt: string, timeoutMs = ASK_TIMEOUT_MS, pollMs = 250): Promise<Record<string, unknown>> {
+  const s = liveSession(host, id);
+  const since = host.chatSeq(s.id);
+  host.sendMessage(s.id, prompt);
+  const t0 = Date.now();
+  let text = '';
+  while (Date.now() - t0 < timeoutMs) {
+    await sleep(pollMs);
+    for (const e of host.getChat(s.id, since)) {
+      if (e.kind === 'assistant-text' && !e.partial && typeof e.text === 'string' && e.text.trim()) text = e.text.trim();
+      if (e.kind === 'error' || (e.kind === 'result' && e.isError)) return { done: true, error: true, answer: clip(text || String(e.text || 'the turn failed'), ANSWER_MAX_CHARS) };
+      if (e.kind === 'result') return { done: true, answer: clip(text, ANSWER_MAX_CHARS) || '(the agent finished without a text answer)' };
+    }
+  }
+  return { done: false, status: 'still working', partial: clip(text, ANSWER_MAX_CHARS) };
+}
+
+const str = (v: unknown, max: number): string => (typeof v === 'string' ? v.trim().slice(0, max) : '');
+
+/** Run one clerk tool with the host's authority; throws on a bad name/args. */
+export async function runClerkTool(host: ClerkHost, name: string, args: Record<string, unknown>, opts: { askTimeoutMs?: number; pollMs?: number } = {}): Promise<Record<string, unknown>> {
+  if (!TOOL_NAMES.has(name)) throw new Error(`unknown tool: ${name}`);
+  if (!args || typeof args !== 'object' || Array.isArray(args)) throw new Error('args must be an object');
+  switch (name as ClerkToolName) {
+    case 'list_sessions':
+      return { sessions: host.listSessions().filter((s) => !s.archived).map((s) => thin(host, s)) };
+    case 'session_status': {
+      const s = liveSession(host, args.id);
+      const r = s.metadata?.result;
+      return { ...thin(host, s), engine: s.engine || null, state: s.claude?.state || 'unknown', result: r && typeof r.summary === 'string' ? { state: r.state || null, summary: head(r.summary, 600) } : null };
+    }
+    case 'ask_session': {
+      const prompt = str(args.prompt, PROMPT_MAX_CHARS);
+      if (!prompt) throw new Error('prompt required');
+      return askSession(host, String(args.id), prompt, Math.min(ASK_MAX_TIMEOUT_MS, opts.askTimeoutMs || ASK_TIMEOUT_MS), opts.pollMs);
+    }
+    case 'create_session': {
+      const title = str(args.title, 120);
+      const prompt = str(args.prompt, PROMPT_MAX_CHARS);
+      if (!title || !prompt) throw new Error('title and prompt required');
+      const s = host.createSession({ title, prompt });
+      return { id: s.id, title: s.title, created: true };
+    }
+    case 'interrupt_session': {
+      const s = liveSession(host, args.id);
+      return { id: s.id, interrupted: host.interrupt(s.id) };
+    }
+  }
+}
+
+// One compact line of what came back, for the audit card.
+function summarize(name: string, r: Record<string, unknown>): string {
+  switch (name) {
+    case 'list_sessions': return (r.sessions as ReturnType<typeof thin>[]).map((s) => `${s.title}${s.working ? ' (working)' : ''}`).join(', ') || '(none)';
+    case 'session_status': return `${r.title}: ${r.state}${(r.result as { summary?: string } | null)?.summary ? ` — ${head((r.result as { summary: string }).summary, 200)}` : ''}`;
+    case 'ask_session': return r.done ? head(String(r.answer), 400) : `still working${r.partial ? ` — ${head(String(r.partial), 200)}` : ''}`;
+    case 'create_session': return `created "${r.title}"`;
+    case 'interrupt_session': return r.interrupted ? 'interrupted' : 'nothing to interrupt';
+    default: return head(JSON.stringify(r), 300);
+  }
+}
+const asked = (name: string, args: Record<string, unknown>): string => {
+  const a = { ...args };
+  for (const k of ['prompt', 'title']) if (typeof a[k] === 'string') a[k] = head(a[k] as string, 200);
+  return Object.keys(a).length ? `${name} ${JSON.stringify(a)}` : name;
+};
+
+/** POST /__api/voice/realtime/tool {sessionId, callId, name, args} → {ok, result} | {ok:false, error}; an audit card lands in the chat. */
+export async function handleClerkTool(body: Record<string, unknown>, host: ClerkHost, opts: { askTimeoutMs?: number; pollMs?: number; now?: () => number } = {}): Promise<Json> {
+  const c = callOf(body);
+  if (isJson(c)) return c;
+  const name = typeof body.name === 'string' ? body.name : '';
+  if (!TOOL_NAMES.has(name)) return bad(`unknown tool: ${name || '(none)'}`);
+  const args = body.args && typeof body.args === 'object' && !Array.isArray(body.args) ? (body.args as Record<string, unknown>) : {};
+  c.lastSeen = (opts.now || Date.now)();
+  c.tools += 1;
+  const t0 = Date.now();
+  let out: Json;
+  let got: string;
+  try {
+    const result = await runClerkTool(host, name, args, opts);
+    got = summarize(name, result);
+    out = json(200, { ok: true, result });
+  } catch (e) {
+    got = `error: ${(e as Error).message}`;
+    out = json(200, { ok: false, error: (e as Error).message });
+  }
+  try {
+    host.appendChat(c.sessionId, { kind: 'ext-card', extension: 'voice', title: `📞 ${name}`, body: `${asked(name, args)}\n\n→ ${got}`, voice: { callId: c.id, tool: name, ms: Date.now() - t0 } });
+  } catch (e) {
+    console.error('[voice-realtime] audit card failed:', (e as Error).message);
+  }
+  return out;
+}
+
+const mmss = (s: number): string => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`;
+function transcriptCard(c: Call, seconds: number, reason: string): Record<string, unknown> {
+  const he = c.lang === 'he';
+  const who = (r: Turn['role']): string => (r === 'user' ? (he ? 'אתה' : 'You') : he ? 'הפקיד' : 'Clerk');
+  const body = c.turns.map((t) => `**${who(t.role)}:** ${t.text}`).join('\n\n') || (he ? '_(לא נאמר דבר)_' : '_(nothing was said)_');
+  return { kind: 'ext-card', extension: 'voice', title: `📞 ${he ? 'שיחה קולית' : 'Voice call'} · ${mmss(seconds)}`, body, voice: { callId: c.id, seconds, tools: c.tools, turns: c.turns.length, reason, model: c.model } };
+}
+
+function finish(c: Call, seconds: number, reason: string, host: Pick<ClerkHost, 'appendChat'> | null): Record<string, unknown> {
+  calls.delete(c.id);
+  const usage = recordVoiceUsage(c.provider, { seconds });
+  try { host?.appendChat(c.sessionId, transcriptCard(c, seconds, reason)); } catch (e) { console.error('[voice-realtime] transcript card failed:', (e as Error).message); }
+  console.log(`[voice-realtime] call ${c.id} ended (${reason}) after ${mmss(seconds)}, ${c.tools} tools, ${c.turns.length} turns`);
+  return { ok: true, seconds, turns: c.turns.length, tools: c.tools, usd: usage.usd };
+}
+
+/** POST /__api/voice/realtime/end {sessionId, callId, seconds?, reason?} → the ledger gets the clamped duration, the chat the transcript. */
+export function endRealtimeCall(body: Record<string, unknown>, host: Pick<ClerkHost, 'appendChat'> | null, opts: { now?: () => number } = {}): Json {
+  const c = callOf(body);
+  if (isJson(c)) return c;
+  const now = (opts.now || Date.now)();
+  const window = Math.min(MAX_CALL_S, (now - c.startedAt) / 1000 + 5); // the browser's number is trusted only inside the call's own window
+  const reported = Number(body.seconds);
+  const seconds = Math.round(Math.max(0, Math.min(window, Number.isFinite(reported) ? reported : window)));
+  return json(200, finish(c, seconds, typeof body.reason === 'string' ? body.reason.slice(0, 40) : 'hangup', host));
+}
+
+let sweepHost: Pick<ClerkHost, 'appendChat'> | null = null;
+export const setSweepHost = (h: Pick<ClerkHost, 'appendChat'> | null): void => { sweepHost = h; };
+/** A call whose browser went quiet for CALL_IDLE_MS is closed with the time we saw it live. */
+export function sweep(now: () => number = Date.now): string[] {
+  const t = now();
+  const gone: string[] = [];
+  for (const c of [...calls.values()]) {
+    if (t - c.lastSeen < CALL_IDLE_MS) continue;
+    finish(c, Math.min(MAX_CALL_S, Math.round((c.lastSeen - c.startedAt) / 1000)), 'lost', sweepHost);
+    gone.push(c.id);
+  }
+  return gone;
+}

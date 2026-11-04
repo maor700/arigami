@@ -100,10 +100,12 @@ const CHECK_TIMEOUT_MS = 6_000;
 const checkCache = new Map<string, { at: number; r: ProviderCheck }>();
 export const invalidateVoiceChecks = (): void => checkCache.clear();
 
+/** OpenAI's API base; `config.voice.realtime.baseUrl` / ARIGAMI_OPENAI_API_BASE point it at a stand-in (tests). */
+export const openaiBase = (): string => String(cfg.voice?.realtime?.baseUrl || process.env.ARIGAMI_OPENAI_API_BASE || 'https://api.openai.com').replace(/\/+$/, '');
 const basic = (sid: string, token: string): string => `Basic ${Buffer.from(`${sid}:${token}`).toString('base64')}`;
 function probeRequest(id: VoiceProviderId, s: Record<string, string>): { url: string; headers: Record<string, string> } {
   switch (id) {
-    case 'voice:openai': return { url: 'https://api.openai.com/v1/models', headers: { Authorization: `Bearer ${s.token}` } };
+    case 'voice:openai': return { url: `${openaiBase()}/v1/models`, headers: { Authorization: `Bearer ${s.token}` } };
     case 'voice:elevenlabs': return { url: 'https://api.elevenlabs.io/v1/user', headers: { 'xi-api-key': s.token } };
     case 'voice:cartesia': return { url: 'https://api.cartesia.ai/voices', headers: { 'X-API-Key': s.token, 'Cartesia-Version': '2025-04-16' } };
     case 'voice:deepgram': return { url: 'https://api.deepgram.com/v1/projects', headers: { Authorization: `Token ${s.token}` } };
@@ -111,6 +113,8 @@ function probeRequest(id: VoiceProviderId, s: Record<string, string>): { url: st
   }
 }
 const scrub = (msg: string, s: Record<string, string>): string => Object.values(s).reduce((m, v) => (v && v.length >= 8 ? m.split(v).join('•••') : m), msg);
+/** A message with every stored field of `id` blanked (for logs and error bodies). */
+export const scrubProviderSecrets = (msg: string, id: string): string => scrub(msg, (isVoiceProviderId(id) && providerSecretFields(id)) || {});
 
 export const voiceEnabled = (): boolean => cfg.voice?.enabled !== false;
 const offDetail = 'voice is switched off (Settings → Connections → Voice & phone)';

@@ -2848,6 +2848,26 @@ function browserOrigin(req: IncomingMessage): string {
   return requestOrigin(req, { trustProxy: !!cfg.trustProxy, publicUrl: cfg.publicUrl }, `localhost:${cfg.port}`);
 }
 
+// Stage 1c: what the voice clerk may do — the cockpit's own create/message/interrupt paths, nothing more.
+function clerkHost(): import('./voice-realtime.js').ClerkHost {
+  return {
+    listSessions: () => state.listSessions() as unknown as import('./voice-realtime.js').SessionLite[],
+    getSession: (id) => state.getSession(id) as unknown as import('./voice-realtime.js').SessionLite | null,
+    sendMessage: (id, text) => { claude.sendMessage(id, text); },
+    interrupt: (id) => !!claude.interrupt(id),
+    createSession: ({ title, prompt }) => {
+      const s = state.createSession({ title });
+      spawnSafe(s.id);
+      try { claude.sendMessage(s.id, prompt); } catch (e) { console.error('[voice-realtime] first prompt failed:', (e as Error).message); }
+      return { id: s.id, title: s.title };
+    },
+    chatSeq: (id) => claude.chatSeq(id),
+    getChat: (id, since) => claude.getChat(id, since),
+    appendChat: (id, ev) => { claude.appendChat(id, ev); },
+    folderName: (fid) => state.getFolder(fid)?.name || null,
+  };
+}
+
 function spawnSafe(id: string): void {
   try {
     claude.ensureRunning(id);
@@ -5390,6 +5410,24 @@ export async function handle(
       if (r.kind === 'json') return json(res, r.body, r.status);
       await tts.pipeTts(r, res);
       return;
+    }
+    // Stage 1c (docs/VOICE.md): the realtime voice clerk — mint / tool / transcript / end; browsers only, an agent has its own tools.
+    if (p.startsWith('/__api/voice/realtime/') && m === 'POST') {
+      const me = (req as any).auth as import('./auth.js').Principal | null;
+      if (me?.kind === 'session') return json(res, { error: 'not for agent sessions' }, 403);
+      const rt = await import('./voice-realtime.js');
+      let body: Record<string, unknown>;
+      try { body = (await readBody(req, 256e3)) as Record<string, unknown>; } catch (e) { return badRequest(res, (e as Error).message); }
+      rt.setSweepHost(clerkHost());
+      const sub = p.slice('/__api/voice/realtime/'.length);
+      const r =
+        sub === 'session' ? await rt.mintRealtimeSession(body)
+        : sub === 'tool' ? await rt.handleClerkTool(body, clerkHost())
+        : sub === 'transcript' ? rt.addRealtimeTranscript(body)
+        : sub === 'end' ? rt.endRealtimeCall(body, clerkHost())
+        : null;
+      if (!r) return notFound(res);
+      return json(res, r.body, r.status);
     }
     if (p === '/__api/voice/stt' && m === 'POST') {
       const voice = await import('./voice.js');
