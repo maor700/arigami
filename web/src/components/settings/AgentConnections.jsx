@@ -17,7 +17,7 @@ import { useStore } from '../../lib/store.js';
 import { toastError } from '../../lib/toast.js';
 import { confirmDialog } from '../../lib/confirm.js';
 import * as setupApi from '../../lib/setup-api.js';
-import { capTitle, capFamily } from '../setup/registry.js';
+import { capTitle, capFamily, isVoiceFamily } from '../setup/registry.js';
 import ConnectDialog from './ConnectDialog.jsx';
 import { StatusPill, BTN_SM, ROW, LIST, fmtWhen } from './shared.jsx';
 import { faCheck, faGlobe } from '@fortawesome/free-solid-svg-icons';
@@ -29,7 +29,8 @@ export function AgentConnections({ agent, data, busy = false, onConnect, onDisco
   const owner = setupApi.ownerOfAgent(agent.slug);
   const caps = data?.capabilities || [];
   const own = caps.filter((c) => c.ownable);
-  const host = caps.filter((c) => !c.ownable && !HIDDEN.has(c.id) && capFamily(c.id) !== 'repo');
+  // Voice & phone providers are host-level too, but listed only once one holds a key (docs/VOICE.md).
+  const host = caps.filter((c) => !c.ownable && !HIDDEN.has(c.id) && capFamily(c.id) !== 'repo' && (!isVoiceFamily(c.id) || c.ok || c.data?.hasKey));
   const audit = (data?.audit || []).slice(-8).reverse();
   const pill = (c) => {
     if (!c.ok) return <StatusPill status="todo" label={t('agent.conn.none')} />;

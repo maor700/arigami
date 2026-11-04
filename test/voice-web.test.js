@@ -10,7 +10,7 @@ isolate(); // restore globalThis/process.env after this file (bun test shares th
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const web = (p) => path.join(ROOT, 'web/src', p);
 
-let React, render, prefs, registry, Connections, VoicePhoneSection, voicePresent, AddConnectionPanel, TokenStep;
+let React, render, prefs, registry, Connections, VoicePhoneSection, voicePresent, AddConnectionPanel, TokenStep, AgentConnections;
 const h = (...a) => React.createElement(...a);
 
 beforeAll(async () => {
@@ -34,6 +34,7 @@ beforeAll(async () => {
   ({ VoicePhoneSection, voicePresent } = await import(web('components/settings/VoicePhone.jsx')));
   ({ AddConnectionPanel } = await import(web('components/settings/AddConnection.jsx')));
   ({ default: TokenStep } = await import(web('components/setup/TokenStep.jsx')));
+  ({ AgentConnections } = await import(web('components/settings/AgentConnections.jsx')));
 });
 
 const cap = (id, title, kinds, extra = {}) => ({ id, title, group: 'voice', provider: 'local', ok: false, detail: `paste a key for ${title}`, data: { hasKey: false, kinds }, manual: { kind: 'token', fields: [{ name: 'token', label: `${title} API key`, secret: true }] }, autoCapable: false, ...extra });
@@ -58,6 +59,15 @@ test('nothing connected: the Connections hub has no Voice & phone section; the s
   }
   expect(voicePresent(NONE)).toEqual([]);
   prefs.setPrefs({ language: 'en' });
+  // an agent's panel lists host-level capabilities — the voice ones only once a key exists
+  const agent = { slug: 'bot', name: 'Bot', emoji: '🤖', color: '#E0594F', skills: [] };
+  const base = [{ id: 'git', ok: true, ownable: false, detail: 'ok' }];
+  const none = render(h(AgentConnections, { agent, data: { capabilities: [...base, ...NONE.map((c) => ({ ...c, ownable: false }))] }, onConnect: noop, onDisconnect: noop }));
+  expect(none).not.toContain('(voice)');
+  expect(none).not.toContain('(phone)');
+  const one = render(h(AgentConnections, { agent, data: { capabilities: [...base, ...CONNECTED.map((c) => ({ ...c, ownable: false }))] }, onConnect: noop, onDisconnect: noop }));
+  expect(one).toContain('ElevenLabs (voice)');
+  expect(one).not.toContain('OpenAI (voice)');
 });
 
 test('Add connection picker: the five providers sit in a Voice & phone group until one has a key', () => {
