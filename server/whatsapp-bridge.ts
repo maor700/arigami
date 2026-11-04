@@ -24,6 +24,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { ARIGAMI_DIR } from './lib/instance.js';
+import { cfg } from './lib/config.js';
 
 type WakeFn = (sessionId: string, text: string, key: string) => void;
 
@@ -183,6 +184,20 @@ export function credsCorrupt(): boolean {
 /** A usable pairing: creds.json exists AND is not corrupt. */
 export function isPaired(): boolean {
   return fs.existsSync(CREDS_FILE) && !credsCorrupt();
+}
+
+/** The paired account's own JIDs (phone form + LID) from creds.json; null when not paired. */
+export function ownJids(): { phone: string | null; lid: string | null } | null {
+  try {
+    const me = JSON.parse(fs.readFileSync(CREDS_FILE, 'utf8'))?.me;
+    if (!me || typeof me !== 'object') return null;
+    const norm = (v: unknown) => (typeof v === 'string' && v.includes('@') ? v.replace(/:\d+@/, '@') : null);
+    const phone = norm(me.id);
+    const lid = norm(me.lid);
+    return phone || lid ? { phone, lid } : null;
+  } catch {
+    return null;
+  }
 }
 
 // CONN1: Baileys rewrites creds.json with a plain (truncate-then-write) writeFile
@@ -431,6 +446,12 @@ function onProcessGone(pid: number | null, exit: ExitInfo): void {
  * throws for the usual reasons; the status file / getBridgeStatus() carries
  * the outcome ({status:'disconnected', reason}).
  */
+// Voice-note transcription (arigami-transcribe.ts) runs inside the bridge: it gets the STT key + language by env, never by log.
+function sttEnv(): Record<string, string> {
+  const key = cfg.groqApiKey || process.env.GROQ_API_KEY || '';
+  return { ...(key ? { GROQ_API_KEY: key } : {}), ARIGAMI_VOICE_LANG: cfg.voiceLang || 'he' };
+}
+
 export function startBridge(sessionId: string, wake: WakeFn, opts: { internal?: boolean; repair?: boolean } = {}): Promise<void> {
   if (sessionId !== _lastSessionId) _notifiedConnected = false; // new session → re-notify
   _lastSessionId = sessionId;
@@ -484,7 +505,7 @@ export function startBridge(sessionId: string, wake: WakeFn, opts: { internal?: 
     const t = new StdioClientTransport({
       command: RUNNER[0],
       args: [...RUNNER.slice(1), WA_MAIN],
-      env: { ...(process.env as Record<string, string>), WHATSAPP_MCP_DATA_DIR: WA_DATA_DIR, NODE_PATH: path.join(WA_MCP_DIR, 'node_modules') },
+      env: { ...(process.env as Record<string, string>), WHATSAPP_MCP_DATA_DIR: WA_DATA_DIR, NODE_PATH: path.join(WA_MCP_DIR, 'node_modules'), ...sttEnv() },
       cwd: WA_MCP_DIR,
       stderr: 'pipe',
     });

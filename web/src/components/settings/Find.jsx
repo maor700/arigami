@@ -16,6 +16,7 @@ export const SETTINGS_INDEX = [
   ['settings.fontSize', 'appearance', 'chrome', 'chat text size font bigger smaller'],
   ['settings.accent', 'appearance', 'chrome', 'colour color brand'],
   ['settings.pushTitle', 'connections', 'notifications', 'notifications push alerts browser'],
+  ['settings.notify.whatsapp', 'connections', 'notifications', 'whatsapp jid notify target owner number'],
   ['chrome.voice.section', 'appearance', 'voice', 'voice microphone dictation hotkey'],
   ['memory.title', 'appearance', 'memory', 'memory learning brain'],
   ['brain.heartbeatTitle', 'appearance', 'heartbeat', 'heartbeat schedule'],

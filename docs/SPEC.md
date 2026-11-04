@@ -94,6 +94,7 @@ POST   /__api/sessions/:id/interrupt                       → SIGINT-equivalent
 GET    /__api/sessions/:id/chat?since=N      → chat events tail (rehydration; live = WS)
 GET    /__api/linear/tickets?filter=assigned → launcher picker (reuse PoC Linear fetch/cache)
 GET    /__api/config                         → {defaultCwd, palette, …}
+POST   /__api/config/notify                  {whatsappJid} → {notify}   (owner's WhatsApp target for notify.ts; admin)
 GET    /__api/sessions/:id/artifacts         → [artifact]                (A1)
 POST   /__api/sessions/:id/artifacts         {path, title, entry?, open?, notify?, share?, share_days?} → {artifact_id, path, version, bytes, files, warnings, share_url, share_exp}
 DELETE /__api/sessions/:id/artifacts/:aid

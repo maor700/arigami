@@ -8,7 +8,7 @@ command -v node >/dev/null && command -v npm >/dev/null || { echo 'WhatsApp requ
 node -e 'if (Number(process.versions.node.split(".")[0]) < 22) process.exit(1); require("node:sqlite")' >/dev/null
 mkdir -p "$WA_DIR"
 # A successful install is reusable offline; incomplete installs are repaired.
-if [ -f "$WA_DIR/.arigami-bridge-v2" ] && [ -x "$WA_DIR/node_modules/.bin/tsx" ] && [ -f "$WA_DIR/node_modules/qrcode/package.json" ] && [ -f "$WA_DIR/src/arigami-status.ts" ] && [ -f "$WA_DIR/src/arigami-media.ts" ]; then
+if [ -f "$WA_DIR/.arigami-bridge-v2" ] && [ -x "$WA_DIR/node_modules/.bin/tsx" ] && [ -f "$WA_DIR/node_modules/qrcode/package.json" ] && [ -f "$WA_DIR/src/arigami-status.ts" ] && [ -f "$WA_DIR/src/arigami-media.ts" ] && [ -f "$WA_DIR/src/arigami-transcribe.ts" ]; then
   echo 'WhatsApp bridge already installed'; exit 0
 fi
 if [ ! -f "$WA_DIR/src/main.ts" ]; then

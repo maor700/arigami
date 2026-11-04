@@ -32,3 +32,6 @@ edit('whatsapp.ts', '  let content: string | null = null;', '  let content: stri
 edit('mcp.ts', 'import { z } from "zod";', 'import { z } from "zod";\nimport { registerMediaTool } from "./arigami-media.ts";');
 edit('mcp.ts', '  server.tool(\n    "search_contacts",', '  registerMediaTool(server, sock, waLogger);\n\n  server.tool(\n    "search_contacts",');
 fs.copyFileSync(new URL('./whatsapp-media.ts', import.meta.url), path.join(dir, 'src', 'arigami-media.ts'));
+edit('whatsapp.ts', 'import { rememberMedia } from "./arigami-media.ts";', 'import { rememberMedia } from "./arigami-media.ts";\nimport { transcribeAudio } from "./arigami-transcribe.ts";');
+edit('whatsapp.ts', '            storeMessage(parsed);\n          } else {', '            storeMessage(parsed);\n            transcribeAudio(msg, sock, logger); // voice note → "[Audio] <text>", off the loop\n          } else {');
+fs.copyFileSync(new URL('./whatsapp-transcribe.ts', import.meta.url), path.join(dir, 'src', 'arigami-transcribe.ts'));

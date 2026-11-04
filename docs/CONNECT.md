@@ -147,6 +147,14 @@ images (including those without captions), video, audio, stickers and documents.
 Metadata is stored in the shared message database; files land in its `media/`
 directory with private permissions. Downloads are explicit and capped at 50 MiB;
 expired/unavailable WhatsApp media can fail even when metadata is retained.
+Incoming voice notes are transcribed inside the bridge (`src/arigami-transcribe.ts`,
+injected by `scripts/prepare-whatsapp.mjs`) with the host's Groq Whisper key
+(`groqApiKey`, language `voiceLang`, both passed by env at spawn) and stored as
+`[Audio] <text>`, so listeners and the `whatsapp` tool read the text. No key →
+the row stays `[Audio]`. Notes over 25 MB, or slower than 90 s to fetch+transcribe,
+stay `[Audio]` too; the audio is never written to disk. An existing checkout gets
+the hook when `scripts/install-whatsapp.sh` re-runs and the bridge restarts.
+
 Historical messages without stored media metadata cannot be downloaded until
 WhatsApp syncs them again. Use `publish_artifact` to show a downloaded file to
 the human; don't expose a server-local filesystem path as a web link.

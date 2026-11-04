@@ -584,7 +584,9 @@ to Web Push **plus** every registered channel:
 
 * `whatsapp` is built in — it sends through the host's one paired WhatsApp
   process, so no second connection is opened. Set the default target with
-  `notify.whatsappJid` in `config.json`; a cron trigger's `deliver.whatsapp` may
+  `notify.whatsappJid` in `config.json` (Settings › Connections › Notifications,
+  which suggests the paired account's own JID; `POST /__api/config/notify`
+  `{whatsappJid}`); a cron trigger's `deliver.whatsapp` may
   also carry an explicit JID (or `true` for the default).
 * an extension adds channels from `hooks.ts`:
   `export const channels = { telegram: async (payload, ctx) => … }`.
