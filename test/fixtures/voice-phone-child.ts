@@ -9,7 +9,7 @@ import { createPhoneBridge, type Backend, type BackendEvents } from '../../serve
 import { createWebhooks } from '../../server/webhooks.js';
 import { pcmB64ToMulawB64 } from '../../server/lib/audio-g711.js';
 
-const OWNER = '+972501234567';
+const OWNER = '+972500000000';
 const SID = 'AC' + 'a'.repeat(32);
 const TOKEN = 'twilio-auth-token-SECRET-0123456789';
 const callSid = (n: number): string => 'CA' + String(n).padStart(32, '0');
@@ -43,7 +43,7 @@ const has = (xml: string, re: RegExp | string) => (typeof re === 'string' ? xml.
 
 async function flow(): Promise<void> {
   // owner gate
-  out.stranger = voice({ CallSid: callSid(1), From: '+972509999999' });
+  out.stranger = voice({ CallSid: callSid(1), From: '+15005550006' });
   out.noSid = voice({ CallSid: 'nope', From: OWNER });
   // first contact → gather
   const first = voice({ CallSid: callSid(2), From: OWNER });
@@ -97,7 +97,7 @@ async function flow(): Promise<void> {
   out.viewFunnel = vp.phoneView('funnel.example');
   out.selfTestNoBase = vp.selfTestSignature('');
   const bad: string[] = [];
-  for (const b of [{ ownerNumber: '0501234567' }, { pin: '12' }, { pin: 'abcd' }, { publicUrl: 'http://x' }]) { try { vp.updatePhone(b); bad.push('accepted'); } catch (e) { bad.push((e as Error).message); } }
+  for (const b of [{ ownerNumber: '0500000000' }, { pin: '12' }, { pin: 'abcd' }, { publicUrl: 'http://x' }]) { try { vp.updatePhone(b); bad.push('accepted'); } catch (e) { bad.push((e as Error).message); } }
   out.badUpdates = bad;
   out.updated = vp.updatePhone({ ownerNumber: '+1 (234) 567-8901', pin: '123456', publicUrl: 'https://my.host:8443/' });
   out.cfgHashKind = String(cfg.telephony.pinHash).split('$')[0];
@@ -121,7 +121,7 @@ async function webhook(): Promise<void> {
   const p = { CallSid: callSid(20), From: OWNER, To: '+972330000000', CallStatus: 'ringing', AccountSid: SID };
   out.whUnsigned = await post(vp.TWILIO_VOICE_PATH, p);
   out.whBadSig = await post(vp.TWILIO_VOICE_PATH, p, vp.twilioSignature('wrong-token', BASE + vp.TWILIO_VOICE_PATH, p));
-  out.whTampered = await post(vp.TWILIO_VOICE_PATH, { ...p, From: '+972509999999' }, vp.twilioSignature(TOKEN, BASE + vp.TWILIO_VOICE_PATH, p));
+  out.whTampered = await post(vp.TWILIO_VOICE_PATH, { ...p, From: '+15005550006' }, vp.twilioSignature(TOKEN, BASE + vp.TWILIO_VOICE_PATH, p));
   out.whOk = await post(vp.TWILIO_VOICE_PATH, p, vp.twilioSignature(TOKEN, BASE + vp.TWILIO_VOICE_PATH, p));
   out.whOkAgain = await post(vp.TWILIO_VOICE_PATH, p, vp.twilioSignature(TOKEN, BASE + vp.TWILIO_VOICE_PATH, p)); // voice: no replay 401
   const st = { CallSid: callSid(20), CallStatus: 'completed', CallDuration: '30', AccountSid: SID };

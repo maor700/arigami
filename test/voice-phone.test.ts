@@ -72,8 +72,8 @@ describe('PIN + shapes', () => {
     expect(() => hashPin('123')).toThrow();
     expect(PIN_RE.test('12345678')).toBe(true);
     expect(PIN_RE.test('123456789')).toBe(false);
-    expect(E164_RE.test('+972501234567')).toBe(true);
-    expect(E164_RE.test('0501234567')).toBe(false);
+    expect(E164_RE.test('+972500000000')).toBe(true);
+    expect(E164_RE.test('0500000000')).toBe(false);
   });
   test('TwiML envelope and <Reject>', () => {
     expect(twiml('<Hangup/>')).toBe('<?xml version="1.0" encoding="UTF-8"?><Response><Hangup/></Response>');
@@ -151,7 +151,7 @@ describe('call flow (child)', () => {
     expect(o.off).toContain(he('off'));
     expect(o.off).toContain('<Hangup/>');
     expect(o.noPin).toContain(he('noPin'));
-    expect(o.view).toMatchObject({ telephony: true, ownerNumber: '+972501234567', pinSet: true, base: 'https://pub.example', voiceUrl: 'https://pub.example' + TWILIO_VOICE_PATH, statusUrl: 'https://pub.example' + TWILIO_STATUS_PATH, streamUrl: 'wss://pub.example' + TWILIO_STREAM_PATH, lockedUntil: 0, live: 0 });
+    expect(o.view).toMatchObject({ telephony: true, ownerNumber: '+972500000000', pinSet: true, base: 'https://pub.example', voiceUrl: 'https://pub.example' + TWILIO_VOICE_PATH, statusUrl: 'https://pub.example' + TWILIO_STATUS_PATH, streamUrl: 'wss://pub.example' + TWILIO_STREAM_PATH, lockedUntil: 0, live: 0 });
     expect(o.selfTest.ok).toBe(true);
     expect(o.viewFunnel.base).toBe('https://funnel.example'); // no own base → the Funnel host
     expect(o.selfTestNoBase.ok).toBe(false);

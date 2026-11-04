@@ -185,7 +185,7 @@ export const en = {
   'settings.connections.phone': 'Inbound phone (Twilio)',
   'settings.connections.phone.hint': 'Only your number is answered, then a digit PIN. The transcript lands in the "Voice calls" session; no audio is kept.',
   'settings.connections.phone.owner': 'Your number',
-  'settings.connections.phone.owner.hint': 'International format, e.g. +972501234567. Any other caller is rejected.',
+  'settings.connections.phone.owner.hint': 'International format, e.g. +972500000000. Any other caller is rejected.',
   'settings.connections.phone.pin': 'PIN',
   'settings.connections.phone.pin.set': 'set',
   'settings.connections.phone.pin.unset': 'not set',

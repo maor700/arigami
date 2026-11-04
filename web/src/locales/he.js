@@ -184,7 +184,7 @@ export const he = {
   'settings.connections.phone': 'טלפון נכנס (Twilio)',
   'settings.connections.phone.hint': 'רק המספר שלך מתקבל, ואחריו קוד PIN בספרות. התמליל נשמר בסשן "Voice calls"; אודיו לא נשמר.',
   'settings.connections.phone.owner': 'המספר שלך',
-  'settings.connections.phone.owner.hint': 'בפורמט בינלאומי, למשל +972501234567. שיחה מכל מספר אחר נדחית.',
+  'settings.connections.phone.owner.hint': 'בפורמט בינלאומי, למשל +972500000000. שיחה מכל מספר אחר נדחית.',
   'settings.connections.phone.pin': 'קוד PIN',
   'settings.connections.phone.pin.set': 'מוגדר',
   'settings.connections.phone.pin.unset': 'לא מוגדר',

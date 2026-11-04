@@ -16,7 +16,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SID = 'AC' + 'b'.repeat(32);
 const TOKEN = 'twilio-auth-token-SECRET-abcdef0123';
 const GKEY = 'AIza-test-gemini-SECRET-0123456789';
-const OWNER = '+972501234567';
+const OWNER = '+972500000000';
 const CALL = 'CA' + '7'.repeat(32);
 const PUB = 'https://pub.example';
 
