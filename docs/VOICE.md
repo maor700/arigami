@@ -54,3 +54,33 @@ Today's STT (Groq via `groqApiKey`, `server/voice.js`) is untouched and reported
 
 Call `requireVoiceProvider(kind)` first and return its non-ok shapes as the tool result; call
 `recordVoiceUsage(provider, …)` after each vendor call. Nothing else is needed for the Setup card.
+
+## Stage 1b — read-aloud + hands-free (the in-app MVP)
+
+- **Endpoint** `POST /__api/voice/tts {sessionId, text, voice?, lang?}` (`server/voice-tts.ts`): `requireVoiceProvider('tts')` first —
+  its non-ok shape comes back as JSON 200 (`{needs_setup}`, `{disabled:true}`, `{budget:'soft-stopped'}`); empty or over-long text
+  (> `TTS_MAX_CHARS` = 1200) → 400; a third sentence in flight for one session → 429; a vendor failure → 502 with the key scrubbed.
+  Success streams the vendor's audio (chunked `audio/mpeg`, `x-voice-provider`) and records `chars` in the ledger.
+- **Drivers**, in the 1a order: ElevenLabs `/v1/text-to-speech/{voice}/stream` (`eleven_v3` — the turbo/flash models have no Hebrew),
+  Cartesia `/tts/bytes` (`sonic-3`), OpenAI `/v1/audio/speech` (`gpt-4o-mini-tts`). `config.voice.tts.{voice,model}[<provider id>]`
+  overrides the defaults (file only, no UI).
+- **Sources + gating** (`web/src/lib/speak.js`): `ttsSource(config, prefs)` = `'server'` when `config.voiceProviders.tts` is non-empty,
+  else `'browser'` when the person switched on *Browser voice (free)* (speechSynthesis — quality varies in Hebrew), else `null`; the
+  kill-switch nulls both. *Read answers aloud* (`prefs.voiceReadAloud`, per device, default off) renders only once a source exists;
+  hands-free needs STT (`config.voiceEnabled`) on top. No source → no button, no toggle, no HUD change.
+- **Chunking**: the armed turn's `chat:<id>` partials → `SentenceChunker` (Hebrew/English sentence ends, line breaks, a fenced block →
+  one spoken marker "קטע קוד." / "Code block.", markdown stripped, abbreviations and decimals kept, a 280-char cut for runs without
+  punctuation). `Speaker` keeps ≤ 2 TTS fetches in flight and plays strictly in order (`<audio>`; speechSynthesis for the browser source).
+- **Arming**: the composer arms the selected session right before it POSTs the message; the store tap feeds partials; the persisted
+  copy is not spoken twice; a full message that had no deltas is; `result` flushes the remainder.
+- **Barge-in**: the Stop button (composer / HUD / Esc), opening the mic, the composer's interrupt, or — hands-free — a word from the
+  person: playback stops at once, the queue is dropped, and `/sessions/:id/interrupt` is called only while `claude.state === 'working'`.
+  A `needs_setup` / `disabled` / `soft-stopped` answer mid-turn falls back to the browser voice when it is on, else the reading stops.
+- **Hands-free** (`web/src/lib/handsfree.js`, VoiceHUD): the headphones button in the composer opens the mic in `handsfree` mode (the
+  VOICE2 endpointing), the sentence goes to the session as-is (no router, no confirmation), the answer is spoken, the mic stays open
+  for a barge-in, and the HUD shows one state: listening / thinking / speaking. A stop word ("עצור", "stop"…), Esc, ✕, the button, or
+  120 s of silence ends it. On a phone speaker the open mic relies on the browser's echo cancellation — headphones are better.
+- **Mobile**: `unlockAudio()` runs inside the tap on the speaker / headphones button (a silent WAV through the shared `<audio>`,
+  `AudioContext.resume()`, an empty utterance), so iOS allows the later programmatic plays.
+- **Tests**: `test/voice-tts.test.ts` (endpoint logic against a stubbed vendor), `test/speak-web.test.js` (chunker, queue, gating,
+  barge-in, unlock, hands-free HUD).
