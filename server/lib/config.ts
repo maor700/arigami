@@ -219,7 +219,7 @@ export interface VoiceConfig {
   enabled: boolean;
   caps: Record<string, number>;
   tts?: { voice?: Record<string, string>; model?: Record<string, string> }; // per provider id; stage 1b, file-only
-  realtime?: { model?: string; voice?: string; baseUrl?: string }; // stage 1c clerk; file-only
+  realtime?: { model?: string; voice?: string; baseUrl?: string; geminiModel?: string; geminiVoice?: string; geminiBaseUrl?: string }; // stage 1c clerk; file-only
 }
 
 export interface NotifyConfig {

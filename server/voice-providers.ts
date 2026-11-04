@@ -6,7 +6,7 @@ import { cfg } from './lib/config.js';
 import { voiceBudgetState } from './voice-usage.js';
 
 export type VoiceKind = 'stt' | 'tts' | 'realtime' | 'telephony';
-export const VOICE_PROVIDER_IDS = ['voice:openai', 'voice:elevenlabs', 'voice:cartesia', 'voice:deepgram', 'telephony:twilio'] as const;
+export const VOICE_PROVIDER_IDS = ['voice:openai', 'voice:gemini', 'voice:elevenlabs', 'voice:cartesia', 'voice:deepgram', 'telephony:twilio'] as const;
 export type VoiceProviderId = (typeof VOICE_PROVIDER_IDS)[number];
 export const isVoiceProviderId = (id: unknown): id is VoiceProviderId => typeof id === 'string' && (VOICE_PROVIDER_IDS as readonly string[]).includes(id);
 
@@ -27,6 +27,7 @@ export interface VoiceProviderSpec {
 
 export const VOICE_PROVIDERS: Record<VoiceProviderId, VoiceProviderSpec> = {
   'voice:openai': { id: 'voice:openai', title: 'OpenAI (voice)', kinds: ['stt', 'tts', 'realtime'], fields: [{ name: 'token', label: 'OpenAI API key', secret: true, placeholder: 'sk-…' }], help: 'An OpenAI API key with Realtime / audio access. Stored on this host only.', docs: 'https://platform.openai.com/api-keys' },
+  'voice:gemini': { id: 'voice:gemini', title: 'Gemini (Live)', kinds: ['realtime'], fields: [{ name: 'token', label: 'Gemini API key', secret: true, placeholder: 'AIza…' }], help: 'A Google AI Studio API key for the Live API (Hebrew supported). Stored on this host only.', docs: 'https://aistudio.google.com/apikey' },
   'voice:elevenlabs': { id: 'voice:elevenlabs', title: 'ElevenLabs', kinds: ['tts'], fields: [{ name: 'token', label: 'ElevenLabs API key', secret: true, placeholder: 'xi-…' }], help: 'Text-to-speech (Hebrew supported). Stored on this host only.', docs: 'https://elevenlabs.io/app/settings/api-keys' },
   'voice:cartesia': { id: 'voice:cartesia', title: 'Cartesia', kinds: ['tts'], fields: [{ name: 'token', label: 'Cartesia API key', secret: true, placeholder: 'sk_car_…' }], help: 'Text-to-speech, streaming. Stored on this host only.', docs: 'https://play.cartesia.ai/keys' },
   'voice:deepgram': { id: 'voice:deepgram', title: 'Deepgram', kinds: ['stt'], fields: [{ name: 'token', label: 'Deepgram API key', secret: true }], help: 'Speech-to-text (Nova-3). Stored on this host only.', docs: 'https://console.deepgram.com/' },
@@ -38,7 +39,7 @@ export const RECOMMENDED: Record<VoiceKind, VoiceProviderId> = { stt: 'voice:dee
 const ORDER: Record<VoiceKind, string[]> = {
   stt: ['groq', 'voice:deepgram', 'voice:openai'],
   tts: ['voice:elevenlabs', 'voice:cartesia', 'voice:openai'],
-  realtime: ['voice:openai'],
+  realtime: ['voice:openai', 'voice:gemini'],
   telephony: ['telephony:twilio'],
 };
 
@@ -102,10 +103,13 @@ export const invalidateVoiceChecks = (): void => checkCache.clear();
 
 /** OpenAI's API base; `config.voice.realtime.baseUrl` / ARIGAMI_OPENAI_API_BASE point it at a stand-in (tests). */
 export const openaiBase = (): string => String(cfg.voice?.realtime?.baseUrl || process.env.ARIGAMI_OPENAI_API_BASE || 'https://api.openai.com').replace(/\/+$/, '');
+/** Gemini's API base; `config.voice.realtime.geminiBaseUrl` / ARIGAMI_GEMINI_API_BASE point it at a stand-in (tests). */
+export const geminiBase = (): string => String(cfg.voice?.realtime?.geminiBaseUrl || process.env.ARIGAMI_GEMINI_API_BASE || 'https://generativelanguage.googleapis.com').replace(/\/+$/, '');
 const basic = (sid: string, token: string): string => `Basic ${Buffer.from(`${sid}:${token}`).toString('base64')}`;
 function probeRequest(id: VoiceProviderId, s: Record<string, string>): { url: string; headers: Record<string, string> } {
   switch (id) {
     case 'voice:openai': return { url: `${openaiBase()}/v1/models`, headers: { Authorization: `Bearer ${s.token}` } };
+    case 'voice:gemini': return { url: `${geminiBase()}/v1beta/models?pageSize=1`, headers: { 'x-goog-api-key': s.token } };
     case 'voice:elevenlabs': return { url: 'https://api.elevenlabs.io/v1/user', headers: { 'xi-api-key': s.token } };
     case 'voice:cartesia': return { url: 'https://api.cartesia.ai/voices', headers: { 'X-API-Key': s.token, 'Cartesia-Version': '2025-04-16' } };
     case 'voice:deepgram': return { url: 'https://api.deepgram.com/v1/projects', headers: { Authorization: `Token ${s.token}` } };

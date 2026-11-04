@@ -9,6 +9,7 @@ export const USAGE_FILE = path.join(ARIGAMI_DIR, 'voice-usage.json');
 // Prices in USD from PLAN.md (2026-11-04); estimates only, the provider's invoice is the truth.
 export const OPENAI_REALTIME_USD_PER_MIN = 0.1; // gpt-realtime-2, midpoint of $0.05–0.15
 export const OPENAI_TTS_USD_PER_1K_CHARS = 0.015; // OpenAI list price (not in PLAN.md)
+export const GEMINI_LIVE_USD_PER_MIN = 0.023; // Gemini Live (PLAN.md)
 export const ELEVENLABS_USD_PER_1K_CHARS = 0.04;
 export const CARTESIA_USD_PER_1K_CHARS = 0.055; // midpoint of $0.045–0.065
 export const DEEPGRAM_USD_PER_MIN = 0.0092; // Nova-3
@@ -34,6 +35,7 @@ export function estimateUsd(provider: string, u: Usage): number {
   const k = (u.chars || 0) / 1000;
   switch (provider) {
     case 'voice:openai': return min * OPENAI_REALTIME_USD_PER_MIN + k * OPENAI_TTS_USD_PER_1K_CHARS;
+    case 'voice:gemini': return min * GEMINI_LIVE_USD_PER_MIN;
     case 'voice:elevenlabs': return k * ELEVENLABS_USD_PER_1K_CHARS;
     case 'voice:cartesia': return k * CARTESIA_USD_PER_1K_CHARS;
     case 'voice:deepgram': return min * DEEPGRAM_USD_PER_MIN;

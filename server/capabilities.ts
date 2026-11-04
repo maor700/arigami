@@ -129,7 +129,7 @@ export const KNOWN_COMPOSIO_TOOLKITS = ['gmail', 'googledrive', 'googlecalendar'
 export const knownMcpServices = (): string[] => connectableMcp().map((s) => s.slug);
 /** @deprecated snapshot taken at import; call knownMcpServices() for the live list. */
 export const KNOWN_MCP_SERVICES: readonly string[] = connectableMcp().map((s) => s.slug);
-const CAP_ID_RE = /^(identity|claude|codex|git|whatsapp|desktop|push|remote|telemetry|repo:[A-Za-z0-9._-]{1,64}|composio:[a-z0-9_-]{1,40}|mcp:[a-z0-9-]{1,40}|voice:(openai|elevenlabs|cartesia|deepgram)|telephony:twilio)$/;
+const CAP_ID_RE = /^(identity|claude|codex|git|whatsapp|desktop|push|remote|telemetry|repo:[A-Za-z0-9._-]{1,64}|composio:[a-z0-9_-]{1,40}|mcp:[a-z0-9-]{1,40}|voice:(openai|gemini|elevenlabs|cartesia|deepgram)|telephony:twilio)$/;
 export const isCapabilityId = (id: unknown): id is string => typeof id === 'string' && CAP_ID_RE.test(id);
 
 // ---------------------------------------------------------------------------

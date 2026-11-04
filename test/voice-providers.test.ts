@@ -18,21 +18,22 @@ const run = (body: string, dir = tmpDir('arigami-voice-'), extra: Record<string,
 
 test('CAP_ID_RE: the five voice/phone ids resolve; junk does not', () => {
   const { out } = run(
-    "const ids=['voice:openai','voice:elevenlabs','voice:cartesia','voice:deepgram','telephony:twilio'];" +
+    "const ids=['voice:openai','voice:gemini','voice:elevenlabs','voice:cartesia','voice:deepgram','telephony:twilio'];" +
       "const bad=['voice:','voice:nope','voice:OpenAI','telephony:','telephony:vonage','voice:openai/x','telephony:twilio '];" +
       'emit({ok:ids.map(c.isCapabilityId),bad:bad.map(c.isCapabilityId),caps:ids.map(id=>{const k=c.getCapability(id);return k&&[k.id,k.group,k.manual.kind,k.manual.fields.map(f=>f.name).join(","),k.autoCapable];}),' +
       "listed:c.listCapabilities({composioConnected:async()=>null}).map(x=>x.id).filter(x=>x.startsWith('voice:')||x.startsWith('telephony:'))});"
   );
-  expect(out.ok).toEqual([true, true, true, true, true]);
+  expect(out.ok).toEqual([true, true, true, true, true, true]);
   expect(out.bad).toEqual([false, false, false, false, false, false, false]);
   expect(out.caps).toEqual([
     ['voice:openai', 'voice', 'token', 'token', false],
+    ['voice:gemini', 'voice', 'token', 'token', false],
     ['voice:elevenlabs', 'voice', 'token', 'token', false],
     ['voice:cartesia', 'voice', 'token', 'token', false],
     ['voice:deepgram', 'voice', 'token', 'token', false],
     ['telephony:twilio', 'voice', 'token', 'sid,token', false],
   ]);
-  expect(out.listed).toEqual(['voice:openai', 'voice:elevenlabs', 'voice:cartesia', 'voice:deepgram', 'telephony:twilio']);
+  expect(out.listed).toEqual(['voice:openai', 'voice:gemini', 'voice:elevenlabs', 'voice:cartesia', 'voice:deepgram', 'telephony:twilio']);
 });
 
 test('check(): no key → not ok; stubbed fetch ok / 401 / timeout per provider; the key never reaches a message; rejection drops the key', () => {
@@ -42,7 +43,7 @@ test('check(): no key → not ok; stubbed fetch ok / 401 / timeout per provider;
       "if(mode==='timeout'){const e=new Error('The operation timed out: '+KEY);e.name='TimeoutError';throw e;}" +
       "if(mode==='down'){throw new Error('connect ECONNREFUSED '+KEY);}" +
       "return {ok:mode==='ok',status:mode==='ok'?200:401};};" +
-      "const ids=['voice:openai','voice:elevenlabs','voice:cartesia','voice:deepgram','telephony:twilio'];" +
+      "const ids=['voice:openai','voice:gemini','voice:elevenlabs','voice:cartesia','voice:deepgram','telephony:twilio'];" +
       'const fields=(id)=>id===\'telephony:twilio\'?{sid:\'ACtestsid1234567890\',token:KEY}:{token:KEY};' +
       'const res={};' +
       'for(const id of ids){' +
@@ -64,7 +65,7 @@ test('check(): no key → not ok; stubbed fetch ok / 401 / timeout per provider;
       "let short=null;try{vp.setProviderSecret('voice:openai',{token:'abc'});}catch(e){short=e.message;}" +
       "emit({res,leak,urls,hdr,threw,keptAfterReject,conn,short,file:vp.SECRETS_FILE});"
   );
-  for (const id of ['voice:openai', 'voice:elevenlabs', 'voice:cartesia', 'voice:deepgram', 'telephony:twilio']) {
+  for (const id of ['voice:openai', 'voice:gemini', 'voice:elevenlabs', 'voice:cartesia', 'voice:deepgram', 'telephony:twilio']) {
     const r = out.res[id];
     expect(r.none).toEqual([false, false]);
     expect(r.ok).toEqual([true, 'connected']);
@@ -80,6 +81,8 @@ test('check(): no key → not ok; stubbed fetch ok / 401 / timeout per provider;
   expect(out.leak).toBe(false);
   // one cheap authenticated call each, at the vendor's own API
   expect(out.urls.some((u: string) => u.startsWith('https://api.openai.com/v1/models'))).toBe(true);
+  expect(out.urls.some((u: string) => u.startsWith('https://generativelanguage.googleapis.com/v1beta/models'))).toBe(true);
+  expect(out.hdr.some((h: string) => h.includes('x-goog-api-key'))).toBe(true);
   expect(out.urls.some((u: string) => u.startsWith('https://api.elevenlabs.io/v1/user'))).toBe(true);
   expect(out.urls.some((u: string) => u.startsWith('https://api.cartesia.ai/voices'))).toBe(true);
   expect(out.urls.some((u: string) => u.startsWith('https://api.deepgram.com/v1/projects'))).toBe(true);

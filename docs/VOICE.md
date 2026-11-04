@@ -9,6 +9,7 @@ connected nothing changes: no banner, no button, no tab. The providers only appe
 | id | serves | key field(s) | `check()` |
 |---|---|---|---|
 | `voice:openai` | stt, tts, realtime | API key | `GET /v1/models` |
+| `voice:gemini` | realtime (Live API) | API key (AI Studio) | `GET /v1beta/models?pageSize=1` |
 | `voice:elevenlabs` | tts | API key | `GET /v1/user` |
 | `voice:cartesia` | tts | API key | `GET /voices` (+ `Cartesia-Version`) |
 | `voice:deepgram` | stt | API key | `GET /v1/projects` |
