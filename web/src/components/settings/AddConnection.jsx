@@ -67,7 +67,7 @@ function Group({ title, items, onPick, busy, hint }) {
 
 // The picker body (search + groups). Exported separately so it renders without
 // a portal (SSR tests); the default export wraps it in the ui Dialog.
-export function AddConnectionPanel({ mcpCaps = [], composio, whatsappCap, busy, onPick, onComposioSignedIn }) {
+export function AddConnectionPanel({ mcpCaps = [], composio, whatsappCap, voiceCaps = [], busy, onPick, onComposioSignedIn }) {
   const t = useT();
   const [q, setQ] = useState('');
   const inputRef = useRef(null);
@@ -99,7 +99,13 @@ export function AddConnectionPanel({ mcpCaps = [], composio, whatsappCap, busy, 
     return out;
   }, [whatsappCap, query]);
 
-  const nothing = !direct.length && !composioItems.length && !local.length && !(composio && !composio.hasKey);
+  // Voice & phone providers without a key yet (docs/VOICE.md) — the only place they show before one is pasted.
+  const voice = useMemo(() => voiceCaps
+    .filter((c) => !c.ok && !c.data?.hasKey)
+    .map((c) => ({ cap: c, title: c.title || capTitle(t, c.id), note: (c.data?.kinds || []).join(' / ') }))
+    .filter((it) => match(it.title) || match(it.note) || match('voice') || match('phone')), [voiceCaps, query]);
+
+  const nothing = !direct.length && !composioItems.length && !local.length && !voice.length && !(composio && !composio.hasKey);
 
   return (
     <>
@@ -124,6 +130,7 @@ export function AddConnectionPanel({ mcpCaps = [], composio, whatsappCap, busy, 
       />
       {composio && !composio.hasKey && !composio.toolkits && <div className="mt-3"><ComposioLogin onDone={onComposioSignedIn} /></div>}
       <Group title={t('settings.connections.add.local')} items={local} onPick={onPick} busy={busy} />
+      <Group title={t('settings.connections.add.voice')} items={voice} onPick={onPick} busy={busy} />
     </div>
     </>
   );

@@ -117,7 +117,7 @@ export async function checkProvider(id: string, opts: { fetchImpl?: typeof fetch
   if (!isVoiceProviderId(id)) return { ok: false, detail: `unknown voice provider ${id}` };
   const spec = VOICE_PROVIDERS[id];
   const s = readSecrets()[id];
-  if (!s) return { ok: false, detail: `paste a ${spec.title} key`, data: { hasKey: false, kinds: spec.kinds, docs: spec.docs } };
+  if (!s) return { ok: false, detail: `paste a key for ${spec.title}`, data: { hasKey: false, kinds: spec.kinds, docs: spec.docs } };
   if (!voiceEnabled()) return { ok: false, detail: offDetail, data: { hasKey: true, disabled: true, kinds: spec.kinds } };
   const hit = checkCache.get(id);
   if (hit && !opts.fresh && Date.now() - hit.at < CHECK_TTL_MS) return hit.r;
@@ -141,7 +141,7 @@ export async function checkProvider(id: string, opts: { fetchImpl?: typeof fetch
 export function checkProviderOffline(id: string): ProviderCheck {
   if (!isVoiceProviderId(id)) return { ok: false, detail: `unknown voice provider ${id}` };
   const spec = VOICE_PROVIDERS[id];
-  if (!hasProviderSecret(id)) return { ok: false, detail: `paste a ${spec.title} key`, data: { hasKey: false, kinds: spec.kinds } };
+  if (!hasProviderSecret(id)) return { ok: false, detail: `paste a key for ${spec.title}`, data: { hasKey: false, kinds: spec.kinds } };
   if (!voiceEnabled()) return { ok: false, detail: offDetail, data: { hasKey: true, disabled: true, kinds: spec.kinds } };
   return { ok: true, detail: 'key stored (not verified)', data: { hasKey: true, kinds: spec.kinds } };
 }
