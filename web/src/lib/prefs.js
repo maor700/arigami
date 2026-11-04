@@ -31,6 +31,8 @@ const DEFAULTS = {
   voiceMode: 'hold', // 'hold' (push-to-talk, hold the key) | 'toggle' (press to start/stop)
   voiceLang: 'auto', // 'auto' (= the UI language) | ISO code from langs.VOICE_LANGS — the language the mic listens in
   voiceHotkey: 'Cmd+Shift+V', // keyboard shortcut to start recording
+  voiceReadAloud: false, // stage 1b: speak the agent's answers (needs a TTS source: a host provider or the browser voice)
+  voiceBrowserTts: false, // stage 1b: the browser's speechSynthesis counts as a (free) TTS source
   ticketPresets: [], // [{ id, name, filters }] — saved launcher ticket filters
   ticketDefaultPresetId: '', // id of the preset applied when the launcher opens
   sessionPresets: [], // [{ id, name, engine, skill, model, effort }] — saved launcher session options
@@ -178,6 +180,8 @@ function sanitize(raw) {
     voiceMode: ['hold', 'toggle'].includes(p.voiceMode) ? p.voiceMode : DEFAULTS.voiceMode,
     voiceLang: sanitizeVoiceLang(p.voiceLang ?? p.voiceLanguage), // `voiceLanguage` = pre-VOICE1 name of the same pref
     voiceHotkey: typeof p.voiceHotkey === 'string' && p.voiceHotkey ? p.voiceHotkey : DEFAULTS.voiceHotkey,
+    voiceReadAloud: p.voiceReadAloud === true,
+    voiceBrowserTts: p.voiceBrowserTts === true,
     ticketPresets: sanitizePresets(p.ticketPresets),
     ticketDefaultPresetId: typeof p.ticketDefaultPresetId === 'string' ? p.ticketDefaultPresetId : '',
     sessionPresets: sanitizeSessionPresets(p.sessionPresets),

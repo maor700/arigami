@@ -91,6 +91,11 @@ export const strings = {
   'chrome.voice.hotkey.listening': 'מאזין…',
   'chrome.voice.autoSend': 'שליחה אוטומטית של פרומפטים',
   'chrome.voice.autoSend.hint': 'שולח אוטומטית פרומפטים שהוזרקו בקול ללא בקשת אישור.',
+  // שלב 1ב — קול יוצא
+  'chrome.voice.browserTts': 'קול הדפדפן (חינם)',
+  'chrome.voice.browserTts.hint': 'משתמש בקולות המובנים בדפדפן הזה, בלי מפתח. האיכות בעברית משתנה.',
+  'chrome.voice.readAloud': 'הקראת תשובות בקול',
+  'chrome.voice.readAloud.hint': 'תשובות הסוכן מוקראות תוך כדי הזרמה (במכשיר הזה בלבד). כפתור הרמקול בתיבת ההודעה מפעיל ועוצר הקראה.',
 
   // Settings — remote access / Tailscale
   'chrome.remote.section': 'גישה מרחוק',

@@ -5381,6 +5381,16 @@ export async function handle(
       }
       return notFound(res);
     }
+    // Stage 1b (docs/VOICE.md): one sentence → the provider's audio stream; the gate's shapes come back as JSON.
+    if (p === '/__api/voice/tts' && m === 'POST') {
+      const tts = await import('./voice-tts.js');
+      let body: Record<string, unknown>;
+      try { body = await readBody(req, 64e3); } catch (e) { return badRequest(res, (e as Error).message); }
+      const r = await tts.handleTts(body);
+      if (r.kind === 'json') return json(res, r.body, r.status);
+      await tts.pipeTts(r, res);
+      return;
+    }
     if (p === '/__api/voice/stt' && m === 'POST') {
       const voice = await import('./voice.js');
       const body = await readBody(req, 32e6);

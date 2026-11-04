@@ -89,10 +89,10 @@ function startMeter(s, auto) {
       set({ level: peak });
       if (!auto) return;
       const now = Date.now();
-      if (peak >= SPEECH_LEVEL) { spoke = true; lastLoud = now; }
+      if (peak >= SPEECH_LEVEL) { if (!spoke && handsFree()) hf.onSpeechStart?.(); spoke = true; lastLoud = now; }
       const step = silenceStep({ spoke, startedAt, lastLoud, now, peak });
       if (step === 'stop') stopRecording();
-      else if (step === 'end') endConversation('silence');
+      else if (step === 'end') { if (handsFree()) quietTake('idle'); else endConversation('silence'); }
     }, 100);
   } catch { /* metering is best-effort */ }
 }
@@ -134,7 +134,21 @@ function blobToBase64(blob) {
 // nothing) to a mode. Anything that isn't an explicit 'dictate' is a command —
 // the hotkey and the rail never dictate.
 export function modeOf(opts) {
-  return opts && typeof opts === 'object' && opts.mode === 'dictate' ? 'dictate' : 'command';
+  const m = opts && typeof opts === 'object' ? opts.mode : '';
+  return m === 'dictate' ? 'dictate' : m === 'handsfree' ? 'handsfree' : 'command';
+}
+
+// Stage 1b hooks: hands-free (lib/handsfree.js) and read-aloud (lib/speak.js) plug in here; null = not installed.
+let hf = null;
+export function setHandsFreeHooks(h) { hf = h && typeof h === 'object' ? h : null; }
+let speakHooks = null;
+export function setSpeakHooks(h) { speakHooks = h && typeof h === 'object' ? h : null; }
+const handsFree = (mode = state.mode) => mode === 'handsfree' && !!hf;
+// Hands-free: a take with nothing usable in it is dropped and the mic re-opens, unless the hooks say to leave.
+function quietTake(kind, detail) {
+  const again = (kind === 'error' ? hf?.onError?.(detail) : hf?.onIdle?.()) === 'again';
+  cancel();
+  if (again) startRecording({ mode: 'handsfree', auto: true });
 }
 
 // False once the host says it has no Groq key (config.voiceEnabled): a take
@@ -153,8 +167,9 @@ export async function startRecording(opts) {
     set({ status: 'nokey', mode, transcript: '', plan: null, error: '' });
     return;
   }
-  const auto = mode === 'command' && !!(opts && typeof opts === 'object' && opts.auto);
+  const auto = (mode === 'command' || mode === 'handsfree') && !!(opts && typeof opts === 'object' && opts.auto);
   clearRelisten();
+  if (!auto) speakHooks?.onMicOpen?.(); // the person reaches for the mic → read-aloud stops (barge-in)
   // A dictation take is never part of a command conversation.
   if (mode === 'dictate' && state.turns.length) set({ turns: [] });
   if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
@@ -227,16 +242,18 @@ async function finalize(mimeType, mode) {
   const blob = new Blob(chunks, { type: mimeType || 'audio/webm' });
   rec = null;
   chunks = [];
-  if (!blob.size) { set({ status: 'idle' }); return; }
+  if (!blob.size) { if (handsFree(mode)) quietTake('idle'); else set({ status: 'idle' }); return; }
   // Too-short clips can be an incomplete/headerless container Groq rejects
   // ("could not process file"). Ask the user to hold a beat longer.
   if (blob.size < 1600) {
+    if (handsFree(mode)) { quietTake('idle'); return; }
     set({ status: 'error', error: 'That was too short to transcribe — hold the mic and speak a moment longer.' });
     return;
   }
   // The mic never rose above near-silence → don't ship silence to Whisper (it
   // would hallucinate a stock "thank you" phrase). Tell the user to check their input.
   if (peak < 0.03) {
+    if (handsFree(mode)) { quietTake('idle'); return; }
     if (state.auto) { endConversation('silence'); return; }
     set({ status: 'error', error: 'No sound from the mic. Check the input device and that your browser has macOS microphone permission (System Settings → Privacy → Microphone).' });
     return;
@@ -259,6 +276,7 @@ export async function processClip(blob, mode = state.mode) {
       set({ status: 'nokey', error: '' });
       return;
     }
+    if (handsFree(mode)) { quietTake('error', msg); return; }
     set({ status: 'error', error: msg });
   }
 }
@@ -277,6 +295,12 @@ export async function transcribeBlob(blob) {
 // goes through the host router and lands in the review state for the HUD.
 export async function handleTranscript(transcript, mode = state.mode) {
   clearRelisten();
+  // Hands-free (stage 1b): the sentence goes to lib/handsfree.js, which sends it to the session as-is.
+  if (mode === 'handsfree') {
+    set({ transcript, mode, status: 'idle', plan: null, error: '', turns: [] });
+    hf?.onTranscript?.(transcript);
+    return;
+  }
   if (mode === 'dictate') {
     set({ transcript, mode, turns: [] });
     await deliverDictation(transcript);
@@ -551,4 +575,4 @@ export function hotkeyPress({ hold = false, composer = composerFocused() } = {})
 // Verification hook (VOICE1): a real mic can't be driven headlessly, so a live
 // check injects a fake STT result through the same path the recorder uses
 // (`handleTranscript(text, mode)`), or a fake clip through `processClip`.
-if (typeof window !== 'undefined') window.__arigamiVoice = { handleTranscript, processClip, startRecording, stopRecording, cancel, endConversation, hotkeyPress, setSelectedContext, getState };
+if (typeof window !== 'undefined') window.__arigamiVoice = { handleTranscript, processClip, startRecording, stopRecording, cancel, endConversation, hotkeyPress, setSelectedContext, getState, setHandsFreeHooks, setSpeakHooks };

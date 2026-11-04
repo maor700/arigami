@@ -63,6 +63,8 @@ function writeSecrets(s: Secrets): void {
   }
 }
 export const hasProviderSecret = (id: string): boolean => !!readSecrets()[id];
+/** Host-side only (voice-tts.ts): the stored fields of one provider; never serialised to the agent or the browser. */
+export const providerSecretFields = (id: string): Record<string, string> | null => readSecrets()[id] || null;
 
 export function setProviderSecret(id: string, fields: Record<string, unknown>): void {
   if (!isVoiceProviderId(id)) throw new Error(`unknown voice provider: ${id}`);
