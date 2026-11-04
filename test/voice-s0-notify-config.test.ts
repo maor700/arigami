@@ -33,11 +33,11 @@ test('ownJids: paired → phone + lid without the device suffix; unpaired → nu
   const dir = tmpDir('arigami-ownjid-');
   const wa = path.join(dir, 'wa');
   fs.mkdirSync(path.join(wa, 'auth_info'), { recursive: true });
-  fs.writeFileSync(path.join(wa, 'auth_info/creds.json'), JSON.stringify({ me: { id: '972500000000:12@s.whatsapp.net', lid: '123456789:3@lid', name: 'Me' } }));
+  fs.writeFileSync(path.join(wa, 'auth_info/creds.json'), JSON.stringify({ me: { id: '972500000000:12@s.whatsapp.net', lid: '1234567890:3@lid', name: 'Me' } }));
   const env = { ARIGAMI_DIR: dir, ARIGAMI_STATE_FILE: path.join(dir, 'state.json'), ARIGAMI_WA_MCP_DIR: wa, ARIGAMI_WA_DATA_DIR: path.join(wa, 'data') };
   const r = runInChild("const wb = await import('./server/whatsapp-bridge.js'); emit(wb.ownJids());", env);
   expect(r.ok).toBe(true);
-  expect(r.out[0]).toEqual({ phone: '972500000000@s.whatsapp.net', lid: '123456789@lid' });
+  expect(r.out[0]).toEqual({ phone: '972500000000@s.whatsapp.net', lid: '1234567890@lid' });
   const bare = runInChild("const wb = await import('./server/whatsapp-bridge.js'); emit({ own: wb.ownJids() });", { ...env, ARIGAMI_WA_MCP_DIR: path.join(dir, 'none') });
   expect(bare.ok).toBe(true);
   expect(bare.out[0].own).toBe(null);
