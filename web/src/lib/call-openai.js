@@ -1,5 +1,7 @@
 // OpenAI Realtime transport (stage 1c): WebRTC — mic track up, the clerk's audio down, events + tools on the 'oai-events' data channel.
 // The model's own server VAD handles barge-in. Returns the connection the call module drives; hooks report phases, turns, tools.
+import { setAudioSource, clearAudioSource } from './audioLevel.js';
+
 export async function connectOpenAI({ mint, deps, hooks }) {
   if (!deps.RTCPeerConnection) throw new Error('no WebRTC in this browser');
   const pc = new deps.RTCPeerConnection();
@@ -8,9 +10,12 @@ export async function connectOpenAI({ mint, deps, hooks }) {
   let closed = false;
   let stream = null;
   let dc = null;
+  let remote = null;
   const close = () => {
     if (closed) return;
     closed = true;
+    clearAudioSource('mic', stream);
+    clearAudioSource('out', remote);
     try { dc?.close?.(); } catch { /* ignore */ }
     try { for (const tr of stream?.getTracks?.() || []) tr.stop?.(); } catch { /* ignore */ }
     try { pc.close?.(); } catch { /* ignore */ }
@@ -36,13 +41,14 @@ export async function connectOpenAI({ mint, deps, hooks }) {
     }
   };
   try {
-    pc.ontrack = (e) => { try { audio.srcObject = e.streams?.[0] || null; audio.play?.()?.catch?.(() => {}); } catch { /* ignore */ } };
+    pc.ontrack = (e) => { try { remote = e.streams?.[0] || null; audio.srcObject = remote; if (!closed) setAudioSource('out', remote); audio.play?.()?.catch?.(() => {}); } catch { /* ignore */ } };
     pc.onconnectionstatechange = () => {
       const s = pc.connectionState;
       if (s === 'connected') { connected = true; return; }
       if ((s === 'failed' || s === 'closed' || s === 'disconnected') && !closed) hooks.lost(connected);
     };
     stream = await deps.getUserMedia({ audio: true });
+    setAudioSource('mic', stream);
     for (const tr of stream.getTracks?.() || []) pc.addTrack(tr, stream);
     dc = pc.createDataChannel('oai-events');
     dc.onmessage = (e) => { try { onEvent(JSON.parse(e.data)); } catch { /* not JSON */ } };

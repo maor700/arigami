@@ -7,6 +7,7 @@ import { api } from './api.js';
 import { getPrefs } from './prefs.js';
 import { getState as storeState, setChatTap } from './store.js';
 import { setSpeakHooks } from './voice.js';
+import { setAudioSource, clearAudioSource, audioLevelContext } from './audioLevel.js';
 
 // ---- gating (pure) ----------------------------------------------------------------
 export const hasSynth = () => typeof window !== 'undefined' && 'speechSynthesis' in window && typeof window.SpeechSynthesisUtterance === 'function';
@@ -184,6 +185,7 @@ export function htmlAudioPlayer() {
     pending = null;
     if (el) el.onended = el.onerror = null;
     if (url) { try { URL.revokeObjectURL(url); } catch { /* ignore */ } url = null; }
+    clearAudioSource('out', el);
     r?.();
   };
   return {
@@ -202,6 +204,7 @@ export function htmlAudioPlayer() {
         a.onended = settle;
         a.onerror = settle;
         a.src = url;
+        setAudioSource('out', a); // one registration per sentence: a captured stream ends when the src changes
         a.play().catch(settle);
       });
     },
@@ -395,7 +398,6 @@ export function useSpeak() {
 
 let sharedPlayer = null;
 let sharedSynth = null;
-let sharedCtx = null;
 export function setPlayerFactory(fn) { sharedPlayer = fn ? fn() : null; } // tests
 
 /** Call inside a tap/click: iOS plays nothing programmatically before one gesture-started play(). */
@@ -404,10 +406,8 @@ export function unlockAudio() {
   try { sharedPlayer?.unlock(); } catch { /* ignore */ }
   if (hasSynth()) { if (!sharedSynth) sharedSynth = synthPlayer(getPrefs().language === 'he' ? 'he' : 'en'); try { sharedSynth.unlock(); } catch { /* ignore */ } }
   try {
-    if (typeof window !== 'undefined' && (window.AudioContext || window.webkitAudioContext)) {
-      sharedCtx = sharedCtx || new (window.AudioContext || window.webkitAudioContext)();
-      if (sharedCtx.state === 'suspended') sharedCtx.resume().catch(() => {});
-    }
+    const ctx = audioLevelContext(); // the meters' context too (lib/audioLevel.js)
+    if (ctx?.state === 'suspended') ctx.resume().catch(() => {});
   } catch { /* ignore */ }
   if (!state.unlocked) set({ unlocked: true });
 }
