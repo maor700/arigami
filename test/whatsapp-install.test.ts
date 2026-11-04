@@ -25,6 +25,8 @@ test('native repair preserves pairing/data, retries failed dependencies, and is 
           process.exit(1);
         }
       } else if (connection === "open") {
+            storeMessage(parsed);
+          } else {
 `);
   fs.writeFileSync(path.join(wa, 'src/mcp.ts'), 'import { z } from "zod";\n  server.tool(\n    "search_contacts",');
   fs.writeFileSync(path.join(wa, 'auth_info/creds.json'), '{"sentinel":"pairing"}');
@@ -58,4 +60,6 @@ touch node_modules/qrcode/package.json
   expect(source).toContain('await qrStatus(qr)');
   expect(source).not.toContain('await open(');
   expect(fs.readFileSync(path.join(wa, 'src/database.ts'), 'utf8')).toContain('WHATSAPP_MCP_DATA_DIR');
+  expect(source).toContain('transcribeAudio(msg, sock, logger)');
+  expect(fs.existsSync(path.join(wa, 'src/arigami-transcribe.ts'))).toBe(true);
 });
