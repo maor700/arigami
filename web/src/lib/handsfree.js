@@ -39,7 +39,7 @@ const sync = () => set({ phase: phaseOf({ active: state.active, waiting, speakin
 
 const listen = () => startRecording({ mode: 'handsfree', auto: true });
 
-const hooks = {
+export const handsFreeHooks = {
   // the person finished a sentence: a stop word ends the mode, anything else goes to the session as-is
   async onTranscript(text) {
     if (!state.active) return;
@@ -95,7 +95,7 @@ export function startHandsFree(sessionId) {
   speaking = false;
   errors = 0;
   lastActivity = Date.now();
-  setHandsFreeHooks(hooks);
+  setHandsFreeHooks(handsFreeHooks);
   set({ active: true, sessionId, lastText: '', note: '', since: Date.now() });
   sync();
   listen();
@@ -117,4 +117,4 @@ export function toggleHandsFree(sessionId) {
   else startHandsFree(sessionId);
 }
 
-if (typeof window !== 'undefined') window.__arigamiHandsFree = { startHandsFree, stopHandsFree, toggleHandsFree, getHandsFree, hooks };
+if (typeof window !== 'undefined') window.__arigamiHandsFree = { startHandsFree, stopHandsFree, toggleHandsFree, getHandsFree, hooks: handsFreeHooks };

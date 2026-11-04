@@ -2,7 +2,7 @@
 // markdown stripped), the ordered TTS queue (1–2 in flight, plays in order, stop() drops everything), the gating
 // (no source → no UI; source + pref → UI), barge-in (interrupt only while the turn streams), the iOS unlock path,
 // and the hands-free window inside VoiceHUD. Browser APIs are shimmed; nothing here opens a real mic or speaker.
-import { test, expect, beforeAll } from 'bun:test';
+import { test, expect, beforeAll, afterAll } from 'bun:test';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isolate } from './_isolate.js';
@@ -75,6 +75,8 @@ beforeAll(async () => {
   speak.installReadAloud(); // what App.jsx does at boot: the store tap + the mic hook
   prefs.setPrefs({ language: 'en' });
 });
+// Module state is shared with the other web tests in this process: leave the mic, the HUD and the reading idle.
+afterAll(() => { handsfree.stopHandsFree('test'); speak.stopSpeaking(); voice.cancel(); prefs.setPrefs({ language: 'en', voiceReadAloud: false, voiceBrowserTts: false }); });
 
 // ---- chunker ------------------------------------------------------------------------------
 
@@ -375,7 +377,7 @@ test('hands-free: opens the mic in handsfree mode, shows one state in VoiceHUD, 
   await tick();
   await tick();
   expect(speak.getSpeakState().active).toBe(true);
-  globalThis.__arigamiHandsFree.hooks.onSpeechStart();
+  handsfree.handsFreeHooks.onSpeechStart();
   await tick();
   expect(speak.getSpeakState().active).toBe(false);
   expect(handsfree.getHandsFree().phase).toBe('listening');
@@ -392,7 +394,7 @@ test('hands-free: opens the mic in handsfree mode, shows one state in VoiceHUD, 
 test('hands-free: a quiet take re-opens the mic; the idle hook says exit once nobody spoke for the idle window; the button toggles', async () => {
   handsfree.startHandsFree('s1');
   await tick();
-  expect(globalThis.__arigamiHandsFree.hooks.onIdle()).toBe('again');
+  expect(handsfree.handsFreeHooks.onIdle()).toBe('again');
   expect(render(h(HandsFreeButton, { sessionId: 's1' })) || '').not.toContain('data-hands-free="on"'); // pref off → no button at all
   prefs.setPrefs({ voiceReadAloud: true });
   configBody = { voiceEnabled: true, voiceProviders: { enabled: true, stt: ['groq'], tts: ['voice:elevenlabs'], realtime: [], telephony: false } };
