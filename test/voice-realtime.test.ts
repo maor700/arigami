@@ -237,3 +237,57 @@ test('audit cards via the provider path: tool results and errors land as compact
   expect(out.cards[2][2]).toMatch(/^create_session \{"title":"Deploy","prompt":"ship x{195}…"\}\n\n→ created "Deploy"$/);
   expect(out.cards[3][2]).toBe('ask_session {"id":"sess_two","prompt":"hi"}\n\n→ still working');
 });
+
+test('Gemini Live: with only Gemini connected the mint is an ephemeral auth token + the host-built setup; OpenAI wins when both are connected; minutes priced at the Live rate', () => {
+  const out = run(
+    `const KEY=${JSON.stringify(KEY)};const reqs=[];` +
+      "const f=async(u,i)=>{reqs.push({url:String(u),headers:i.headers,body:JSON.parse(i.body)});return String(u).includes('auth_tokens')?new Response(JSON.stringify({name:'auth_tokens/abc123'}),{status:200}):okMint();};" +
+      "vp.setProviderSecret('voice:gemini',{token:KEY});" +
+      "let t=1700000000000;const now=()=>t;" +
+      "const g=await rt.mintRealtimeSession({sessionId:'sess_g',lang:'he'},{fetchImpl:f,now});" +
+      "cfgm.cfg.voice.realtime={geminiModel:'gemini-3.1-flash-live-preview',geminiVoice:'Puck'};" +
+      "const g2=await rt.mintRealtimeSession({sessionId:'sess_g'},{fetchImpl:f,now});" +
+      "cfgm.cfg.voice.realtime={geminiModel:'../x',geminiVoice:'lower'};" +
+      "const g3=await rt.mintRealtimeSession({sessionId:'sess_g'},{fetchImpl:f,now});" +
+      "const noName=await rt.mintRealtimeSession({sessionId:'sess_g'},{fetchImpl:async()=>new Response('{}',{status:200}),now});" +
+      "const rej=await rt.mintRealtimeSession({sessionId:'sess_g'},{fetchImpl:async()=>new Response('{\"error\":{\"message\":\"bad '+KEY+'\"}}',{status:403}),now});" +
+      "t+=120_000;const end=rt.endRealtimeCall({sessionId:'sess_g',callId:g.body.callId,seconds:120},host,{now});" +
+      "vp.setProviderSecret('voice:openai',{token:KEY+'oa'});" +
+      "const both=await rt.mintRealtimeSession({sessionId:'sess_g'},{fetchImpl:f,now});" +
+      "const usage=vu.voiceUsageThisMonth()['voice:gemini'];" +
+      'emit({g:g.body,req:reqs[0],g2:[g2.body.model,g2.body.voice,g2.body.setup.tools[0].functionDeclarations[0].behavior||null,g2.body.setup.generationConfig.speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName],g3:[g3.body.model,g3.body.voice],noName:[noName.status,noName.body.error],rej:[rej.status,rej.body.error],end:end.body,both:[both.body.provider,both.body.transport],usage,' +
+      'leak:JSON.stringify({g:g.body,g2:g2.body,rej:rej.body,logs}).includes(KEY),logs});'
+  );
+  expect(out.g.ok).toBe(true);
+  expect(out.g.provider).toBe('voice:gemini');
+  expect(out.g.transport).toBe('gemini-ws');
+  expect(out.g.token).toBe('auth_tokens/abc123');
+  expect(out.g.model).toBe('gemini-3.8-live');
+  expect(out.g.voice).toBe('Kore');
+  expect(out.g.wsUrl).toBe('wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained');
+  expect(out.g.expiresAt).toBe(1700000000 + 7200);
+  expect(out.g.clientSecret).toBeUndefined();
+  expect(out.req.url).toBe('https://generativelanguage.googleapis.com/v1beta/auth_tokens');
+  expect(out.req.headers['x-goog-api-key']).toBe(KEY);
+  expect(out.req.body).toEqual({ uses: 1, expireTime: new Date(1700000000000 + 7200_000).toISOString(), newSessionExpireTime: new Date(1700000000000 + 120_000).toISOString() });
+  const su = out.g.setup;
+  expect(su.model).toBe('models/gemini-3.8-live');
+  expect(su.generationConfig.responseModalities).toEqual(['AUDIO']);
+  expect(su.systemInstruction.parts[0].text).toContain('רגע, בודק');
+  expect(su.tools[0].functionDeclarations.map((t: any) => [t.name, t.behavior])).toEqual([['list_sessions', 'BLOCKING'], ['session_status', 'BLOCKING'], ['ask_session', 'BLOCKING'], ['create_session', 'BLOCKING'], ['interrupt_session', 'BLOCKING']]);
+  expect(su.inputAudioTranscription).toEqual({});
+  expect(su.outputAudioTranscription).toEqual({});
+  expect(su.sessionResumption).toEqual({});
+  expect(su.contextWindowCompression).toEqual({ slidingWindow: {} });
+  expect(su.realtimeInputConfig.activityHandling).toBe('START_OF_ACTIVITY_INTERRUPTS');
+  expect(out.g2).toEqual(['gemini-3.1-flash-live-preview', 'Puck', null, 'Puck']);
+  expect(out.g3).toEqual(['gemini-3.8-live', 'Kore']);
+  expect(out.noName).toEqual([502, 'Gemini answered 200 without a token']);
+  expect(out.rej[0]).toBe(502);
+  expect(out.rej[1]).toContain('403');
+  expect(out.end.seconds).toBe(120);
+  expect(out.both).toEqual(['voice:openai', 'openai-webrtc']);
+  expect(out.usage.seconds).toBe(120);
+  expect(out.usage.usd).toBeCloseTo(0.046, 5);
+  expect(out.leak).toBe(false);
+});

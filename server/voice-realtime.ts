@@ -1,7 +1,7 @@
 // Stage 1c "voice clerk" (docs/VOICE.md): mint OpenAI Realtime client secrets, run the clerk's tools host-side,
 // keep one transcript + an audit card per call. The API key never leaves this process.
 import { cfg } from './lib/config.js';
-import { requireVoiceProvider, providerSecretFields, scrubProviderSecrets, openaiBase, type VoiceRequirement } from './voice-providers.js';
+import { requireVoiceProvider, providerSecretFields, scrubProviderSecrets, openaiBase, geminiBase, type VoiceRequirement } from './voice-providers.js';
 import { recordVoiceUsage } from './voice-usage.js';
 
 export const DEFAULT_REALTIME_MODEL = 'gpt-realtime-2.1'; // PLAN.md's gpt-realtime-2 family; the mini is selectable via config
@@ -9,7 +9,12 @@ export const REALTIME_MINI_MODEL = 'gpt-realtime-2.1-mini';
 export const DEFAULT_REALTIME_VOICE = 'marin';
 const VOICES = ['alloy', 'ash', 'ballad', 'coral', 'echo', 'sage', 'shimmer', 'verse', 'marin', 'cedar'];
 const MODEL_RE = /^gpt-realtime[A-Za-z0-9.-]{0,40}$/;
+export const DEFAULT_GEMINI_MODEL = 'gemini-3.8-live'; // the stable Live model (2026-09); 3.1-flash-live-preview / 2.5 native-audio still accepted
+export const DEFAULT_GEMINI_VOICE = 'Kore';
+const GEMINI_MODEL_RE = /^gemini-[A-Za-z0-9.-]{1,60}$/;
+const GEMINI_VOICE_RE = /^[A-Z][a-z]{2,20}$/;
 export const SECRET_TTL_S = 600;
+export const GEMINI_NEW_SESSION_S = 120; // the token may open its session for this long; resumes inside the call ride the same token
 export const MAX_CALL_S = 2 * 3600;
 export const CALL_IDLE_MS = 10 * 60_000; // no browser post for this long → the call is treated as lost
 export const ASK_TIMEOUT_MS = 90_000;
@@ -63,6 +68,31 @@ export function realtimeVoice(): string {
   return typeof v === 'string' && VOICES.includes(v) ? v : DEFAULT_REALTIME_VOICE;
 }
 
+export function geminiModel(): string {
+  const m = cfg.voice?.realtime?.geminiModel;
+  return typeof m === 'string' && GEMINI_MODEL_RE.test(m) ? m : DEFAULT_GEMINI_MODEL;
+}
+export function geminiVoice(): string {
+  const v = cfg.voice?.realtime?.geminiVoice;
+  return typeof v === 'string' && GEMINI_VOICE_RE.test(v) ? v : DEFAULT_GEMINI_VOICE;
+}
+/** The Live-API `setup` the browser sends first (pure; tests read it): same persona and tools, PCM audio both ways, transcripts on. */
+export function geminiSetup({ model = geminiModel(), voice = geminiVoice(), handle = '' } = {}): Record<string, unknown> {
+  const blocking = /^gemini-3\.8-live$/.test(model); // 3.8-live defaults to NON_BLOCKING; the clerk waits for its tools
+  return {
+    model: `models/${model}`,
+    generationConfig: { responseModalities: ['AUDIO'], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } } } },
+    systemInstruction: { parts: [{ text: CLERK_INSTRUCTIONS }] },
+    tools: [{ functionDeclarations: CLERK_TOOLS.map((t) => ({ name: t.name, description: t.description, parameters: t.parameters, ...(blocking ? { behavior: 'BLOCKING' } : {}) })) }],
+    realtimeInputConfig: { automaticActivityDetection: {}, activityHandling: 'START_OF_ACTIVITY_INTERRUPTS' },
+    inputAudioTranscription: {},
+    outputAudioTranscription: {},
+    sessionResumption: handle ? { handle } : {},
+    contextWindowCompression: { slidingWindow: {} }, // lifts the 15-minute audio-session cap
+  };
+}
+export const geminiWsUrl = (): string => `${geminiBase().replace(/^http/, 'ws')}/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained`;
+
 /** The session config sent to OpenAI (pure; tests read it). */
 export function realtimeSessionConfig({ model = realtimeModel(), voice = realtimeVoice(), lang = '' } = {}): Record<string, unknown> {
   return {
@@ -82,7 +112,7 @@ export function realtimeSessionConfig({ model = realtimeModel(), voice = realtim
 const sessionIdOf = (body: Record<string, unknown>): string | null => (typeof body?.sessionId === 'string' && SESSION_ID_RE.test(body.sessionId) ? body.sessionId : null);
 const langOf = (body: Record<string, unknown>): string => (typeof body?.lang === 'string' && /^[a-z]{2}$/.test(body.lang) ? body.lang : '');
 
-/** POST /__api/voice/realtime/session {sessionId, lang?} → the gate's shape, or {callId, clientSecret, expiresAt, model, voice, callsUrl}. */
+/** POST /__api/voice/realtime/session {sessionId, lang?} → the gate's shape, or {transport, callId, …} for the connected realtime provider. */
 export async function mintRealtimeSession(body: Record<string, unknown>, opts: { fetchImpl?: typeof fetch; now?: () => number } = {}): Promise<Json> {
   const sessionId = sessionIdOf(body);
   if (!sessionId) return bad('sessionId required');
@@ -92,36 +122,65 @@ export async function mintRealtimeSession(body: Record<string, unknown>, opts: {
   const token = providerSecretFields(provider)?.token;
   if (!token) return bad(`no key stored for ${provider}`, 502);
   sweep(opts.now);
-  const model = realtimeModel();
-  const voice = realtimeVoice();
   const lang = langOf(body);
   const f = opts.fetchImpl || fetch;
   const t0 = Date.now();
   try {
-    const res = await f(`${openaiBase()}/v1/realtime/client_secrets`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ expires_after: { anchor: 'created_at', seconds: SECRET_TTL_S }, session: realtimeSessionConfig({ model, voice, lang }) }),
-      signal: AbortSignal.timeout(MINT_TIMEOUT_MS),
-    });
-    let detail = '';
-    let j: Record<string, unknown> | null = null;
-    try { detail = (await res.text()).slice(0, 400); j = JSON.parse(detail); } catch { /* not JSON */ }
-    const value = j && typeof j.value === 'string' ? j.value : '';
-    if (!res.ok || !value) {
-      console.error(`[voice-realtime] ${provider} answered ${res.status} after ${Date.now() - t0}ms`);
-      return bad(scrubProviderSecrets(`OpenAI answered ${res.status}${res.ok ? ' without a client secret' : detail ? `: ${detail}` : ''}`, provider), 502);
+    const minted = provider === 'voice:gemini' ? await mintGemini(token, f, opts.now) : await mintOpenAI(token, f, lang);
+    if ('error' in minted) {
+      console.error(`[voice-realtime] ${provider} answered ${minted.status} after ${Date.now() - t0}ms`);
+      return bad(scrubProviderSecrets(minted.error, provider), 502);
     }
     const now = (opts.now || Date.now)();
-    const call: Call = { id: newCallId(), sessionId, provider, model, lang, startedAt: now, lastSeen: now, turns: [], tools: 0 };
+    const call: Call = { id: newCallId(), sessionId, provider, model: String(minted.body.model), lang, startedAt: now, lastSeen: now, turns: [], tools: 0 };
     calls.set(call.id, call);
-    console.log(`[voice-realtime] call ${call.id} for ${sessionId} (${model}) minted in ${Date.now() - t0}ms`);
-    return json(200, { ok: true, callId: call.id, clientSecret: value, expiresAt: typeof j?.expires_at === 'number' ? j.expires_at : null, model, voice, provider, callsUrl: `${openaiBase()}/v1/realtime/calls` });
+    console.log(`[voice-realtime] call ${call.id} for ${sessionId} (${call.model}) minted in ${Date.now() - t0}ms`);
+    return json(200, { ok: true, callId: call.id, provider, ...minted.body });
   } catch (e) {
     const msg = scrubProviderSecrets((e as Error)?.message || String(e), provider);
     console.error(`[voice-realtime] mint failed: ${msg}`);
     return bad(msg, 502);
   }
+}
+type Minted = { body: Record<string, unknown> } | { error: string; status: number };
+const readJson = async (res: Response): Promise<{ detail: string; j: Record<string, unknown> | null }> => {
+  let detail = '';
+  let j: Record<string, unknown> | null = null;
+  try { detail = (await res.text()).slice(0, 400); j = JSON.parse(detail); } catch { /* not JSON */ }
+  return { detail, j };
+};
+
+// OpenAI: an ephemeral client secret for the WebRTC handshake, the session config attached to it.
+async function mintOpenAI(token: string, f: typeof fetch, lang: string): Promise<Minted> {
+  const model = realtimeModel();
+  const voice = realtimeVoice();
+  const res = await f(`${openaiBase()}/v1/realtime/client_secrets`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ expires_after: { anchor: 'created_at', seconds: SECRET_TTL_S }, session: realtimeSessionConfig({ model, voice, lang }) }),
+    signal: AbortSignal.timeout(MINT_TIMEOUT_MS),
+  });
+  const { detail, j } = await readJson(res);
+  const value = j && typeof j.value === 'string' ? j.value : '';
+  if (!res.ok || !value) return { status: res.status, error: `OpenAI answered ${res.status}${res.ok ? ' without a client secret' : detail ? `: ${detail}` : ''}` };
+  return { body: { transport: 'openai-webrtc', clientSecret: value, expiresAt: typeof j?.expires_at === 'number' ? j.expires_at : null, model, voice, callsUrl: `${openaiBase()}/v1/realtime/calls` } };
+}
+
+// Gemini: an ephemeral auth token for the Live WebSocket; the browser sends the host-built `setup` itself.
+async function mintGemini(token: string, f: typeof fetch, now: () => number = Date.now): Promise<Minted> {
+  const model = geminiModel();
+  const voice = geminiVoice();
+  const t = now();
+  const res = await f(`${geminiBase()}/v1beta/auth_tokens`, {
+    method: 'POST',
+    headers: { 'x-goog-api-key': token, 'content-type': 'application/json' },
+    body: JSON.stringify({ uses: 1, expireTime: new Date(t + MAX_CALL_S * 1000).toISOString(), newSessionExpireTime: new Date(t + GEMINI_NEW_SESSION_S * 1000).toISOString() }),
+    signal: AbortSignal.timeout(MINT_TIMEOUT_MS),
+  });
+  const { detail, j } = await readJson(res);
+  const name = j && typeof j.name === 'string' ? j.name : '';
+  if (!res.ok || !name) return { status: res.status, error: `Gemini answered ${res.status}${res.ok ? ' without a token' : detail ? `: ${detail}` : ''}` };
+  return { body: { transport: 'gemini-ws', token: name, expiresAt: Math.floor(t / 1000) + MAX_CALL_S, model, voice, wsUrl: geminiWsUrl(), setup: geminiSetup({ model, voice }) } };
 }
 
 // A call the browser names must exist, belong to the session, and be alive.
