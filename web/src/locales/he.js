@@ -174,6 +174,7 @@ export const he = {
   'settings.connections.voice': 'קול וטלפון',
   'settings.connections.voice.hint': 'ספקי דיבור, קול וטלפון. המפתחות נשארים במארח הזה; הסוכן לא רואה אותם.',
   'settings.connections.voice.enabled': 'שכבת הקול',
+  'settings.connections.voice.privacy': 'תוכן הפרויקטים עובר דרך הספק: מה שהפקיד שומע, מה שהוא אומר וכל תוצאת כלי.',
   'settings.connections.voice.enabled.hint': 'כבוי: כל ספק קול נחשב לא מחובר וכלי הקול עונים "מושבת".',
   'settings.connections.voice.cap': 'תקרה חודשית (דולר)',
   'settings.connections.voice.noCap': 'ללא תקרה',

@@ -6,10 +6,11 @@ import { usePrefs } from '../lib/prefs.js';
 import { sessionLabel } from './ui.jsx';
 import { t as tr, useT, fieldDir } from '../lib/i18n.js';
 import { Icon } from '../lib/icons.js';
-import { faArrowUpRightFromSquare, faCheck, faMicrophone, faMicrophoneSlash, faTriangleExclamation, faVolumeHigh, faXmark } from '@fortawesome/free-solid-svg-icons';
+import { faArrowUpRightFromSquare, faCheck, faMicrophone, faMicrophoneSlash, faPhoneSlash, faTriangleExclamation, faVolumeHigh, faXmark } from '@fortawesome/free-solid-svg-icons';
 import { Button } from './ui/button.jsx';
 import VoiceLangPicker from './VoiceLangPicker.jsx';
 import { useHandsFree, stopHandsFree } from '../lib/handsfree.js';
+import { useCall, hangUp, toggleMute } from '../lib/call.js';
 
 // Actions that change app state but can't lose work → run automatically.
 // inject_prompt sends words to a coding agent (possibly bypassPermissions) →
@@ -93,10 +94,45 @@ function HandsFreeHUD({ hf, status, level, error, t, onClose }) {
   );
 }
 
+// Stage 1c: the call window — connecting / listening / speaking / checking (a tool runs on the host), mute, hang up.
+function CallHUD({ call, t }) {
+  const phase = call.phase;
+  const title = phase === 'tool' ? t('dialogs.call.tool', { tool: call.tool }) : t(`dialogs.call.${phase === 'idle' ? 'listening' : phase}`);
+  return (
+    <div className="fixed bottom-4 left-1/2 z-[70] w-[460px] max-w-[92vw] -translate-x-1/2" data-voice-hud data-voice-call={phase}>
+      <div className="overflow-hidden rounded-xl border border-border bg-popover text-popover-foreground shadow-dialog">
+        <div className="flex items-center gap-2.5 border-b border-hair px-4 py-2.5">
+          {phase === 'speaking' ? (
+            <span className="text-[13px]"><Icon icon={faVolumeHigh} /></span>
+          ) : phase === 'tool' || phase === 'connecting' ? (
+            <span className="host-spinner h-3.5 w-3.5" />
+          ) : (
+            <span className="pulse-yellow h-2.5 w-2.5 rounded-full bg-danger" />
+          )}
+          <span className="flex-1 text-[12px] font-bold" data-voice-mode="call">{title}</span>
+          <button type="button" onClick={() => hangUp('hangup')} title={t('dialogs.call.hangUp')} className="cursor-pointer px-1 text-[15px] text-fgdim hover:text-fg"><Icon icon={faXmark} /></button>
+        </div>
+        <div className="px-4 py-3">
+          {call.lastText && <div dir="auto" className="mb-2 text-[12.5px] leading-snug text-fg" data-voice-call-last>“{call.lastText}”</div>}
+          {call.note && <div className="mb-2 text-[11.5px] text-danger" data-voice-call-note>{call.note}</div>}
+          <div className="text-[11.5px] text-fgdim">{t('dialogs.call.hint')}</div>
+        </div>
+        <div className="flex items-center justify-between gap-2 border-t border-hair px-4 py-2 font-mono text-[11.5px] md:text-[10px] text-fgdim">
+          <Button variant="outline" size="sm" onClick={toggleMute} aria-pressed={call.muted} data-voice-call-mute={call.muted ? 'on' : 'off'}>
+            <Icon icon={call.muted ? faMicrophoneSlash : faMicrophone} /> {call.muted ? t('dialogs.call.unmute') : t('dialogs.call.mute')}
+          </Button>
+          <Button variant="primary" size="sm" onClick={() => hangUp('hangup')} data-voice-call-hangup><Icon icon={faPhoneSlash} /> {t('dialogs.call.hangUp')}</Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function VoiceHUD() {
   const t = useT();
   const { status, mode, transcript, plan, error, level, turns, auto, relisten } = useVoice();
   const hf = useHandsFree();
+  const call = useCall();
   const handsFree = hf.active;
   const dictate = mode === 'dictate' && !handsFree;
   const { sessions } = useStore();
@@ -148,6 +184,7 @@ export default function VoiceHUD() {
     setInjects([]);
     ranFor.current = null;
     if (doneTimer.current) { clearTimeout(doneTimer.current); doneTimer.current = null; }
+    if (call.active) { hangUp('hangup'); return; }
     if (handsFree) { stopHandsFree('stop'); return; }
     if (status === 'recording' || status === 'thinking') cancel();
     else clearPlan();
@@ -155,7 +192,7 @@ export default function VoiceHUD() {
 
   // VOICE2: Esc ends a command conversation from anywhere (capture phase, so
   // the app-level Esc-to-interrupt never sees it while the HUD is up).
-  const open = status !== 'idle' || handsFree;
+  const open = status !== 'idle' || handsFree || call.active;
   useEffect(() => {
     if (!open || dictate) return;
     const onKey = (e) => {
@@ -164,14 +201,16 @@ export default function VoiceHUD() {
       e.stopPropagation();
       setInjects([]);
       ranFor.current = null;
-      if (handsFree) stopHandsFree('stop');
+      if (call.active) hangUp('hangup');
+      else if (handsFree) stopHandsFree('stop');
       else endConversation('stop');
     };
     document.addEventListener('keydown', onKey, true);
     return () => document.removeEventListener('keydown', onKey, true);
-  }, [open, dictate, handsFree]);
+  }, [open, dictate, handsFree, call.active]);
 
   if (!open) return null;
+  if (call.active) return <CallHUD call={call} t={t} />;
   if (handsFree) return <HandsFreeHUD hf={hf} status={status} level={level} error={error} t={t} onClose={close} />;
 
   const sendInject = async (idx) => {

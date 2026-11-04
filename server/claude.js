@@ -399,6 +399,9 @@ export function appendChat(id, ev) {
   return ev;
 }
 
+// The latest seq of a session's chat (stage 1c: "events after now" without reading the log).
+export const chatSeq = (id) => tail(id).seq;
+
 export function getChat(id, since = 0) {
   const t = tail(id);
   const firstInMem = t.events[0]?.seq ?? Infinity;
