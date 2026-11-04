@@ -153,7 +153,7 @@ describe('call flow (child)', () => {
     expect(o.noPin).toContain(he('noPin'));
     expect(o.view).toMatchObject({ telephony: true, ownerNumber: '+972501234567', pinSet: true, base: 'https://pub.example', voiceUrl: 'https://pub.example' + TWILIO_VOICE_PATH, statusUrl: 'https://pub.example' + TWILIO_STATUS_PATH, streamUrl: 'wss://pub.example' + TWILIO_STREAM_PATH, lockedUntil: 0, live: 0 });
     expect(o.selfTest.ok).toBe(true);
-    expect(o.viewFunnel.base).toBe('https://tail.ts.net'); // no own base → the Funnel host
+    expect(o.viewFunnel.base).toBe('https://funnel.example'); // no own base → the Funnel host
     expect(o.selfTestNoBase.ok).toBe(false);
     expect(o.badUpdates).toEqual(['owner number must be E.164 (+9725…)', 'PIN must be 4–8 digits', 'PIN must be 4–8 digits', 'public URL must be https://host[:port]']);
     expect(o.updated).toMatchObject({ ownerNumber: '+12345678901', pinSet: true, publicUrl: 'https://my.host:8443' });

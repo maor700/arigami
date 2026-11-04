@@ -29,7 +29,7 @@ beforeAll(async () => {
 
 const twilio = (ok) => ({ id: 'telephony:twilio', title: 'Twilio (phone)', ok, detail: ok ? 'connected' : 'paste a key', data: { hasKey: true, kinds: ['telephony'] } });
 const budget = { enabled: true, caps: {}, month: '2026-11', usage: {}, providers: { enabled: true, stt: [], tts: [], realtime: ['voice:gemini'], telephony: true } };
-const VIEW = { telephony: true, ownerNumber: '+972501234567', pinSet: true, publicUrl: '', base: 'https://h.ts.net', voiceUrl: 'https://h.ts.net/__api/webhooks/twilio/voice', statusUrl: 'https://h.ts.net/__api/webhooks/twilio/status', streamUrl: 'wss://h.ts.net/__api/webhooks/twilio/stream', lockedUntil: 0, live: 0 };
+const VIEW = { telephony: true, ownerNumber: '+972501234567', pinSet: true, publicUrl: '', base: 'https://h.example', voiceUrl: 'https://h.example/__api/webhooks/twilio/voice', statusUrl: 'https://h.example/__api/webhooks/twilio/status', streamUrl: 'wss://h.example/__api/webhooks/twilio/stream', lockedUntil: 0, live: 0 };
 const noop = () => {};
 
 test('the panel mounts only with Twilio connected (a key alone is not enough); before its view loads it renders nothing', () => {
@@ -48,8 +48,8 @@ test('with a view: number, PIN set, the two URLs, test button; the PIN input is 
     expect(html).toContain('data-phone-setup');
     expect(html).toContain('value="+972501234567"');
     expect(html).toContain(lang === 'he' ? '✓ מוגדר' : '✓ set');
-    expect(html).toContain('https://h.ts.net/__api/webhooks/twilio/voice');
-    expect(html).toContain('https://h.ts.net/__api/webhooks/twilio/status');
+    expect(html).toContain('https://h.example/__api/webhooks/twilio/voice');
+    expect(html).toContain('https://h.example/__api/webhooks/twilio/status');
     expect(html).not.toContain('wss://'); // the stream URL is the host's business, not a console field
     expect(html).toContain('data-phone-test');
     expect(html).toContain('type="password"');

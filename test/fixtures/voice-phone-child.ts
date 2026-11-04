@@ -91,10 +91,10 @@ async function flow(): Promise<void> {
   out.noPin = voice({ CallSid: callSid(9), From: OWNER });
   updateTelephonyConfig({ pinHash: vp.hashPin('4321') });
   // settings
-  out.view = vp.phoneView('tail.ts.net');
+  out.view = vp.phoneView('funnel.example');
   out.selfTest = vp.selfTestSignature();
   updateTelephonyConfig({ publicUrl: '' });
-  out.viewFunnel = vp.phoneView('tail.ts.net');
+  out.viewFunnel = vp.phoneView('funnel.example');
   out.selfTestNoBase = vp.selfTestSignature('');
   const bad: string[] = [];
   for (const b of [{ ownerNumber: '0501234567' }, { pin: '12' }, { pin: 'abcd' }, { publicUrl: 'http://x' }]) { try { vp.updatePhone(b); bad.push('accepted'); } catch (e) { bad.push((e as Error).message); } }
