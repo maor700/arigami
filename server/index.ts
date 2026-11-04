@@ -363,6 +363,8 @@ server.on(
     // and kills the process (with it, every running Claude session). Guard it.
     try {
       const pathname = requestPath(req.url).path;
+      // Stage 2 phone: Twilio's media stream carries no cookie; its `start` must present the one-time token (voice-phone-bridge.ts).
+      if (api.phoneStreamUpgrade(req, socket, head)) return;
       // C1: /__ws, /__vnc, /__screencast and the SW proxy's websockets all
       // need the cookie (or an internal bearer) — an anonymous upgrade is
       // answered 401 + closed.

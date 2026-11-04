@@ -165,3 +165,45 @@ Call `requireVoiceProvider(kind)` first and return its non-ok shapes as the tool
 - **Tests**: `test/voice-anim-web.test.js` (meter with a fake AnalyserNode, sources, the wave in both boxes, reduced motion), `test/voice-dock-web.test.js` (placement LTR/RTL, clamping, per-device storage, keyboard nudge), `test/voice-s1d-web.test.js`
   (rail gating + global mint, busy/takeover, OpenAI/Gemini resume, wake lock with a fake navigator), the stage-1d case in
   `test/voice-realtime.test.ts` (home anchor, context, guard, takeover), plus box/mute checks in `speak-web` and `voice-call-web`.
+
+## Stage 2 — inbound phone (`server/voice-phone.ts`, `server/voice-phone-bridge.ts`, `server/lib/audio-g711.ts`)
+
+- **What it is**: the owner calls a Twilio number; Twilio's voice webhook lands on the host as a new webhook kind `twilio`, the host checks
+  the caller is the owner's number, asks for a PIN by DTMF, then bridges the call's audio (Twilio Media Streams) to the same realtime clerk
+  as the in-app call — same tools (`list/status/ask/create/interrupt`), same audit cards and transcript, same ledger. Nothing is sent to third
+  parties, merged or deleted by voice (those stay cards in the app). No audio is stored; the transcript lands in the **Voice calls** session.
+- **Routes** (public, self-authenticating, under the Funnel path `/__api/webhooks`): `POST …/twilio/voice` (the call + every `<Gather>` action,
+  answers TwiML), `POST …/twilio/status` (status callback, 204), `wss://…/twilio/stream` (the media stream; no cookie — its `start` must
+  carry the one-time token the voice webhook minted after the PIN). Every HTTP request must carry a valid `X-Twilio-Signature`
+  (base64 HMAC-SHA1 of the full public URL + sorted form params with the Auth Token stored by `telephony:twilio`); constant-time compare,
+  the URL is tried under the configured base, `cfg.publicUrl` and the proxy's `X-Forwarded-Host`/`Host`; a replayed status is a 401, a replayed
+  voice request is inert (the call's state machine answers it without side effects, so the same wrong PIN twice is not a 401).
+- **Call flow**: `From` ≠ `config.telephony.ownerNumber` (E.164) → `<Reject/>` + an audit card (no minutes billed). Owner → the gate
+  (`voiceEnabled`, Twilio cap, a realtime provider with budget) → `<Gather input="dtmf" finishOnKey="#">` for the PIN (scrypt hash in
+  `config.telephony.pinHash`, never the digits). 3 wrong tries (per call or in a row across calls) → 15-minute lockout; every try is a card.
+  Right PIN while another call is live → "busy" + hang-up. Right PIN → `<Connect><Stream url="wss://…/twilio/stream"><Parameter name="token"/>`
+  (the token: 60 s, single use, bound to the CallSid). After the stream ends the TwiML says goodbye.
+- **Bridge**: Twilio sends μ-law 8 kHz frames; the host decodes (`audio-g711.ts`, pure JS) and resamples to the provider — Gemini Live gets
+  16 kHz PCM in and sends 24 kHz PCM back (block-averaged to 8 kHz, μ-law encoded); OpenAI Realtime runs over its WebSocket with
+  `audio/pcmu` both ways (no resampling). Barge-in is the provider's own VAD: Gemini `interrupted` / OpenAI `speech_started` → Twilio `clear`.
+  Tool calls run through `handleClerkTool` (audit card per call), transcripts through `addRealtimeTranscript`, the end through `endRealtimeCall`
+  (provider minutes). Twilio's own minutes come from the status callback's `CallDuration` (or the stream's window if no status arrives in 90 s).
+  A kill-switch flip or a cap reached mid-call → one sentence through Twilio's REST (`Calls/{sid}` with TwiML) and hang-up; 2 h max.
+  Only one call at a time with the in-app clerk (`openHostCall`).
+- **Funnel + WebSocket**: Tailscale `serve`/`funnel` proxy WebSocket upgrades (verified on this host: an `Upgrade: websocket` request through
+  the serve URL reaches the host's own upgrade gate; see also tailscale/tailscale#18651 — the query string of a WS upgrade may be dropped,
+  which is why the stream URL carries no query and the token travels as a `<Parameter>`). HTTP/2 does not carry `Upgrade`; Twilio speaks HTTP/1.1.
+  If a non-Tailscale proxy fronts the host, it must forward upgrades (Caddy does by default) — set its https base under *Public URL*.
+- **Settings → Connections → Voice & phone** (only while `telephony:twilio` is connected): your number, PIN set/reset, the two URLs to paste
+  into the Twilio console, *Test signature* (signs a sample request with the stored token for the configured base and runs it through the
+  verifier), an optional public base. `GET/POST /__api/voice/phone`, `POST /__api/voice/phone/test-signature` (admin). `GET /__api/config`
+  exposes only `telephony.{ownerNumber, pinSet}`.
+- **Twilio console (one screen)**: buy an Israeli number (regulatory bundle + address on Twilio's side). Phone Numbers → Manage → Active numbers →
+  the number → Voice configuration: *A call comes in* = Webhook, URL = the first URL from Settings, HTTP POST; *Call status changes* = the second URL,
+  POST. Save. Media Streams need no console setting (the `<Stream>` verb opens them). Turn the Funnel on under Settings → Webhooks first, or set
+  *Public URL*. Then call the number from your own phone: PIN, `#`, talk.
+- **Tests**: `test/voice-phone.test.ts` (signature valid/invalid/replayed + base candidates, owner gate, PIN flow with lockout, TwiML shapes,
+  μ-law/resampling round trip, the stream WebSocket with a fake Twilio client against a stubbed backend incl. tool round-trip, transcript, clear
+  on interruption, ledger entries, kill-switch/budget mid-call, status billing), `test/voice-phone-host.test.ts` (a real isolated host: admin routes, the
+  cookie-less webhook + stream upgrade, the real Gemini Live backend against a fake Live server, cards + ledgers), `test/voice-phone-web.test.js` (the settings panel).
+  No real call was placed: there is no Twilio account in CI or on the dev host.

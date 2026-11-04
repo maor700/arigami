@@ -105,6 +105,8 @@ export const invalidateVoiceChecks = (): void => checkCache.clear();
 export const openaiBase = (): string => String(cfg.voice?.realtime?.baseUrl || process.env.ARIGAMI_OPENAI_API_BASE || 'https://api.openai.com').replace(/\/+$/, '');
 /** Gemini's API base; `config.voice.realtime.geminiBaseUrl` / ARIGAMI_GEMINI_API_BASE point it at a stand-in (tests). */
 export const geminiBase = (): string => String(cfg.voice?.realtime?.geminiBaseUrl || process.env.ARIGAMI_GEMINI_API_BASE || 'https://generativelanguage.googleapis.com').replace(/\/+$/, '');
+/** Twilio's REST base; ARIGAMI_TWILIO_API_BASE points it at a stand-in (tests). */
+export const twilioBase = (): string => String(process.env.ARIGAMI_TWILIO_API_BASE || 'https://api.twilio.com').replace(/\/+$/, '');
 const basic = (sid: string, token: string): string => `Basic ${Buffer.from(`${sid}:${token}`).toString('base64')}`;
 function probeRequest(id: VoiceProviderId, s: Record<string, string>): { url: string; headers: Record<string, string> } {
   switch (id) {
@@ -113,7 +115,7 @@ function probeRequest(id: VoiceProviderId, s: Record<string, string>): { url: st
     case 'voice:elevenlabs': return { url: 'https://api.elevenlabs.io/v1/user', headers: { 'xi-api-key': s.token } };
     case 'voice:cartesia': return { url: 'https://api.cartesia.ai/voices', headers: { 'X-API-Key': s.token, 'Cartesia-Version': '2025-04-16' } };
     case 'voice:deepgram': return { url: 'https://api.deepgram.com/v1/projects', headers: { Authorization: `Token ${s.token}` } };
-    case 'telephony:twilio': return { url: `https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(s.sid)}.json`, headers: { Authorization: basic(s.sid, s.token) } };
+    case 'telephony:twilio': return { url: `${twilioBase()}/2010-04-01/Accounts/${encodeURIComponent(s.sid)}.json`, headers: { Authorization: basic(s.sid, s.token) } };
   }
 }
 const scrub = (msg: string, s: Record<string, string>): string => Object.values(s).reduce((m, v) => (v && v.length >= 8 ? m.split(v).join('•••') : m), msg);

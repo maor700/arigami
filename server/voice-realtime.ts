@@ -53,7 +53,7 @@ const TOOL_NAMES = new Set<string>(CLERK_TOOLS.map((t) => t.name));
 
 // ---- live calls (in memory; a host restart forgets them) ----
 export interface Turn { role: 'user' | 'assistant'; text: string; id?: string }
-interface Call { id: string; sessionId: string; contextSessionId?: string | null; provider: string; model: string; lang: string; startedAt: number; lastSeen: number; turns: Turn[]; tools: number }
+interface Call { id: string; sessionId: string; contextSessionId?: string | null; provider: string; model: string; lang: string; startedAt: number; lastSeen: number; turns: Turn[]; tools: number; channel?: 'phone' }
 const calls = new Map<string, Call>();
 export const liveCall = (callId: string): Readonly<Call> | null => calls.get(callId) || null;
 export const liveCallCount = (): number => calls.size;
@@ -85,12 +85,16 @@ export function clerkInstructions(context: ClerkContext | null = null): string {
   return `${CLERK_INSTRUCTIONS} The owner has the session "${title || 'untitled'}" (id ${context.id}) open right now: when they say "this", "here" or name no session, they mean that one.`;
 }
 
-export function geminiSetup({ model = geminiModel(), voice = geminiVoice(), handle = '', context = null as ClerkContext | null } = {}): Record<string, unknown> {
+// Stage 2: the same clerk on a phone line — no screen, so even shorter answers.
+export const PHONE_INSTRUCTIONS = ' The owner is calling by phone: there is no screen, so keep every answer to one short sentence and never spell out ids or URLs.';
+export const phoneInstructions = (): string => CLERK_INSTRUCTIONS + PHONE_INSTRUCTIONS;
+
+export function geminiSetup({ model = geminiModel(), voice = geminiVoice(), handle = '', context = null as ClerkContext | null, instructions = '' } = {}): Record<string, unknown> {
   const blocking = /^gemini-3\.8-live$/.test(model); // 3.8-live defaults to NON_BLOCKING; the clerk waits for its tools
   return {
     model: `models/${model}`,
     generationConfig: { responseModalities: ['AUDIO'], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } } } },
-    systemInstruction: { parts: [{ text: clerkInstructions(context) }] },
+    systemInstruction: { parts: [{ text: instructions || clerkInstructions(context) }] },
     tools: [{ functionDeclarations: CLERK_TOOLS.map((t) => ({ name: t.name, description: t.description, parameters: t.parameters, ...(blocking ? { behavior: 'BLOCKING' } : {}) })) }],
     realtimeInputConfig: { automaticActivityDetection: {}, activityHandling: 'START_OF_ACTIVITY_INTERRUPTS' },
     inputAudioTranscription: {},
@@ -102,11 +106,11 @@ export function geminiSetup({ model = geminiModel(), voice = geminiVoice(), hand
 export const geminiWsUrl = (): string => `${geminiBase().replace(/^http/, 'ws')}/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained`;
 
 /** The session config sent to OpenAI (pure; tests read it). */
-export function realtimeSessionConfig({ model = realtimeModel(), voice = realtimeVoice(), lang = '', context = null as ClerkContext | null } = {}): Record<string, unknown> {
+export function realtimeSessionConfig({ model = realtimeModel(), voice = realtimeVoice(), lang = '', context = null as ClerkContext | null, instructions = '' } = {}): Record<string, unknown> {
   return {
     type: 'realtime',
     model,
-    instructions: clerkInstructions(context),
+    instructions: instructions || clerkInstructions(context),
     output_modalities: ['audio'],
     audio: {
       input: { transcription: { model: 'gpt-4o-transcribe', ...(lang ? { language: lang } : {}) }, turn_detection: { type: 'server_vad', create_response: true, interrupt_response: true } },
@@ -201,6 +205,22 @@ async function mintGemini(token: string, f: typeof fetch, now: () => number = Da
   const name = j && typeof j.name === 'string' ? j.name : '';
   if (!res.ok || !name) return { status: res.status, error: `Gemini answered ${res.status}${res.ok ? ' without a token' : detail ? `: ${detail}` : ''}` };
   return { body: { transport: 'gemini-ws', token: name, expiresAt: Math.floor(t / 1000) + MAX_CALL_S, model, voice, wsUrl: geminiWsUrl(), setup: geminiSetup({ model, voice, context }) } };
+}
+
+/** Stage 2: a call the host opens itself (the phone bridge) — same map, tools, transcript and ledger as a browser call; no mint. */
+export function openHostCall(o: { sessionId: string; provider: string; model: string; lang?: string; channel?: 'phone'; now?: () => number }): { callId: string } | { busy: true } {
+  sweep(o.now);
+  if (calls.size) return { busy: true };
+  const now = (o.now || Date.now)();
+  const call: Call = { id: newCallId(), sessionId: o.sessionId, contextSessionId: null, provider: o.provider, model: o.model, lang: o.lang || '', startedAt: now, lastSeen: now, turns: [], tools: 0, ...(o.channel ? { channel: o.channel } : {}) };
+  calls.set(call.id, call);
+  console.log(`[voice-realtime] ${o.channel || 'host'} call ${call.id} for ${o.sessionId} (${call.model})`);
+  return { callId: call.id };
+}
+/** Keeps a host-driven call out of the idle sweep while audio still flows. */
+export function touchCall(callId: string, now: () => number = Date.now): void {
+  const c = calls.get(callId);
+  if (c) c.lastSeen = now();
 }
 
 // A call the browser names must exist, belong to the session, and be alive.
@@ -376,7 +396,8 @@ function transcriptCard(c: Call, seconds: number, reason: string): Record<string
   const he = c.lang === 'he';
   const who = (r: Turn['role']): string => (r === 'user' ? (he ? 'אתה' : 'You') : he ? 'הפקיד' : 'Clerk');
   const body = c.turns.map((t) => `**${who(t.role)}:** ${t.text}`).join('\n\n') || (he ? '_(לא נאמר דבר)_' : '_(nothing was said)_');
-  return { kind: 'ext-card', extension: 'voice', title: `📞 ${he ? 'שיחה קולית' : 'Voice call'} · ${mmss(seconds)}`, body, voice: { callId: c.id, seconds, tools: c.tools, turns: c.turns.length, reason, model: c.model } };
+  const what = c.channel === 'phone' ? (he ? 'שיחת טלפון' : 'Phone call') : he ? 'שיחה קולית' : 'Voice call';
+  return { kind: 'ext-card', extension: 'voice', title: `📞 ${what} · ${mmss(seconds)}`, body, voice: { callId: c.id, seconds, tools: c.tools, turns: c.turns.length, reason, model: c.model, ...(c.channel ? { channel: c.channel } : {}) } };
 }
 
 function finish(c: Call, seconds: number, reason: string, host: Pick<ClerkHost, 'appendChat'> | null): Record<string, unknown> {
