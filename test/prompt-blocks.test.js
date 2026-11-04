@@ -26,6 +26,10 @@ test('defaults: every built-in renders on its turn, container and simple-mode on
   expect(login.trim().replace(/<\/system-reminder>/, '').trim().split('\n')).toHaveLength(3);
   for (const old of ['request_login', 'sso_login', 'request_credentials', 'browser_logins', 'save_login']) expect(out.first).not.toContain(old);
   expect(out.first).toContain('CAPS');
+  // COMM: the outbound principle — initiate on the owner's ask, the card is the mechanism, not a refusal; the safety line stays
+  expect(out.first).toContain('The card is how a message leaves, not a reason to decline');
+  expect(out.first).toContain('Never look for another way to send.');
+  expect(out.first).toContain('reach people on the human\'s behalf when asked');
   expect(out.first).not.toContain('{{');
   expect(out.first).not.toContain('passwordless sudo');
   expect(out.firstDocker).toContain('passwordless sudo');
