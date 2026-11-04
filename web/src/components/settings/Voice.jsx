@@ -11,6 +11,8 @@ import { useT } from '../../lib/i18n.js';
 import { Field, Segmented, Section, Toggle, INPUT, useFieldLabel } from './shared.jsx';
 import { Button } from '../ui/button.jsx';
 import VoiceLangPicker from '../VoiceLangPicker.jsx';
+import { useStore } from '../../lib/store.js';
+import { ttsSource, hasSynth } from '../../lib/speak.js';
 import { useIsDesktop } from '../../lib/useMedia.js';
 
 // Device labels are only exposed after mic permission was granted once —
@@ -128,6 +130,10 @@ export function VoiceMain({ recording, setRecording }) {
 export function VoiceAdvanced() {
   const prefs = usePrefs();
   const t = useT();
+  const { config } = useStore();
+  // Stage 1b: the browser voice is the free TTS source; "read aloud" appears only once some source exists.
+  const synth = hasSynth();
+  const source = ttsSource(config, prefs, synth);
   return (
     <>
       <Field label={t('chrome.voice.mic')} hint={t('chrome.voice.mic.hint')}>
@@ -136,6 +142,16 @@ export function VoiceAdvanced() {
       <Field label={t('chrome.voice.language')} hint={t('chrome.voice.language.hint')}>
         <VoiceLangPicker />
       </Field>
+      {synth && (
+        <Field label={t('chrome.voice.browserTts')} hint={t('chrome.voice.browserTts.hint')}>
+          <Toggle on={prefs.voiceBrowserTts} onChange={(v) => setPrefs({ voiceBrowserTts: v })} data-voice-browser-tts={prefs.voiceBrowserTts ? '1' : '0'} />
+        </Field>
+      )}
+      {source && (
+        <Field label={t('chrome.voice.readAloud')} hint={t('chrome.voice.readAloud.hint')}>
+          <Toggle on={prefs.voiceReadAloud} onChange={(v) => setPrefs({ voiceReadAloud: v })} data-voice-read-aloud={prefs.voiceReadAloud ? '1' : '0'} />
+        </Field>
+      )}
       <Field label={t('chrome.voice.autoSend')} hint={t('chrome.voice.autoSend.hint')}>
         <Toggle on={prefs.voiceAutoSend} onChange={(v) => setPrefs({ voiceAutoSend: v })} />
       </Field>

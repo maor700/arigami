@@ -91,6 +91,11 @@ export const strings = {
   'chrome.voice.hotkey.listening': 'Listening…',
   'chrome.voice.autoSend': 'Auto-send prompts',
   'chrome.voice.autoSend.hint': 'Automatically send voice-injected prompts without asking for confirmation.',
+  // Stage 1b — voice out
+  'chrome.voice.browserTts': 'Browser voice (free)',
+  'chrome.voice.browserTts.hint': 'Uses the voices built into this browser, no key needed. Quality varies in Hebrew.',
+  'chrome.voice.readAloud': 'Read answers aloud',
+  'chrome.voice.readAloud.hint': 'The agent\'s answers are spoken as they stream (this device only). The speaker button in the message box toggles it and stops a reading.',
 
   // Settings — remote access / Tailscale
   'chrome.remote.section': 'Remote access',

@@ -23,7 +23,7 @@ import {
 import { api } from '../lib/api.js';
 import { toastError } from '../lib/toast.js';
 import { errText } from '../lib/errors.js';
-import { useStore, fullCapabilities, ensureFullCapabilities, getDraft, setDraft, setLastSent, interruptSession } from '../lib/store.js';
+import { useStore, getState, fullCapabilities, ensureFullCapabilities, getDraft, setDraft, setLastSent, interruptSession } from '../lib/store.js';
 import { useIsDesktop } from '../lib/useMedia.js';
 import { engineLabel } from '../lib/engines.js';
 import { setDictationSink, appendDictation } from '../lib/voice.js';
@@ -36,6 +36,9 @@ import { openAgent } from './DelegatedLine.jsx';
 import { contextColor } from './ui.jsx';
 import ContextModal from './ContextModal.jsx';
 import MicButton from './MicButton.jsx';
+import { HandsFreeButton, ReadAloudButton } from './VoiceOutButtons.jsx';
+import { armReadAloud, readAloudOn } from '../lib/speak.js';
+import { getPrefs } from '../lib/prefs.js';
 import ComposerPill from './ComposerPill.jsx';
 import { Button, Switch, Tip, TooltipProvider, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from './ui/index.js';
 
@@ -431,6 +434,7 @@ export function ChatFooter({ session }) {
     setText('');
     setAttachments([]);
     setQuoted(null);
+    if (readAloudOn(getState().config, getPrefs())) armReadAloud(session.id); // stage 1b: this device speaks the answer
     try {
       await api.post(`/sessions/${session.id}/message`, payload);
     } catch (e) {
@@ -734,6 +738,8 @@ export function ChatFooter({ session }) {
                 </Button>
               </Tip>
             )}
+            <HandsFreeButton sessionId={session.id} />
+            <ReadAloudButton sessionId={session.id} />
             <MicButton mode="dictate" />
             <Tip label={t('rail.send')} shortcut="↵">
               <Button

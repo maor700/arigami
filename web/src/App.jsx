@@ -19,6 +19,7 @@ import FirstRun from './components/FirstRun.jsx';
 import { EngineToggle } from './components/EngineToggle.jsx';
 import { parseHash, parseLocation, routeFromState, sessionFromSearch } from './lib/route.js';
 import VoiceHUD from './components/VoiceHUD.jsx';
+import { installReadAloud } from './lib/speak.js';
 import Toaster from './components/Toaster.jsx';
 import Login from './components/Login.jsx';
 import ConfirmHost from './components/ConfirmHost.jsx';
@@ -505,6 +506,8 @@ function Cockpit() {
   useEffect(() => {
     setVoiceAvailable(config ? !!config.voiceEnabled : null);
   }, [config]);
+  // Stage 1b: read-aloud taps the chat store; it stays inert until a TTS source and the pref exist.
+  useEffect(() => { installReadAloud(); }, []);
 
   // Auto-compact is now a real `claude --autocompact <tokens>` spawn flag
   // (server/claude.js setAutoCompact), applied per-session from the context

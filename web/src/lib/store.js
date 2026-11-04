@@ -198,6 +198,7 @@ export async function setChatMode(session, mode) {
 
 export async function interruptSession(sessionId) {
   if (!sessionId) return;
+  try { window.dispatchEvent(new CustomEvent('host:interrupt', { detail: { sessionId } })); } catch { /* no DOM */ }
   await api.post(`/sessions/${sessionId}/interrupt`).catch(() => {});
   const last = state.lastSent[sessionId];
   if (last) {
@@ -282,8 +283,13 @@ function replaceSnapshot(msg) {
   return r;
 }
 
+// Stage 1b: read-aloud (lib/speak.js) watches every appended chat event through this one hook.
+let chatTap = null;
+export function setChatTap(fn) { chatTap = typeof fn === 'function' ? fn : null; }
+
 function appendChat(sessionId, event) {
   if (!sessionId || !event) return;
+  try { chatTap?.(sessionId, event); } catch { /* a listener must never break the chat */ }
   const cur = state.chats[sessionId] || [];
   // A permission request arrives both as a chat event and as its own WS
   // broadcast — render it once.
@@ -1254,6 +1260,7 @@ function handleEvent(msg) {
     case 'setup.changed':
     case 'setup':
       setState({ setupTick: Date.now() });
+      loadConfig(); // voiceProviders (1a) rides on /config — a key pasted just now gates the voice buttons
       return;
     case 'state':
       onState(replaceSnapshot(msg.sessions ? msg : payload), msg.sessions ? msg : payload);
