@@ -218,6 +218,7 @@ export interface MemoryConfig {
 export interface VoiceConfig {
   enabled: boolean;
   caps: Record<string, number>;
+  tts?: { voice?: Record<string, string>; model?: Record<string, string> }; // per provider id; stage 1b, file-only
 }
 
 export interface NotifyConfig {
@@ -783,7 +784,7 @@ export function updateVoiceConfig(patch: { enabled?: boolean; caps?: Record<stri
     if (v === null || !(Number(v) > 0)) delete caps[k];
     else caps[k] = Number(v);
   }
-  const next: VoiceConfig = { enabled: typeof patch.enabled === 'boolean' ? patch.enabled : cfg.voice?.enabled !== false, caps };
+  const next: VoiceConfig = { enabled: typeof patch.enabled === 'boolean' ? patch.enabled : cfg.voice?.enabled !== false, caps, ...(cfg.voice?.tts ? { tts: cfg.voice.tts } : {}) };
   writeConfigFile({ ...file, voice: next } as any);
   cfg.voice = next;
   return next;
