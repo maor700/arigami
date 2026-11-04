@@ -1,15 +1,17 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useVoice, stopRecording, cancel, clearPlan, startRecording, endConversation, GROQ_KEY_GUIDE } from '../lib/voice.js';
 import { runAction } from '../lib/commands.js';
 import { useStore } from '../lib/store.js';
-import { usePrefs } from '../lib/prefs.js';
+import { usePrefs, UI_SCALES } from '../lib/prefs.js';
+import { useIsDesktop } from '../lib/useMedia.js';
+import { useDockPos, saveDockPos, dockPlacement, dockWidth, clampDockPos, nudgeDock, DOCK_FALLBACK_H } from '../lib/voiceDock.js';
 import { sessionLabel } from './ui.jsx';
 import { t as tr, useT, fieldDir } from '../lib/i18n.js';
 import { Icon } from '../lib/icons.js';
-import { faArrowUpRightFromSquare, faCheck, faMicrophone, faMicrophoneSlash, faPhoneSlash, faTriangleExclamation, faVolumeHigh, faXmark } from '@fortawesome/free-solid-svg-icons';
+import { faArrowUpRightFromSquare, faCheck, faGripVertical, faMicrophone, faMicrophoneSlash, faPhoneSlash, faTriangleExclamation, faVolumeHigh, faXmark } from '@fortawesome/free-solid-svg-icons';
 import { Button } from './ui/button.jsx';
 import VoiceLangPicker from './VoiceLangPicker.jsx';
-import { useHandsFree, stopHandsFree } from '../lib/handsfree.js';
+import { useHandsFree, stopHandsFree, toggleHandsFreeMute } from '../lib/handsfree.js';
 import { useCall, hangUp, toggleMute } from '../lib/call.js';
 
 // Actions that change app state but can't lose work → run automatically.
@@ -50,81 +52,211 @@ export function hotkeyLabel(hotkey, mac = typeof navigator !== 'undefined' && /M
   return hotkey.split('+').map((p) => ({ Cmd: '⌘', Ctrl: '⌃', Alt: '⌥', Shift: '⇧' }[p] || p)).join('');
 }
 
-// Stage 1b: the hands-free window — one state (listening / thinking / speaking), the last sentence, a way out.
+// Stage 1d (docs/VOICE.md): hands-free and call mode live in a small floating box instead of the centred
+// window — by default over the bottom of the rail (desktop) / under the top bar (phone), so the chat stays
+// uncovered. The header drags it; the grip also moves it with the arrow keys (Home = back to the default);
+// a double-click on the header puts it back too. The spot is kept per device (lib/voiceDock.js).
 const NOTE_KEYS = { needs_setup: 'dialogs.readAloudNeedsSetup', disabled: 'dialogs.readAloudDisabled', budget: 'dialogs.readAloudBudget' };
-function HandsFreeHUD({ hf, status, level, error, t, onClose }) {
-  const phase = hf.phase;
-  const note = NOTE_KEYS[hf.note] ? t(NOTE_KEYS[hf.note]) : hf.note || error;
+
+function viewport() {
+  const w = typeof window !== 'undefined' ? window : null;
+  return { vw: num(w?.innerWidth), vh: num(w?.innerHeight) };
+}
+const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+
+function useViewport() {
+  const [vp, setVp] = useState(viewport);
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.addEventListener) return;
+    const on = () => setVp(viewport());
+    on();
+    window.addEventListener('resize', on);
+    window.visualViewport?.addEventListener?.('resize', on);
+    return () => {
+      window.removeEventListener('resize', on);
+      window.visualViewport?.removeEventListener?.('resize', on);
+    };
+  }, []);
+  return vp;
+}
+
+function VoiceDock({ title, indicator, attrs, children, footer, t }) {
+  const prefs = usePrefs();
+  const isDesktop = useIsDesktop();
+  const { vw, vh } = useViewport();
+  const saved = useDockPos();
+  const boxRef = useRef(null);
+  const drag = useRef(null);
+  const [live, setLive] = useState(null); // the position while a drag is under way
+  const [h, setH] = useState(DOCK_FALLBACK_H);
+  const rtl = typeof document !== 'undefined' && document.documentElement?.dir === 'rtl';
+  const railPx = isDesktop ? (prefs.railWidth || 264) * (UI_SCALES[prefs.uiScale] || 1) : 0;
+  const w = dockWidth({ vw, railPx, isDesktop });
+  const geo = { vw, vh, w, h, rtl, isDesktop, railPx };
+  const pos = live || dockPlacement({ saved, ...geo });
+
+  // the height follows the content (a note, a longer line) — measured so the box is clamped by its real size
+  useLayoutEffectSafe(() => {
+    const el = boxRef.current;
+    if (!el) return;
+    const measure = () => { const nh = Math.round(el.offsetHeight || 0); if (nh) setH((cur) => (cur === nh ? cur : nh)); };
+    measure();
+    if (typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  const onPointerDown = (e) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    if (e.target?.closest?.('button:not([data-voice-dock-grip]), a, select, input, textarea')) return;
+    drag.current = { id: e.pointerId, dx: e.clientX - pos.x, dy: e.clientY - pos.y, at: pos, moved: false };
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+  };
+  const onPointerMove = (e) => {
+    const d = drag.current;
+    if (!d || d.id !== e.pointerId) return;
+    const next = clampDockPos({ x: e.clientX - d.dx, y: e.clientY - d.dy }, geo);
+    if (!d.moved && Math.abs(next.x - d.at.x) + Math.abs(next.y - d.at.y) < 3) return; // a click, not a drag
+    d.moved = true;
+    d.last = next;
+    e.preventDefault();
+    setLive(next);
+  };
+  const endDrag = (e) => {
+    const d = drag.current;
+    if (!d || d.id !== e.pointerId) return;
+    drag.current = null;
+    e.currentTarget.releasePointerCapture?.(e.pointerId);
+    if (d.moved && d.last) saveDockPos(d.last);
+    setLive(null);
+  };
+  const onGripKey = (e) => {
+    const next = nudgeDock(pos, e.key, geo);
+    if (next === undefined) return;
+    e.preventDefault();
+    e.stopPropagation();
+    saveDockPos(next);
+  };
+
   return (
-    <div className="fixed bottom-4 left-1/2 z-[70] w-[460px] max-w-[92vw] -translate-x-1/2" data-voice-hud data-voice-status={status} data-hands-free={phase}>
-      <div className="overflow-hidden rounded-xl border border-border bg-popover text-popover-foreground shadow-dialog">
-        <div className="flex items-center gap-2.5 border-b border-hair px-4 py-2.5">
-          {phase === 'speaking' ? (
-            <span className="text-[13px]"><Icon icon={faVolumeHigh} /></span>
-          ) : phase === 'thinking' ? (
-            <span className="host-spinner h-3.5 w-3.5" />
-          ) : (
-            <span className="pulse-yellow h-2.5 w-2.5 rounded-full bg-danger" />
-          )}
-          <span className="flex-1 text-[12px] font-bold" data-voice-mode="handsfree">{t(`dialogs.handsFree.${phase === 'idle' ? 'listening' : phase}`)}</span>
-          <button type="button" onClick={onClose} title={t('dialogs.handsFreeStop')} className="cursor-pointer px-1 text-[15px] text-fgdim hover:text-fg"><Icon icon={faXmark} /></button>
+    <div
+      ref={boxRef}
+      className="fixed z-[70]"
+      style={{ left: pos.x, top: pos.y, width: w }}
+      data-voice-hud
+      data-voice-dock={saved ? 'moved' : 'default'}
+      {...attrs}
+    >
+      <div className={`overflow-hidden rounded-xl border border-border bg-popover text-popover-foreground shadow-dialog ${live ? 'ring-2 ring-ring' : ''}`}>
+        <div
+          className={`flex select-none items-center gap-2 border-b border-hair py-2 ps-1.5 pe-2.5 ${live ? 'cursor-grabbing' : 'cursor-grab'}`}
+          style={{ touchAction: 'none' }}
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={endDrag}
+          onPointerCancel={endDrag}
+          onDoubleClick={(e) => { if (!e.target?.closest?.('button:not([data-voice-dock-grip]), select')) saveDockPos(null); }}
+          data-voice-dock-handle
+        >
+          <button
+            type="button"
+            onKeyDown={onGripKey}
+            aria-label={t('dialogs.voiceDock.move')}
+            title={t('dialogs.voiceDock.move')}
+            className="flex h-6 w-4 shrink-0 cursor-grab items-center justify-center rounded text-[11px] text-fgdim hover:text-fg focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring"
+            data-voice-dock-grip
+          >
+            <Icon icon={faGripVertical} />
+          </button>
+          {indicator}
+          <span className="min-w-0 flex-1 truncate text-[12px] font-bold" {...title.attrs}>{title.text}</span>
         </div>
-        <div className="px-4 py-3">
-          {status === 'recording' && phase === 'listening' && (
-            <div className="mb-2.5 h-2 w-full overflow-hidden rounded-full bg-hair">
-              <div
-                className="h-full rounded-full transition-[width] duration-100"
-                style={{ width: `${Math.min(100, Math.round((level || 0) * 140))}%`, background: (level || 0) > 0.03 ? 'var(--color-brand, #E3B341)' : '#d9534f' }}
-              />
-            </div>
-          )}
-          {hf.lastText && <div dir="auto" className="mb-2 text-[12.5px] leading-snug text-fg" data-hands-free-last>“{hf.lastText}”</div>}
-          {note && <div className="mb-2 text-[11.5px] text-danger" data-hands-free-note>{note}</div>}
-          <div className="text-[11.5px] text-fgdim">{t('dialogs.handsFree.hint')}</div>
-        </div>
-        <div className="flex items-center justify-between gap-2 border-t border-hair px-4 py-2 font-mono text-[11.5px] md:text-[10px] text-fgdim">
-          <span className="flex min-w-0 flex-1 items-center gap-1.5">
-            <span className="shrink-0">{t('dialogs.voiceLang')}</span>
-            <VoiceLangPicker compact />
-          </span>
-          <Button variant="primary" size="sm" onClick={onClose} data-hands-free-stop>{t('dialogs.handsFreeStop')}</Button>
-        </div>
+        <div className="px-3 py-2">{children}</div>
+        <div className="flex items-center justify-between gap-1.5 border-t border-hair px-2.5 py-1.5">{footer}</div>
       </div>
     </div>
   );
 }
 
-// Stage 1c: the call window — connecting / listening / speaking / checking (a tool runs on the host), mute, hang up.
+// react-dom/server warns on useLayoutEffect; the box is only measured in a browser anyway.
+const useLayoutEffectSafe = typeof window !== 'undefined' && typeof document !== 'undefined' && document.createElement ? useLayoutEffect : useEffect;
+
+const Indicator = ({ phase, busy }) => (phase === 'speaking'
+  ? <span className="shrink-0 text-[13px]"><Icon icon={faVolumeHigh} /></span>
+  : busy ? <span className="host-spinner h-3.5 w-3.5 shrink-0" />
+    : <span className="pulse-yellow h-2.5 w-2.5 shrink-0 rounded-full bg-danger" />);
+
+// the short live transcript: the latest sentence, two lines at most
+const LastLine = ({ text, attr }) => (text
+  ? <div dir="auto" className="line-clamp-2 text-[12px] leading-snug text-fg" title={text} {...{ [attr]: '' }}>“{text}”</div>
+  : null);
+
+function MuteButton({ muted, onClick, t, attrs }) {
+  const label = muted ? t('dialogs.call.unmute') : t('dialogs.call.mute');
+  return (
+    <Button variant={muted ? 'default' : 'outline'} size="sm" onClick={onClick} aria-pressed={muted} aria-label={label} title={label} {...attrs}>
+      <Icon icon={muted ? faMicrophoneSlash : faMicrophone} />
+      <span className="hidden min-[360px]:inline">{label}</span>
+    </Button>
+  );
+}
+
+function HandsFreeHUD({ hf, status, level, error, t, onClose }) {
+  const phase = hf.phase === 'idle' ? 'listening' : hf.phase;
+  const note = NOTE_KEYS[hf.note] ? t(NOTE_KEYS[hf.note]) : hf.note || error;
+  const title = hf.muted && phase === 'listening' ? t('dialogs.handsFree.muted') : t(`dialogs.handsFree.${phase}`);
+  return (
+    <VoiceDock
+      t={t}
+      attrs={{ 'data-voice-status': status, 'data-hands-free': hf.phase }}
+      title={{ text: title, attrs: { 'data-voice-mode': 'handsfree' } }}
+      indicator={hf.muted && phase === 'listening'
+        ? <span className="shrink-0 text-[12px] text-fgdim"><Icon icon={faMicrophoneSlash} /></span>
+        : <Indicator phase={phase} busy={phase === 'thinking'} />}
+      footer={<>
+        <MuteButton muted={!!hf.muted} onClick={toggleHandsFreeMute} t={t} attrs={{ 'data-hands-free-mute': hf.muted ? 'on' : 'off' }} />
+        <Button variant="primary" size="sm" onClick={onClose} aria-label={t('dialogs.handsFreeStop')} title={t('dialogs.handsFreeStop')} data-hands-free-stop>
+          <Icon icon={faPhoneSlash} /> {t('dialogs.handsFreeStop')}
+        </Button>
+      </>}
+    >
+      {status === 'recording' && phase === 'listening' && !hf.muted && (
+        <div className="mb-1.5 h-1.5 w-full overflow-hidden rounded-full bg-hair">
+          <div
+            className="h-full rounded-full transition-[width] duration-100"
+            style={{ width: `${Math.min(100, Math.round((level || 0) * 140))}%`, background: (level || 0) > 0.03 ? 'var(--color-brand, #E3B341)' : '#d9534f' }}
+          />
+        </div>
+      )}
+      <LastLine text={hf.lastText} attr="data-hands-free-last" />
+      {note && <div className="mt-1 line-clamp-3 text-[11px] text-danger" data-hands-free-note>{note}</div>}
+      {!hf.lastText && !note && <div className="line-clamp-2 text-[11px] text-fgdim">{t('dialogs.handsFree.hint')}</div>}
+    </VoiceDock>
+  );
+}
+
+// Stage 1c: the call — connecting / listening / speaking / checking (a tool runs on the host), mute, hang up.
 function CallHUD({ call, t }) {
   const phase = call.phase;
   const title = phase === 'tool' ? t('dialogs.call.tool', { tool: call.tool }) : t(`dialogs.call.${phase === 'idle' ? 'listening' : phase}`);
   return (
-    <div className="fixed bottom-4 left-1/2 z-[70] w-[460px] max-w-[92vw] -translate-x-1/2" data-voice-hud data-voice-call={phase}>
-      <div className="overflow-hidden rounded-xl border border-border bg-popover text-popover-foreground shadow-dialog">
-        <div className="flex items-center gap-2.5 border-b border-hair px-4 py-2.5">
-          {phase === 'speaking' ? (
-            <span className="text-[13px]"><Icon icon={faVolumeHigh} /></span>
-          ) : phase === 'tool' || phase === 'connecting' ? (
-            <span className="host-spinner h-3.5 w-3.5" />
-          ) : (
-            <span className="pulse-yellow h-2.5 w-2.5 rounded-full bg-danger" />
-          )}
-          <span className="flex-1 text-[12px] font-bold" data-voice-mode="call">{title}</span>
-          <button type="button" onClick={() => hangUp('hangup')} title={t('dialogs.call.hangUp')} className="cursor-pointer px-1 text-[15px] text-fgdim hover:text-fg"><Icon icon={faXmark} /></button>
-        </div>
-        <div className="px-4 py-3">
-          {call.lastText && <div dir="auto" className="mb-2 text-[12.5px] leading-snug text-fg" data-voice-call-last>“{call.lastText}”</div>}
-          {call.note && <div className="mb-2 text-[11.5px] text-danger" data-voice-call-note>{call.note}</div>}
-          <div className="text-[11.5px] text-fgdim">{t('dialogs.call.hint')}</div>
-        </div>
-        <div className="flex items-center justify-between gap-2 border-t border-hair px-4 py-2 font-mono text-[11.5px] md:text-[10px] text-fgdim">
-          <Button variant="outline" size="sm" onClick={toggleMute} aria-pressed={call.muted} data-voice-call-mute={call.muted ? 'on' : 'off'}>
-            <Icon icon={call.muted ? faMicrophoneSlash : faMicrophone} /> {call.muted ? t('dialogs.call.unmute') : t('dialogs.call.mute')}
-          </Button>
-          <Button variant="primary" size="sm" onClick={() => hangUp('hangup')} data-voice-call-hangup><Icon icon={faPhoneSlash} /> {t('dialogs.call.hangUp')}</Button>
-        </div>
-      </div>
-    </div>
+    <VoiceDock
+      t={t}
+      attrs={{ 'data-voice-call': phase }}
+      title={{ text: title, attrs: { 'data-voice-mode': 'call' } }}
+      indicator={<Indicator phase={phase} busy={phase === 'tool' || phase === 'connecting'} />}
+      footer={<>
+        <MuteButton muted={!!call.muted} onClick={toggleMute} t={t} attrs={{ 'data-voice-call-mute': call.muted ? 'on' : 'off' }} />
+        <Button variant="primary" size="sm" onClick={() => hangUp('hangup')} aria-label={t('dialogs.call.hangUp')} title={t('dialogs.call.hangUp')} data-voice-call-hangup>
+          <Icon icon={faPhoneSlash} /> {t('dialogs.call.hangUp')}
+        </Button>
+      </>}
+    >
+      <LastLine text={call.lastText} attr="data-voice-call-last" />
+      {call.note && <div className="mt-1 line-clamp-3 text-[11px] text-danger" data-voice-call-note>{call.note}</div>}
+      {!call.lastText && !call.note && <div className="line-clamp-2 text-[11px] text-fgdim">{t('dialogs.call.hint')}</div>}
+    </VoiceDock>
   );
 }
 

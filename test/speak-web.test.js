@@ -340,6 +340,21 @@ test('hands-free: opens the mic in handsfree mode, shows one state in VoiceHUD, 
   expect(html).toContain('data-hands-free="listening"');
   expect(html).toContain('מאזין…');
   expect(html).toContain('data-hands-free-stop');
+  expect(html).toContain('data-voice-dock="default"'); // stage 1d: the floating box, not the centred window
+  expect(html).toContain('data-hands-free-mute="off"');
+  // stage 1d: mute closes the mic and keeps the conversation; unmute opens it again
+  expect(handsfree.toggleHandsFreeMute()).toBe(true);
+  expect(voice.getState().status).toBe('idle');
+  expect(handsfree.getHandsFree().active).toBe(true);
+  html = render(h(VoiceHUD, {}));
+  expect(html).toContain('data-hands-free-mute="on"');
+  expect(html).toContain('מושתק');
+  expect(handsfree.handsFreeHooks.onIdle()).toBe('exit'); // a muted take never re-opens the mic by itself
+  const mutedAt = mediaCalls;
+  expect(handsfree.toggleHandsFreeMute()).toBe(false);
+  await tick();
+  expect(mediaCalls).toBe(mutedAt + 1);
+  expect(voice.getState().status).toBe('recording');
   // the transcript path (no router, no composer): the words go to the session as-is
   posts.length = 0;
   await voice.handleTranscript('תסביר לי מה השתנה', 'handsfree');

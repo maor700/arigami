@@ -265,6 +265,9 @@ export const strings = {
   'dialogs.handsFree.thinking': 'Thinking…',
   'dialogs.handsFree.speaking': 'Speaking…',
   'dialogs.handsFree.hint': 'Talk over the answer to interrupt it. Esc, the button or "stop" ends the conversation.',
+  'dialogs.handsFree.muted': 'Muted',
+  // Stage 1d — the floating voice box
+  'dialogs.voiceDock.move': 'Move the box — drag it, or use the arrow keys (Home puts it back)',
   // Stage 1c — the voice clerk (call mode)
   'dialogs.call': 'Call the voice clerk',
   'dialogs.call.hangUp': 'Hang up',

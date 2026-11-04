@@ -265,6 +265,9 @@ export const strings = {
   'dialogs.handsFree.thinking': 'חושב…',
   'dialogs.handsFree.speaking': 'מדבר…',
   'dialogs.handsFree.hint': 'אפשר לדבר תוך כדי התשובה כדי לעצור אותה. Esc, הכפתור או "עצור" מסיימים את השיחה.',
+  'dialogs.handsFree.muted': 'מושתק',
+  // Stage 1d — the floating voice box
+  'dialogs.voiceDock.move': 'הזזת התיבה — גרירה או מקשי החצים (Home מחזיר למקום)',
   // שלב 1ג — הפקיד הקולי (מצב שיחה)
   'dialogs.call': 'שיחה עם הפקיד הקולי',
   'dialogs.call.hangUp': 'ניתוק',

@@ -130,3 +130,19 @@ Call `requireVoiceProvider(kind)` first and return its non-ok shapes as the tool
   (the routes on an isolated host against a fake OpenAI via `ARIGAMI_OPENAI_API_BASE`; `ARIGAMI_GEMINI_API_BASE` is the Gemini twin),
   `test/voice-call-web.test.js` (gating, fake WebRTC flow, fake Live socket flow incl. resumption, tool round-trips, transcripts, hang-up,
   fallback, PCM helpers).
+
+## Stage 1d — the floating voice box (`web/src/components/VoiceHUD.jsx`, `web/src/lib/voiceDock.js`)
+
+- Hands-free (1b) and call mode (1c) no longer open the centred window; they show a small **floating box**: one state line
+  (listening / thinking / speaking; connecting / checking in a call; muted), the latest sentence (two lines at most), **Mute** and
+  **End / Hang up**. The command/dictation window (VOICE1/2) is unchanged and still centred.
+- **Default spot**: desktop — over the bottom of the rail (start edge, so the right side in RTL), as wide as the rail allows
+  (200–320 px), so it never covers the chat; phone — the top-end corner under the top bar.
+- **Moving it**: drag the header (pointer events, works with touch); the grip also takes the arrow keys (16 px a step) and Home;
+  a double-click on the header puts it back. The dropped spot is kept **per device** under its own localStorage key
+  `arigami-voice-dock` (not a pref) and clamped back fully on screen on every resize.
+- **Hands-free mute**: `toggleHandsFreeMute()` closes the mic (the answer still plays, nothing is sent, the silence timeout pauses);
+  unmute opens it again. Call mute is the existing `toggleMute()`.
+- **No voice source → no box**: the box only exists while hands-free or a call is active, both of which are gated as before.
+- **Tests**: `test/voice-dock-web.test.js` (placement LTR/RTL/phone, clamping, per-device storage, keyboard nudge), plus the box and
+  mute checks in `test/speak-web.test.js` and `test/voice-call-web.test.js`.

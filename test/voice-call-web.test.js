@@ -158,6 +158,13 @@ test('call: mint → offer → SDP answer with the ephemeral secret → listenin
   expect(hud).toContain('data-voice-call="listening"');
   expect(hud).toContain('On the line');
   expect(hud).toContain('data-voice-call-hangup');
+  expect(hud).toContain('data-voice-dock="default"'); // stage 1d: the floating, draggable box
+  expect(hud).toContain('data-voice-dock-grip');
+  expect(hud).toContain('data-voice-call-mute="off"');
+  const dock = await import(web('lib/voiceDock.js'));
+  dock.saveDockPos({ x: 500, y: 300 });
+  expect(render(h(VoiceHUD, {}))).toContain('data-voice-dock="moved"');
+  dock.saveDockPos(null);
   expect(render(h(CallButton, { sessionId: 's1' }))).toContain('data-voice-call="on"');
   expect(render(h(CallButton, { sessionId: 's2' }))).toContain('data-voice-call="off"');
 
