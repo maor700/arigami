@@ -77,6 +77,7 @@ public; `/__api/sessions` & co. stay 401 for the same caller.
 
 | kind | credential | replay guard |
 |---|---|---|
+| `twilio/voice`, `twilio/status` | `X-Twilio-Signature` = base64 HMAC-SHA1(Twilio Auth Token, public URL + sorted form params); the media-stream WebSocket under the same prefix is authenticated by a one-time token minted after the caller's PIN (server/voice-phone.ts). | status: 5-min signature seen-set; voice: inert by state machine |
 | `sms` | share-token `{kind:'webhook', id:'sms'}` in `?t=` or `X-Arigami-Token` (K2 module, same secret file). Long-lived (1 year), rotated/revoked from Settings → Webhooks; only the *current* token is accepted. | none possible (the phone app cannot sign) — mitigated by rotation + revocation; a replay only re-delivers an SMS the owner already received |
 | `slack` | Slack v0: `X-Slack-Signature` = `v0=HMAC(secret, "v0:<ts>:<body>")`, `X-Slack-Request-Timestamp` within ±5 min | signature seen-set, 5 min |
 | `github` | `X-Hub-Signature-256` = `sha256=HMAC(secret, body)` | `X-GitHub-Delivery` seen-set, 5 min |

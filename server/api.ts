@@ -12,7 +12,7 @@ import { cfg, nano, untildify } from './state.js';
 import { skillDir, NAME_RE as SKILL_NAME_RE } from './skills.js';
 import { updateScreenConfig, updateAuthConfig, updateDefaultEngine, defaultEngine, updateVoiceConfig } from './lib/config.js';
 import { syncComposioKey } from './lib/mcp-servers.js';
-import { auth, canReadFullList } from './auth.js';
+import { auth, canReadFullList, requestPath } from './auth.js';
 import { COMPRESS_MIN, compress, pickEncoding } from './lib/http-compress.js';
 import { WIRE_V2, slimHeavy } from './lib/wire-resume.js';
 import * as screens from './screenshots.js';
@@ -2868,6 +2868,28 @@ function clerkHost(): import('./voice-realtime.js').ClerkHost {
   };
 }
 
+// Stage 2: the Twilio webhook answers + the media-stream bridge, both with the clerk's host and the voice home session.
+let phoneBridgeInst: import('./voice-phone-bridge.js').PhoneBridge | null = null;
+function phoneBridge(): import('./voice-phone-bridge.js').PhoneBridge {
+  if (phoneBridgeInst) return phoneBridgeInst;
+  const { createPhoneBridge } = require('./voice-phone-bridge.js') as typeof import('./voice-phone-bridge.js');
+  phoneBridgeInst = createPhoneBridge({ host: { ...clerkHost(), voiceHome: voiceHomeSession } });
+  return phoneBridgeInst;
+}
+/** index.ts: the Twilio media stream's WebSocket (authenticated by the one-time token in its `start`, not a cookie). */
+export function phoneStreamUpgrade(req: IncomingMessage, socket: any, head: Buffer): boolean {
+  const { TWILIO_STREAM_PATH } = require('./voice-phone.js') as typeof import('./voice-phone.js');
+  if (requestPath(req.url).path !== TWILIO_STREAM_PATH) return false;
+  phoneBridge().handleUpgrade(req, socket, head);
+  return true;
+}
+function installTwilioSink(): void {
+  const vp = require('./voice-phone.js') as typeof import('./voice-phone.js');
+  const { setTwilioSink } = require('./webhooks.js') as typeof import('./webhooks.js');
+  const host = { ...clerkHost(), voiceHome: voiceHomeSession };
+  setTwilioSink({ token: vp.twilioToken, bases: vp.signatureBases, voice: (params, req) => vp.handleVoice(params, { host, base: vp.publicBase(req) }), status: (params) => vp.handleStatus(params, (sid) => phoneBridge().closeCall(sid)) });
+}
+
 // Stage 1d: where a global call (the rail's phone button) lands its audit cards and transcript — one worktree-less session,
 // created on first use and NOT spawned (an agent starts only if the owner types in it), restored if archived.
 function voiceHomeSession(): { id: string } {
@@ -4505,6 +4527,18 @@ export async function handle(
       }
       return json(res, { enabled: vp.voiceEnabled(), caps: cfg.voice?.caps || {}, month: vu.monthKey(), usage: vu.voiceUsageThisMonth(), providers: vp.voiceProviders() });
     }
+    // Stage 2 (docs/VOICE.md): owner number, PIN, the public webhook URLs, a signature self-test. Admin only; never the PIN or its hash.
+    if ((p === '/__api/voice/phone' || p === '/__api/voice/phone/test-signature') && (m === 'GET' || m === 'POST')) {
+      const me = (req as any).auth as import('./auth.js').Principal | null;
+      if (!auth.isAdmin(me)) return json(res, { error: 'admin only' }, 403);
+      const vph = await import('./voice-phone.js');
+      let funnelHost = '';
+      try { funnelHost = String(((await import('./remote.js')) as any).remoteStatus().hostname || ''); } catch { /* no tailscale */ }
+      if (p.endsWith('/test-signature')) return json(res, vph.selfTestSignature(funnelHost));
+      if (m === 'GET') return json(res, vph.phoneView(funnelHost));
+      const body = (await readBody(req)) as Record<string, unknown>;
+      try { return json(res, vph.updatePhone(body, funnelHost)); } catch (e) { return badRequest(res, (e as Error).message); }
+    }
     if (p === '/__api/telemetry/rotate' && m === 'POST') {
       const me = (req as any).auth as import('./auth.js').Principal | null;
       if (!auth.isAdmin(me)) return json(res, { error: 'admin only' }, 403);
@@ -4837,6 +4871,7 @@ export async function handle(
         screen: { ...screenPub, hasVncPassword: !!vncPassword },
         voiceEnabled: !!(groqApiKey || process.env.GROQ_API_KEY),
         voiceProviders: vp.voiceProviders(),
+        telephony: { ownerNumber: cfg.telephony?.ownerNumber || '', pinSet: !!cfg.telephony?.pinHash }, // never the hash
       });
     }
     // Host default engine (Settings › Host): {engine} → {defaultEngine}; unknown → claude.
@@ -4874,7 +4909,7 @@ export async function handle(
     // ---- Webhooks (C3) — inbound routes are public (auth.ts allowlist) and
     // authenticate themselves in server/webhooks.ts; admin routes below need
     // the admin role; events are readable by any principal (sessions poll).
-    if (isInboundWebhookPath(p)) { await webhooks().handle(req, res); return; }
+    if (isInboundWebhookPath(p)) { if (p.startsWith('/__api/webhooks/twilio/')) installTwilioSink(); await webhooks().handle(req, res); return; }
     if (p.startsWith('/__api/webhooks/')) {
       const wh = webhooks();
       const me = (req as any).auth as import('./auth.js').Principal | null;

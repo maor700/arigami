@@ -222,6 +222,13 @@ export interface VoiceConfig {
   realtime?: { model?: string; voice?: string; baseUrl?: string; geminiModel?: string; geminiVoice?: string; geminiBaseUrl?: string }; // stage 1c clerk; file-only
 }
 
+// Stage 2 phone (docs/VOICE.md): the one number that may call in, a scrypt-hashed PIN, the public base Twilio signs against.
+export interface TelephonyConfig {
+  ownerNumber: string; // E.164 or ''
+  pinHash: string; // 'scrypt$<salt>$<hash>' or ''
+  publicUrl?: string; // overrides cfg.publicUrl / the Funnel host for the webhook URLs
+}
+
 export interface NotifyConfig {
   /** WhatsApp JID (…@s.whatsapp.net / …@lid / …@g.us) the host may message. */
   whatsappJid?: string;
@@ -271,6 +278,7 @@ export interface Config {
   host: HostConfig;
   telemetry: TelemetryConfig;
   voice: VoiceConfig;
+  telephony: TelephonyConfig;
   memory: MemoryConfig;
   // Model every NEW session starts on (a `claude --model` value: 'opus',
   // 'sonnet', 'haiku', 'opus[1m]', 'best', or a full id). Default 'opus' = the
@@ -415,6 +423,7 @@ export const DEFAULTS: Config = {
     learning: { mode: 'auto', minBatch: 40, maxAgeHours: 48, minFreeMb: 600 },
   },
   voice: { enabled: true, caps: {} },
+  telephony: { ownerNumber: '', pinHash: '' },
   defaultModel: 'opus',
   defaultEffort: 'high',
   defaultEngine: 'claude',
@@ -788,6 +797,17 @@ export function updateVoiceConfig(patch: { enabled?: boolean; caps?: Record<stri
   const next: VoiceConfig = { enabled: typeof patch.enabled === 'boolean' ? patch.enabled : cfg.voice?.enabled !== false, caps, ...(cfg.voice?.tts ? { tts: cfg.voice.tts } : {}), ...(cfg.voice?.realtime ? { realtime: cfg.voice.realtime } : {}) };
   writeConfigFile({ ...file, voice: next } as any);
   cfg.voice = next;
+  return next;
+}
+
+// Stage 2 phone: owner number / PIN hash / public base; same merge pattern as updateNotifyConfig.
+export function updateTelephonyConfig(patch: Partial<TelephonyConfig>): TelephonyConfig {
+  ensureConfigFile();
+  const file = loadFile() as Partial<Config>;
+  const next: TelephonyConfig = { ...DEFAULTS.telephony, ...(cfg.telephony || {}), ...patch };
+  if (!next.publicUrl) delete next.publicUrl;
+  writeConfigFile({ ...file, telephony: next } as any);
+  cfg.telephony = next;
   return next;
 }
 
