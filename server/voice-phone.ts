@@ -3,7 +3,7 @@
 import crypto from 'node:crypto';
 import type { IncomingMessage } from 'node:http';
 import { cfg, updateTelephonyConfig, type TelephonyConfig } from './lib/config.js';
-import { providerSecretFields, hasProviderSecret, requireVoiceProvider, telephonyConnected, voiceEnabled, type VoiceRequirement } from './voice-providers.js';
+import { providerSecretFields, hasProviderSecret, requireVoiceProvider, telephonyConnected, voiceEnabled, twilioBase, type VoiceRequirement } from './voice-providers.js';
 import { recordVoiceUsage } from './voice-usage.js';
 import { liveCallCount } from './voice-realtime.js';
 
@@ -226,12 +226,11 @@ export function handleStatus(params: Params, onEnded?: (callSid: string) => void
 }
 
 // ---- Twilio REST: say one sentence and hang up a live call (kill-switch / budget mid-call) ------------------------------
-export const twilioApiBase = (): string => String(process.env.ARIGAMI_TWILIO_API_BASE || 'https://api.twilio.com').replace(/\/+$/, '');
 export async function hangupWithMessage(callSid: string, text: string, fetchImpl: typeof fetch = fetch): Promise<boolean> {
   const sid = twilioSid(), token = twilioToken();
   if (!sid || !token || !CALL_SID_RE.test(callSid)) return false;
   try {
-    const res = await fetchImpl(`${twilioApiBase()}/2010-04-01/Accounts/${encodeURIComponent(sid)}/Calls/${callSid}.json`, {
+    const res = await fetchImpl(`${twilioBase()}/2010-04-01/Accounts/${encodeURIComponent(sid)}/Calls/${callSid}.json`, {
       method: 'POST',
       headers: { Authorization: `Basic ${Buffer.from(`${sid}:${token}`).toString('base64')}`, 'content-type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({ Twiml: twiml(say(text) + '<Hangup/>') }).toString(),

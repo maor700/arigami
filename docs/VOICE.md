@@ -204,5 +204,6 @@ Call `requireVoiceProvider(kind)` first and return its non-ok shapes as the tool
   *Public URL*. Then call the number from your own phone: PIN, `#`, talk.
 - **Tests**: `test/voice-phone.test.ts` (signature valid/invalid/replayed + base candidates, owner gate, PIN flow with lockout, TwiML shapes,
   μ-law/resampling round trip, the stream WebSocket with a fake Twilio client against a stubbed backend incl. tool round-trip, transcript, clear
-  on interruption, ledger entries, kill-switch/budget mid-call, status billing), `test/voice-phone-web.test.js` (the settings panel).
+  on interruption, ledger entries, kill-switch/budget mid-call, status billing), `test/voice-phone-host.test.ts` (a real isolated host: admin routes, the
+  cookie-less webhook + stream upgrade, the real Gemini Live backend against a fake Live server, cards + ledgers), `test/voice-phone-web.test.js` (the settings panel).
   No real call was placed: there is no Twilio account in CI or on the dev host.
