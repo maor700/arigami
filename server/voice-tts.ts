@@ -8,7 +8,7 @@ export const TTS_MAX_CHARS = 1200;
 export const TTS_MAX_INFLIGHT = 2; // per session: the client keeps 1–2 sentences in flight
 const HEADERS_TIMEOUT_MS = 30_000;
 
-// Vendor defaults; config.voice.tts.{voice,model}[providerId] overrides (Hebrew needs eleven_v3, not turbo/flash).
+// Vendor defaults; config.voice.tts.{voice,model}[providerId] overrides (Hebrew needs the v3/v4 families; eleven_v4_turbo is the low-latency pick, flash/multilingual_v2 have no Hebrew).
 const DEFAULT_VOICE: Record<string, string> = { 'voice:elevenlabs': '21m00Tcm4TlvDq8ikWAM', 'voice:cartesia': 'a0e99841-438c-4a64-b679-ae501e7d6091', 'voice:openai': 'alloy' };
 const DEFAULT_MODEL: Record<string, string> = { 'voice:elevenlabs': 'eleven_v3', 'voice:cartesia': 'sonic-3', 'voice:openai': 'gpt-4o-mini-tts' };
 const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
@@ -34,7 +34,7 @@ export function vendorRequest(provider: string, text: string, opts: { voice?: st
       return {
         url: `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voice)}/stream?output_format=mp3_44100_128`,
         headers: { 'xi-api-key': s.token, 'content-type': 'application/json', accept: 'audio/mpeg' },
-        body: { text, model_id: model, ...(lang && /v2_5/.test(model) ? { language_code: lang } : {}) },
+        body: { text, model_id: model, ...(lang && !/multilingual_v2/.test(model) ? { language_code: lang } : {}) }, // docs: language_code is not supported for multilingual_v2; others ignore it when unsupported
         contentType: 'audio/mpeg',
       };
     case 'voice:cartesia':

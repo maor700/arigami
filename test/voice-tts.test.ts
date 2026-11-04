@@ -66,7 +66,7 @@ test('stream: chunks relayed in order, usage recorded in chars, provider request
   expect(out.req.method).toBe('POST');
   expect(out.req.url).toBe('https://api.elevenlabs.io/v1/text-to-speech/21m00Tcm4TlvDq8ikWAM/stream?output_format=mp3_44100_128');
   expect(out.req.headers['xi-api-key']).toBe(KEY);
-  expect(out.req.body).toEqual({ text: 'בדיקה. עוד משפט קצר!', model_id: 'eleven_v3' });
+  expect(out.req.body).toEqual({ text: 'בדיקה. עוד משפט קצר!', model_id: 'eleven_v3', language_code: 'he' });
   expect(out.leak).toBe(false);
   expect(out.logs.some((l: string) => /\[voice-tts\] voice:elevenlabs 20 chars/.test(l))).toBe(true);
 });
@@ -116,7 +116,7 @@ test('vendor errors: a 401 with the key in its body → 502 without the key, not
   expect(out.leak).toBe(false);
 });
 
-test('vendorRequest: Cartesia and OpenAI shapes, config overrides for voice/model, language_code only on v2.5 ElevenLabs models', () => {
+test('vendorRequest: Cartesia and OpenAI shapes, config overrides for voice/model, language_code on every ElevenLabs model but multilingual_v2', () => {
   const out = run(
     `const KEY=${JSON.stringify(KEY)};for(const id of ['voice:elevenlabs','voice:cartesia','voice:openai'])vp.setProviderSecret(id,{token:KEY+id.length});` +
       "const car=tts.vendorRequest('voice:cartesia','שלום',{lang:'he'});const oa=tts.vendorRequest('voice:openai','hi',{voice:'nova'});" +

@@ -62,7 +62,7 @@ Call `requireVoiceProvider(kind)` first and return its non-ok shapes as the tool
   its non-ok shape comes back as JSON 200 (`{needs_setup}`, `{disabled:true}`, `{budget:'soft-stopped'}`); empty or over-long text
   (> `TTS_MAX_CHARS` = 1200) → 400; a third sentence in flight for one session → 429; a vendor failure → 502 with the key scrubbed.
   Success streams the vendor's audio (chunked `audio/mpeg`, `x-voice-provider`) and records `chars` in the ledger.
-- **Drivers**, in the 1a order: ElevenLabs `/v1/text-to-speech/{voice}/stream` (`eleven_v3` — the turbo/flash models have no Hebrew),
+- **Drivers**, in the 1a order: ElevenLabs `/v1/text-to-speech/{voice}/stream` (`eleven_v3` — Hebrew lives in the v3/v4 families only; `eleven_v4_turbo` is the ~100 ms pick to set in config once verified on a real key; flash/multilingual_v2 have no Hebrew; `language_code` is sent for every model but multilingual_v2),
   Cartesia `/tts/bytes` (`sonic-3`), OpenAI `/v1/audio/speech` (`gpt-4o-mini-tts`). `config.voice.tts.{voice,model}[<provider id>]`
   overrides the defaults (file only, no UI).
 - **Sources + gating** (`web/src/lib/speak.js`): `ttsSource(config, prefs)` = `'server'` when `config.voiceProviders.tts` is non-empty,
