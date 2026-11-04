@@ -11,6 +11,7 @@ import { Icon } from '../lib/icons.js';
 import { faArrowUpRightFromSquare, faCheck, faGripVertical, faMicrophone, faMicrophoneSlash, faPhoneSlash, faTriangleExclamation, faVolumeHigh, faXmark } from '@fortawesome/free-solid-svg-icons';
 import { Button } from './ui/button.jsx';
 import VoiceLangPicker from './VoiceLangPicker.jsx';
+import VoiceWave from './VoiceWave.jsx';
 import { useHandsFree, stopHandsFree, toggleHandsFreeMute } from '../lib/handsfree.js';
 import { useCall, hangUp, toggleMute } from '../lib/call.js';
 
@@ -224,7 +225,7 @@ function MuteButton({ muted, onClick, t, attrs }) {
   );
 }
 
-function HandsFreeHUD({ hf, status, level, error, t, onClose }) {
+function HandsFreeHUD({ hf, status, error, t, onClose }) {
   const phase = hf.phase === 'idle' ? 'listening' : hf.phase;
   const note = NOTE_KEYS[hf.note] ? t(NOTE_KEYS[hf.note]) : hf.note || error;
   const title = hf.muted && phase === 'listening' ? t('dialogs.handsFree.muted') : t(`dialogs.handsFree.${phase}`);
@@ -243,14 +244,7 @@ function HandsFreeHUD({ hf, status, level, error, t, onClose }) {
         </Button>
       </>}
     >
-      {status === 'recording' && phase === 'listening' && !hf.muted && (
-        <div className="mb-1.5 h-1.5 w-full overflow-hidden rounded-full bg-hair">
-          <div
-            className="h-full rounded-full transition-[width] duration-100"
-            style={{ width: `${Math.min(100, Math.round((level || 0) * 140))}%`, background: (level || 0) > 0.03 ? 'var(--color-brand, #E3B341)' : '#d9534f' }}
-          />
-        </div>
-      )}
+      <VoiceWave who={phase === 'speaking' ? 'out' : status === 'recording' && phase === 'listening' && !hf.muted ? 'mic' : null} />
       <LastLine text={hf.lastText} attr="data-hands-free-last" />
       {note && <div className="mt-1 line-clamp-3 text-[11px] text-danger" data-hands-free-note>{note}</div>}
       {!hf.lastText && !note && <div className="line-clamp-2 text-[11px] text-fgdim max-md:hidden">{t('dialogs.handsFree.hint')}</div>}
@@ -275,6 +269,7 @@ function CallHUD({ call, t }) {
         </Button>
       </>}
     >
+      <VoiceWave who={phase === 'speaking' ? 'out' : phase === 'listening' && !call.muted ? 'mic' : null} />
       <LastLine text={call.lastText} attr="data-voice-call-last" />
       {call.note && <div className="mt-1 line-clamp-3 text-[11px] text-danger" data-voice-call-note>{call.note}</div>}
       {!call.lastText && !call.note && <div className="line-clamp-2 text-[11px] text-fgdim max-md:hidden">{t('dialogs.call.hint')}</div>}
@@ -365,7 +360,7 @@ export default function VoiceHUD() {
 
   if (!open) return null;
   if (call.active) return <CallHUD call={call} t={t} />;
-  if (handsFree) return <HandsFreeHUD hf={hf} status={status} level={level} error={error} t={t} onClose={close} />;
+  if (handsFree) return <HandsFreeHUD hf={hf} status={status} error={error} t={t} onClose={close} />;
 
   const sendInject = async (idx) => {
     const a = injects[idx];

@@ -1,6 +1,7 @@
 // Gemini Live transport (stage 1c): one WebSocket with an ephemeral token — 16 kHz PCM up, 24 kHz PCM down, the host-built
 // `setup` first. `interrupted` is the model's own barge-in; a goAway / dropped socket is resumed with the session handle.
 import { openMicPcm as defaultMic, pcmPlayer as defaultPlayer } from './pcm.js';
+import { setAudioSource, clearAudioSource } from './audioLevel.js';
 
 export const GEMINI_RECONNECTS = 3;
 const IN_MIME = 'audio/pcm;rate=16000';
@@ -11,6 +12,9 @@ export async function connectGemini({ mint, deps, hooks }) {
   try { await ctx.resume?.(); } catch { /* fine */ }
   const stream = await deps.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } });
   const player = (deps.pcmPlayer || defaultPlayer)(ctx, 24000);
+  setAudioSource('mic', stream);
+  const out = player.output ? { node: player.output, ctx } : null;
+  if (out) setAudioSource('out', out);
   let ws = null;
   let mic = null;
   let closed = false;
@@ -87,6 +91,8 @@ export async function connectGemini({ mint, deps, hooks }) {
   const close = () => {
     if (closed) return;
     closed = true;
+    clearAudioSource('mic', stream);
+    clearAudioSource('out', out);
     try { mic?.stop(); } catch { /* ignore */ }
     try { player.stop(); } catch { /* ignore */ }
     try { ws?.close(); } catch { /* ignore */ }

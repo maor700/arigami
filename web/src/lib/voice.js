@@ -22,6 +22,7 @@ import { useSyncExternalStore } from 'react';
 import { api } from './api.js';
 import { getPrefs, voiceLangFrom } from './prefs.js';
 import { normalizeEngine } from './engines.js';
+import { setAudioSource, clearAudioSource } from './audioLevel.js';
 
 let state = {
   status: 'idle', // idle | recording | thinking | review | error | nokey
@@ -191,6 +192,7 @@ export async function startRecording(opts) {
       return;
     }
   }
+  setAudioSource('mic', stream); // the box's wave follows this mic (lib/audioLevel.js)
   const mimeType = pickMime();
   chunks = [];
   // Cap the bitrate: mobile browsers default to ~128kbps, bloating clips. Speech
@@ -208,6 +210,7 @@ export async function startRecording(opts) {
 }
 
 function stopTracks() {
+  clearAudioSource('mic', stream);
   try { stream?.getTracks().forEach((t) => t.stop()); } catch { /* ignore */ }
   stream = null;
 }

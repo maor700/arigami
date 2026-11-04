@@ -155,6 +155,13 @@ Call `requireVoiceProvider(kind)` first and return its non-ok shapes as the tool
   hands-free is live, released at the end, re-taken on every `visibilitychange` → visible. A connection lost while the page is
   hidden waits (phase `connecting`) instead of ending; back to visible, `resumeCall()` reopens Gemini with its session handle, or for
   OpenAI ends the old call (`reason:'resume'`) and re-mints + reconnects once; if that fails the call ends with one toast line.
-- **Tests**: `test/voice-dock-web.test.js` (placement LTR/RTL, clamping, per-device storage, keyboard nudge), `test/voice-s1d-web.test.js`
+- **Live wave** (`web/src/components/VoiceWave.jsx`, `web/src/lib/audioLevel.js`): seven bars under the state line follow the voice —
+  brand-tinted from the mic while the person speaks (listening, not muted), info-tinted from the playback while the agent speaks; resting
+  dots otherwise, same height always (no layout shift). `useAudioLevel('mic'|'out')` meters whatever the voice code registered with
+  `setAudioSource` (the recorder's stream, the call's mic track and remote stream, Gemini's player output node, the TTS `<audio>` per
+  sentence) through one shared AudioContext + AnalyserNode, smoothed RMS at ~30 fps via rAF, nodes released on stop, 0 without a source.
+  Playback that cannot be tapped (speechSynthesis) gets a CSS pulse; `prefers-reduced-motion` → quarter-step static bars at 4 fps, no
+  transitions. No voice source → no box → nothing.
+- **Tests**: `test/voice-anim-web.test.js` (meter with a fake AnalyserNode, sources, the wave in both boxes, reduced motion), `test/voice-dock-web.test.js` (placement LTR/RTL, clamping, per-device storage, keyboard nudge), `test/voice-s1d-web.test.js`
   (rail gating + global mint, busy/takeover, OpenAI/Gemini resume, wake lock with a fake navigator), the stage-1d case in
   `test/voice-realtime.test.ts` (home anchor, context, guard, takeover), plus box/mute checks in `speak-web` and `voice-call-web`.

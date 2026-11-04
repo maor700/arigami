@@ -85,7 +85,10 @@ export function pcmPlayer(ctx, rate = 24000) {
   let at = 0;
   let sources = [];
   let playing = 0;
+  const output = ctx.createGain ? ctx.createGain() : null; // one tap point for the level meter
+  output?.connect(ctx.destination);
   const api = {
+    output,
     get playing() { return playing > 0; },
     play(b64) {
       const samples = pcm16Base64ToFloat(b64);
@@ -94,7 +97,7 @@ export function pcmPlayer(ctx, rate = 24000) {
       buffer.copyToChannel ? buffer.copyToChannel(samples, 0) : buffer.getChannelData(0).set(samples);
       const s = ctx.createBufferSource();
       s.buffer = buffer;
-      s.connect(ctx.destination);
+      s.connect(output || ctx.destination);
       const now = ctx.currentTime;
       if (at < now) at = now + 0.02;
       s.start(at);
