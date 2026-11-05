@@ -44,6 +44,13 @@ export const TEAM_INSTRUCTIONS =
   ' The owner also has a team of agents (list_agents): {team}. "תן ל-X", "תבקש מ-X", "מה X עושה" or "ask X" mean that agent: ' +
   'ask_agent(agent, prompt) for a question or a task (it reuses the agent\'s idle session or opens one), list_sessions({agent}) for what it is doing, create_session({agent}) for a fresh task. ' +
   'Spoken names may come garbled (צ\'יף/צ׳יף/chief, נדל"ן/נדלן, אסטרה/astra, קשר/kesher, סטודיו/studio): when the name is unclear, confirm it back in one word before acting.';
+// Default spoken language: cfg.voiceLang ('he') — the clerk opens in Hebrew and follows the caller from there (call 3 opened in English, ASR guessed Italian).
+export const HEBREW_FIRST = " Open in Hebrew ('שלום, כאן הפקיד של אריגמי') and keep speaking Hebrew unless the person clearly speaks another language.";
+export const voiceLang = (): string => (/^[a-z]{2}$/.test(String(cfg.voiceLang || '')) ? String(cfg.voiceLang) : 'he');
+const BCP47: Record<string, string> = { he: 'he-IL', en: 'en-US', ru: 'ru-RU', fr: 'fr-FR', es: 'es-ES', ar: 'ar-XA', de: 'de-DE' };
+/** The speech-language hint for the providers ('he' → 'he-IL'). */
+export const speechLang = (lang: string = voiceLang()): string => BCP47[lang] || lang;
+const langInstructions = (lang: string): string => (lang === 'he' ? HEBREW_FIRST : '');
 export interface AgentLite { slug: string; name: string; emoji?: string; description?: string }
 export const teamInstructions = (team: readonly AgentLite[] | null | undefined): string =>
   team?.length ? TEAM_INSTRUCTIONS.replace('{team}', team.map((a) => `${a.name} (${a.slug})`).join(', ')) : '';
@@ -89,8 +96,8 @@ export function geminiVoice(): string {
 /** The Live-API `setup` the browser sends first (pure; tests read it): same persona and tools, PCM audio both ways, transcripts on. */
 // Stage 1d: the session the owner has open when a global call starts — the clerk's default subject for "this one".
 export interface ClerkContext { id: string; title?: string }
-export function clerkInstructions(context: ClerkContext | null = null, team: readonly AgentLite[] | null = null): string {
-  const base = CLERK_INSTRUCTIONS + teamInstructions(team);
+export function clerkInstructions(context: ClerkContext | null = null, team: readonly AgentLite[] | null = null, lang: string = voiceLang()): string {
+  const base = CLERK_INSTRUCTIONS + langInstructions(lang) + teamInstructions(team);
   if (!context?.id) return base;
   const title = String(context.title || '').replace(/["\n\r]/g, ' ').slice(0, 120);
   return `${base} The owner has the session "${title || 'untitled'}" (id ${context.id}) open right now: when they say "this", "here" or name no session, they mean that one.`;
@@ -98,14 +105,14 @@ export function clerkInstructions(context: ClerkContext | null = null, team: rea
 
 // Stage 2: the same clerk on a phone line — no screen, so even shorter answers.
 export const PHONE_INSTRUCTIONS = ' The owner is calling by phone: there is no screen, so keep every answer to one short sentence and never spell out ids or URLs.';
-export const phoneInstructions = (team: readonly AgentLite[] | null = null): string => CLERK_INSTRUCTIONS + teamInstructions(team) + PHONE_INSTRUCTIONS;
+export const phoneInstructions = (team: readonly AgentLite[] | null = null, lang: string = voiceLang()): string => CLERK_INSTRUCTIONS + langInstructions(lang) + teamInstructions(team) + PHONE_INSTRUCTIONS;
 
-export function geminiSetup({ model = geminiModel(), voice = geminiVoice(), handle = '', context = null as ClerkContext | null, instructions = '' } = {}): Record<string, unknown> {
+export function geminiSetup({ model = geminiModel(), voice = geminiVoice(), handle = '', context = null as ClerkContext | null, instructions = '', lang = voiceLang() } = {}): Record<string, unknown> {
   const blocking = /^gemini-3\.8-live$/.test(model); // 3.8-live defaults to NON_BLOCKING; the clerk waits for its tools
   return {
     model: `models/${model}`,
-    generationConfig: { responseModalities: ['AUDIO'], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } } } },
-    systemInstruction: { parts: [{ text: instructions || clerkInstructions(context) }] },
+    generationConfig: { responseModalities: ['AUDIO'], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } }, languageCode: speechLang(lang) } },
+    systemInstruction: { parts: [{ text: instructions || clerkInstructions(context, null, lang) }] },
     tools: [{ functionDeclarations: CLERK_TOOLS.map((t) => ({ name: t.name, description: t.description, parameters: t.parameters, ...(blocking ? { behavior: 'BLOCKING' } : {}) })) }],
     realtimeInputConfig: { automaticActivityDetection: {}, activityHandling: 'START_OF_ACTIVITY_INTERRUPTS' },
     inputAudioTranscription: {},
@@ -117,11 +124,11 @@ export function geminiSetup({ model = geminiModel(), voice = geminiVoice(), hand
 export const geminiWsUrl = (): string => `${geminiBase().replace(/^http/, 'ws')}/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained`;
 
 /** The session config sent to OpenAI (pure; tests read it). */
-export function realtimeSessionConfig({ model = realtimeModel(), voice = realtimeVoice(), lang = '', context = null as ClerkContext | null, instructions = '' } = {}): Record<string, unknown> {
+export function realtimeSessionConfig({ model = realtimeModel(), voice = realtimeVoice(), lang = voiceLang(), context = null as ClerkContext | null, instructions = '' } = {}): Record<string, unknown> {
   return {
     type: 'realtime',
     model,
-    instructions: instructions || clerkInstructions(context),
+    instructions: instructions || clerkInstructions(context, null, lang),
     output_modalities: ['audio'],
     audio: {
       input: { transcription: { model: 'gpt-4o-transcribe', ...(lang ? { language: lang } : {}) }, turn_detection: { type: 'server_vad', create_response: true, interrupt_response: true } },
@@ -160,7 +167,8 @@ export async function mintRealtimeSession(body: Record<string, unknown>, opts: {
   const t0 = Date.now();
   try {
     const team = opts.host?.listAgents?.() || null;
-    const minted = provider === 'voice:gemini' ? await mintGemini(token, f, opts.now, context, team) : await mintOpenAI(token, f, lang, context, team);
+    const spoken = lang || voiceLang();
+    const minted = provider === 'voice:gemini' ? await mintGemini(token, f, opts.now, context, team, spoken) : await mintOpenAI(token, f, spoken, context, team);
     if ('error' in minted) {
       console.error(`[voice-realtime] ${provider} answered ${minted.status} after ${Date.now() - t0}ms`);
       return bad(scrubProviderSecrets(minted.error, provider), 502);
@@ -193,7 +201,7 @@ async function mintOpenAI(token: string, f: typeof fetch, lang: string, context:
   const res = await f(`${openaiBase()}/v1/realtime/client_secrets`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-    body: JSON.stringify({ expires_after: { anchor: 'created_at', seconds: SECRET_TTL_S }, session: realtimeSessionConfig({ model, voice, lang, instructions: clerkInstructions(context, team) }) }),
+    body: JSON.stringify({ expires_after: { anchor: 'created_at', seconds: SECRET_TTL_S }, session: realtimeSessionConfig({ model, voice, lang, instructions: clerkInstructions(context, team, lang) }) }),
     signal: AbortSignal.timeout(MINT_TIMEOUT_MS),
   });
   const { detail, j } = await readJson(res);
@@ -203,7 +211,7 @@ async function mintOpenAI(token: string, f: typeof fetch, lang: string, context:
 }
 
 // Gemini: an ephemeral auth token for the Live WebSocket; the browser sends the host-built `setup` itself.
-async function mintGemini(token: string, f: typeof fetch, now: () => number = Date.now, context: ClerkContext | null = null, team: readonly AgentLite[] | null = null): Promise<Minted> {
+async function mintGemini(token: string, f: typeof fetch, now: () => number = Date.now, context: ClerkContext | null = null, team: readonly AgentLite[] | null = null, lang: string = voiceLang()): Promise<Minted> {
   const model = geminiModel();
   const voice = geminiVoice();
   const t = now();
@@ -216,7 +224,7 @@ async function mintGemini(token: string, f: typeof fetch, now: () => number = Da
   const { detail, j } = await readJson(res);
   const name = j && typeof j.name === 'string' ? j.name : '';
   if (!res.ok || !name) return { status: res.status, error: `Gemini answered ${res.status}${res.ok ? ' without a token' : detail ? `: ${detail}` : ''}` };
-  return { body: { transport: 'gemini-ws', token: name, expiresAt: Math.floor(t / 1000) + MAX_CALL_S, model, voice, wsUrl: geminiWsUrl(), setup: geminiSetup({ model, voice, instructions: clerkInstructions(context, team) }) } };
+  return { body: { transport: 'gemini-ws', token: name, expiresAt: Math.floor(t / 1000) + MAX_CALL_S, model, voice, wsUrl: geminiWsUrl(), setup: geminiSetup({ model, voice, lang, instructions: clerkInstructions(context, team, lang) }) } };
 }
 
 /** Stage 2: a call the host opens itself (the phone bridge) — same map, tools, transcript and ledger as a browser call; no mint. */

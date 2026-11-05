@@ -145,6 +145,9 @@ Call `requireVoiceProvider(kind)` first and return its non-ok shapes as the tool
 - **Audit**: sessions created by voice carry `metadata.createdBy='voice'` (+ `metadata.agent`); tool cards show the slug
   (`📞 ask_agent · chief`, `voice.agent`). Sending to third parties, merge and delete stay in-app cards (PLAN.md decision 2). No team → no
   team line, nothing else changes. Tests: `test/voice-clerk-agents.test.ts`, the agent case in `test/voice-realtime-host.test.ts`.
+- **Language**: `config.voiceLang` (default `he`) is the clerk's opening language on both paths — the persona gets `HEBREW_FIRST` (greet in
+  Hebrew, follow the caller after that), Gemini's `speechConfig.languageCode` gets `speechLang()` (`he-IL`), OpenAI's input transcription gets
+  `he`; a browser that names its own `lang` wins for that call. Any other `voiceLang` drops the Hebrew line and maps to its BCP-47 code.
 
 ## Stage 1d — the floating voice box (`web/src/components/VoiceHUD.jsx`, `web/src/lib/voiceDock.js`)
 

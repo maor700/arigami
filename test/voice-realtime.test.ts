@@ -306,7 +306,7 @@ test('stage 1d: a global call anchors in the voice home session, carries the ope
       "const aGone=!rt.liveCall(a.body.callId);" +
       "rt.endRealtimeCall({sessionId:'sess_home',callId:b.body.callId,seconds:3},host);" +
       "const c=await rt.mintRealtimeSession({sessionId:'sess_x',contextSessionId:'sess_x'},{fetchImpl:f,host:mh});" +
-      "emit({noHost:noHost.status,a:[a.body.sessionId,a.body.contextSessionId],instr:reqs[0].session.instructions,busy:[busy.status,busy.body.busy],failed:failed.status,stillA,aGone,b:[b.body.sessionId,b.body.contextSessionId],bInstr:reqs[1].session.instructions,c:c.body.contextSessionId,cInstr:reqs[2].session.instructions,homes,live:rt.liveCallCount(),base:rt.clerkInstructions()===rt.CLERK_INSTRUCTIONS});"
+      "emit({noHost:noHost.status,a:[a.body.sessionId,a.body.contextSessionId],instr:reqs[0].session.instructions,busy:[busy.status,busy.body.busy],failed:failed.status,stillA,aGone,b:[b.body.sessionId,b.body.contextSessionId],bInstr:reqs[1].session.instructions,c:c.body.contextSessionId,cInstr:reqs[2].session.instructions,homes,live:rt.liveCallCount(),base:rt.clerkInstructions()===rt.CLERK_INSTRUCTIONS+rt.HEBREW_FIRST});"
   );
   expect(out.noHost).toBe(500);
   expect(out.a).toEqual(['sess_home', 'sess_open']);

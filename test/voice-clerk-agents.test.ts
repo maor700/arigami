@@ -89,9 +89,9 @@ test('persona: the team line names every agent with its slug (web + phone), maps
   }
   expect(phone).toContain('calling by phone');
   expect(web).not.toContain('calling by phone');
-  expect(rt.clerkInstructions(null, [])).toBe(rt.CLERK_INSTRUCTIONS);
-  expect(rt.clerkInstructions(null, null)).toBe(rt.CLERK_INSTRUCTIONS);
-  expect(rt.phoneInstructions()).toBe(rt.CLERK_INSTRUCTIONS + rt.PHONE_INSTRUCTIONS);
+  expect(rt.clerkInstructions(null, [])).toBe(rt.CLERK_INSTRUCTIONS + rt.HEBREW_FIRST);
+  expect(rt.clerkInstructions(null, null, 'en')).toBe(rt.CLERK_INSTRUCTIONS);
+  expect(rt.phoneInstructions()).toBe(rt.CLERK_INSTRUCTIONS + rt.HEBREW_FIRST + rt.PHONE_INSTRUCTIONS);
   expect(rt.clerkInstructions({ id: 'sess_x', title: 'T' }, TEAM)).toMatch(/\(social-manager\).*The owner has the session "T"/);
   expect(rt.CLERK_INSTRUCTIONS.length + rt.teamInstructions(TEAM).length).toBeLessThan(2200); // short persona
 });
@@ -228,4 +228,33 @@ test('audit cards carry the agent slug (title, voice.agent); the folder of the c
     ['sess_home', '📞 create_session', 'create_session {"title":"T","prompt":"p","agent":"nope"}\n\n→ error: no agent called "nope" — the team is: צ\'יף (chief), סטודיו (studio)', null],
     ['sess_home', '📞 list_agents', "list_agents\n\n→ צ'יף (chief), סטודיו (studio)", null],
   ]);
+});
+
+test('language: the phone and web setups default to Hebrew — persona opens in Hebrew, Gemini speechConfig he-IL, OpenAI transcription he; ARIGAMI_VOICE_LANG=en drops both (child)', async () => {
+  const rt = await rtp();
+  expect(rt.voiceLang()).toBe('he');
+  expect(rt.speechLang()).toBe('he-IL');
+  expect(rt.speechLang('en')).toBe('en-US');
+  expect(rt.speechLang('pt')).toBe('pt');
+  const phone = rt.geminiSetup({ instructions: rt.phoneInstructions(TEAM) }) as any;
+  expect(phone.generationConfig.speechConfig).toEqual({ voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } }, languageCode: 'he-IL' });
+  expect(phone.systemInstruction.parts[0].text).toContain("Open in Hebrew ('שלום, כאן הפקיד של אריגמי')");
+  expect(phone.systemInstruction.parts[0].text).toContain('calling by phone');
+  const web = rt.geminiSetup() as any;
+  expect(web.generationConfig.speechConfig.languageCode).toBe('he-IL');
+  expect(web.systemInstruction.parts[0].text).toContain('Open in Hebrew');
+  const oa = rt.realtimeSessionConfig() as any;
+  expect(oa.audio.input.transcription).toEqual({ model: 'gpt-4o-transcribe', language: 'he' });
+  expect(oa.instructions).toContain('Open in Hebrew');
+  const en = rt.geminiSetup({ lang: 'en' }) as any;
+  expect(en.generationConfig.speechConfig.languageCode).toBe('en-US');
+  expect(en.systemInstruction.parts[0].text).not.toContain('Open in Hebrew');
+  const dir = tmpDir('arigami-clerk-lang-');
+  const r = runInChild(
+    "const rt=await import('./server/voice-realtime.js');const g=rt.geminiSetup({instructions:rt.phoneInstructions()});const o=rt.realtimeSessionConfig();" +
+      'emit({lang:rt.voiceLang(),code:g.generationConfig.speechConfig.languageCode,he:g.systemInstruction.parts[0].text.includes("Open in Hebrew"),oa:o.audio.input.transcription.language,oaHe:o.instructions.includes("Open in Hebrew")});',
+    { ARIGAMI_DIR: dir, ARIGAMI_FUNNEL_QUIET: '1', HOME: path.join(dir, 'home'), GROQ_API_KEY: '', ARIGAMI_VOICE_LANG: 'en' }
+  );
+  if (!r.ok) throw new Error(r.error);
+  expect(r.out[0]).toEqual({ lang: 'en', code: 'en-US', he: false, oa: 'en', oaHe: false });
 });
