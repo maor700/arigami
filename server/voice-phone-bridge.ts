@@ -53,7 +53,8 @@ export async function connectGeminiBackend(o: { token: string; instructions: str
     for (const p of sc.modelTurn?.parts || []) if (p.inlineData?.data) { user = null; o.events.audio(pcmB64ToMulawB64(String(p.inlineData.data), 24000)); }
     if (sc.turnComplete) { asst = null; user = null; }
   };
-  const ws = await openSocket(`${geminiWsUrl()}?key=${encodeURIComponent(o.token)}`, {}, onMsg, (why) => o.events.closed(why));
+  // The host holds the API key, so it uses the plain endpoint; `…Constrained` is for the browser's ephemeral access_token (1007 otherwise).
+  const ws = await openSocket(`${geminiWsUrl().replace(/Constrained$/, '')}?key=${encodeURIComponent(o.token)}`, {}, onMsg, (why) => o.events.closed(why));
   sendJson(ws, { setup: geminiSetup({ instructions: o.instructions }) });
   const t = setTimeout(() => fail(new Error('Gemini setup timed out')), CONNECT_TIMEOUT_MS);
   try { await setup; } finally { clearTimeout(t); }
