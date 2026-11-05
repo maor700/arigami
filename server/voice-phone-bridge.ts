@@ -179,7 +179,7 @@ export function createPhoneBridge(opts: BridgeOptions) {
         closed: (why) => { console.log(`[voice-phone] ${callSid}: ${why}`); end('provider-closed'); },
       };
       try {
-        backend = await factory({ provider, token: key, instructions: phoneInstructions(), events });
+        backend = await factory({ provider, token: key, instructions: phoneInstructions(opts.host.listAgents?.() || null), events });
       } catch (e) {
         console.error('[voice-phone] provider connect failed:', scrubProviderSecrets((e as Error).message, provider));
         say(phoneText('noProvider'));

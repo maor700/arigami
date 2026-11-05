@@ -115,6 +115,9 @@ test('the clerk over HTTP: mint without the key, tools through the host, transcr
   expect(config.voiceProviders.realtime).toEqual(['voice:openai']);
   const s1 = (await api('POST', '/__api/sessions', { title: 'Fix login' })).json;
   expect(s1.id).toMatch(/^sess_/);
+  // team by voice: one agent in the registry → the persona names it, create_session({agent}) births the session from it
+  const chief = await api('POST', '/__api/agents', { slug: 'chief', name: "צ'יף", emoji: '🎩', persona: 'אתה הצ\'יף אוף סטאף של מאור.\nשורה שנייה.', tools: ['sessions'] });
+  expect(chief.status).toBe(201);
 
   const mint = await api('POST', '/__api/voice/realtime/session', { sessionId: s1.id, lang: 'he' });
   expect(mint.status).toBe(200);
@@ -124,7 +127,8 @@ test('the clerk over HTTP: mint without the key, tools through the host, transcr
   expect(JSON.stringify(mint.json)).not.toContain(KEY);
   expect(minted[0].auth).toBe(`Bearer ${KEY}`);
   expect(minted[0].body.session.model).toBe('gpt-realtime-2.1');
-  expect(minted[0].body.session.tools.length).toBe(5);
+  expect(minted[0].body.session.tools.length).toBe(7);
+  expect(minted[0].body.session.instructions).toContain("team of agents (list_agents): צ'יף (chief).");
   const call = mint.json.callId;
 
   const tool = (name: string, args: Record<string, unknown>, sessionId = s1.id, callId = call) => api('POST', '/__api/voice/realtime/tool', { sessionId, callId, name, args });
@@ -144,6 +148,16 @@ test('the clerk over HTTP: mint without the key, tools through the host, transcr
   expect(typeof stop.json.result.interrupted).toBe('boolean');
   const unknown = await tool('merge_session', { id: s2 });
   expect(unknown.status).toBe(400);
+  expect((await tool('list_agents', {})).json).toEqual({ ok: true, result: { agents: [{ slug: 'chief', name: "צ'יף", description: "אתה הצ'יף אוף סטאף של מאור." }] } });
+  const born = await tool('create_session', { title: 'סיכום היום', prompt: 'תסכם לי את היום', agent: 'צ׳יף' });
+  expect(born.json).toEqual({ ok: true, result: { id: expect.stringMatching(/^sess_/), title: 'סיכום היום', created: true, agent: 'chief' } });
+  const byId = async (id: string) => { const j = (await api('GET', '/__api/sessions?full=1')).json; return (Array.isArray(j) ? j : j.sessions).find((s: any) => s.id === id); };
+  const s3 = await byId(born.json.result.id);
+  expect(s3.metadata).toMatchObject({ agent: 'chief', createdBy: 'voice' });
+  expect(s3.color).toBe(chief.json.color);
+  expect((await tool('create_session', { title: 'x', prompt: 'y', agent: 'nobody' })).json).toEqual({ ok: false, error: "no agent called \"nobody\" — the team is: צ'יף (chief)" });
+  expect((await tool('list_sessions', { agent: 'chief' })).json.result.sessions.map((s: any) => [s.title, s.agent])).toEqual([['סיכום היום', 'chief']]);
+  expect((await byId(s2)).metadata).toMatchObject({ createdBy: 'voice' });
   const other = await tool('list_sessions', {}, s2);
   expect(other.status).toBe(403);
 
@@ -159,8 +173,10 @@ test('the clerk over HTTP: mint without the key, tools through the host, transcr
 
   const chat = (await api('GET', `/__api/sessions/${s1.id}/chat`)).json;
   const cards = chat.filter((e: any) => e.kind === 'ext-card' && e.extension === 'voice');
-  expect(cards.map((c: any) => c.voice.tool || c.voice.reason)).toEqual(['list_sessions', 'create_session', 'session_status', 'interrupt_session', 'hangup']);
-  expect(cards[4].title).toBe('📞 שיחה קולית · 0:03');
-  expect(cards[4].body).toBe('**אתה:** מה המצב?\n\n**הפקיד:** הכל בסדר.');
+  expect(cards.map((c: any) => c.voice.tool || c.voice.reason)).toEqual(['list_sessions', 'create_session', 'session_status', 'interrupt_session', 'list_agents', 'create_session', 'create_session', 'list_sessions', 'hangup']);
+  expect(cards[5].title).toBe('📞 create_session · chief');
+  expect(cards[5].voice.agent).toBe('chief');
+  expect(cards[8].title).toBe('📞 שיחה קולית · 0:03');
+  expect(cards[8].body).toBe('**אתה:** מה המצב?\n\n**הפקיד:** הכל בסדר.');
   expect(JSON.stringify(chat)).not.toContain(KEY);
 }, 30_000);
