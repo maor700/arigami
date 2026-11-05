@@ -67,7 +67,7 @@ test('mint: gate shapes pass through; ok → client secret, never the key; reque
   expect(s.audio.input.turn_detection.type).toBe('server_vad');
   expect(s.audio.input.transcription.language).toBe('he');
   expect(s.instructions).toContain('רגע, בודק');
-  expect(s.tools.map((t: any) => t.name)).toEqual(['list_sessions', 'session_status', 'ask_session', 'create_session', 'interrupt_session']);
+  expect(s.tools.map((t: any) => t.name)).toEqual(['list_sessions', 'list_agents', 'session_status', 'ask_session', 'create_session', 'ask_agent', 'interrupt_session']);
   expect(s.tools.every((t: any) => t.type === 'function' && t.parameters.type === 'object')).toBe(true);
   expect(out.mini).toEqual(['gpt-realtime-2.1-mini', 'cedar']);
   expect(out.junk).toEqual(['gpt-realtime-2.1', 'marin']);
@@ -274,7 +274,7 @@ test('Gemini Live: with only Gemini connected the mint is an ephemeral auth toke
   expect(su.model).toBe('models/gemini-3.8-live');
   expect(su.generationConfig.responseModalities).toEqual(['AUDIO']);
   expect(su.systemInstruction.parts[0].text).toContain('רגע, בודק');
-  expect(su.tools[0].functionDeclarations.map((t: any) => [t.name, t.behavior])).toEqual([['list_sessions', 'BLOCKING'], ['session_status', 'BLOCKING'], ['ask_session', 'BLOCKING'], ['create_session', 'BLOCKING'], ['interrupt_session', 'BLOCKING']]);
+  expect(su.tools[0].functionDeclarations.map((t: any) => [t.name, t.behavior])).toEqual([['list_sessions', 'BLOCKING'], ['list_agents', 'BLOCKING'], ['session_status', 'BLOCKING'], ['ask_session', 'BLOCKING'], ['create_session', 'BLOCKING'], ['ask_agent', 'BLOCKING'], ['interrupt_session', 'BLOCKING']]);
   expect(su.inputAudioTranscription).toEqual({});
   expect(su.outputAudioTranscription).toEqual({});
   expect(su.sessionResumption).toEqual({});
@@ -306,7 +306,7 @@ test('stage 1d: a global call anchors in the voice home session, carries the ope
       "const aGone=!rt.liveCall(a.body.callId);" +
       "rt.endRealtimeCall({sessionId:'sess_home',callId:b.body.callId,seconds:3},host);" +
       "const c=await rt.mintRealtimeSession({sessionId:'sess_x',contextSessionId:'sess_x'},{fetchImpl:f,host:mh});" +
-      "emit({noHost:noHost.status,a:[a.body.sessionId,a.body.contextSessionId],instr:reqs[0].session.instructions,busy:[busy.status,busy.body.busy],failed:failed.status,stillA,aGone,b:[b.body.sessionId,b.body.contextSessionId],bInstr:reqs[1].session.instructions,c:c.body.contextSessionId,cInstr:reqs[2].session.instructions,homes,live:rt.liveCallCount(),base:rt.clerkInstructions()===rt.CLERK_INSTRUCTIONS});"
+      "emit({noHost:noHost.status,a:[a.body.sessionId,a.body.contextSessionId],instr:reqs[0].session.instructions,busy:[busy.status,busy.body.busy],failed:failed.status,stillA,aGone,b:[b.body.sessionId,b.body.contextSessionId],bInstr:reqs[1].session.instructions,c:c.body.contextSessionId,cInstr:reqs[2].session.instructions,homes,live:rt.liveCallCount(),base:rt.clerkInstructions()===rt.CLERK_INSTRUCTIONS+rt.HEBREW_FIRST});"
   );
   expect(out.noHost).toBe(500);
   expect(out.a).toEqual(['sess_home', 'sess_open']);

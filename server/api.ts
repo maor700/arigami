@@ -2849,14 +2849,17 @@ function browserOrigin(req: IncomingMessage): string {
 }
 
 // Stage 1c: what the voice clerk may do — the cockpit's own create/message/interrupt paths, nothing more.
+// Team by voice: a session born from an agent goes through applyAgentToSession like POST /__api/sessions (persona, engine, allowlists, budget).
 function clerkHost(): import('./voice-realtime.js').ClerkHost {
   return {
     listSessions: () => state.listSessions() as unknown as import('./voice-realtime.js').SessionLite[],
     getSession: (id) => state.getSession(id) as unknown as import('./voice-realtime.js').SessionLite | null,
+    listAgents: () => agents.listAgentViews().map((a) => ({ slug: a.slug, name: a.name, emoji: a.emoji, description: a.persona.split('\n').find((l) => l.trim()) || '' })),
     sendMessage: (id, text) => { claude.sendMessage(id, text); },
     interrupt: (id) => !!claude.interrupt(id),
-    createSession: ({ title, prompt }) => {
-      const s = state.createSession({ title });
+    createSession: ({ title, prompt, agent }) => {
+      const o = applyAgentToSession(agent || null, { title, model: undefined as string | undefined, engine: undefined as string | undefined, metadata: { createdBy: 'voice' } as Record<string, unknown> });
+      const s = state.createSession({ title: o.title, metadata: o.metadata, model: o.model, engine: o.engine ?? undefined, color: o.color });
       spawnSafe(s.id);
       try { claude.sendMessage(s.id, prompt); } catch (e) { console.error('[voice-realtime] first prompt failed:', (e as Error).message); }
       return { id: s.id, title: s.title };
@@ -5466,7 +5469,7 @@ export async function handle(
       rt.setSweepHost(clerkHost());
       const sub = p.slice('/__api/voice/realtime/'.length);
       const r =
-        sub === 'session' ? await rt.mintRealtimeSession(body, { host: { getSession: clerkHost().getSession, voiceHome: voiceHomeSession } })
+        sub === 'session' ? await rt.mintRealtimeSession(body, { host: { getSession: clerkHost().getSession, listAgents: clerkHost().listAgents, voiceHome: voiceHomeSession } })
         : sub === 'tool' ? await rt.handleClerkTool(body, clerkHost())
         : sub === 'transcript' ? rt.addRealtimeTranscript(body)
         : sub === 'end' ? rt.endRealtimeCall(body, clerkHost())

@@ -131,6 +131,24 @@ Call `requireVoiceProvider(kind)` first and return its non-ok shapes as the tool
   `test/voice-call-web.test.js` (gating, fake WebRTC flow, fake Live socket flow incl. resumption, tool round-trips, transcripts, hang-up,
   fallback, PCM helpers).
 
+### Team by voice (`list_agents` / `ask_agent` / `create_session({agent})`)
+
+- **Tools** (same `CLERK_TOOLS` table for the web mints and the phone bridge): `list_agents` (slug, name, first persona line);
+  `create_session(title, prompt, agent?)` — with `agent` the session is born from that team member through `applyAgentToSession`, exactly
+  like POST /__api/sessions (persona, engine/model, allowlists, daily budget — a spent budget comes back as the tool's spoken error);
+  `ask_agent(agent, prompt)` reuses the agent's most recent idle session (the call's folder first, then its home, then a root-level one;
+  other folders are never hijacked), else opens one, and waits ≤ 90 s like `ask_session`; `list_sessions({agent})` filters by team member.
+- **Names**: `resolveAgent` accepts the slug, the display name, Maor's spoken forms (`SPOKEN_NAMES`: צ'יף/צ׳יף/ציף/chief, קשר, סטודיו,
+  אסטרה/astra, נדל"ן/נדלן, social manager/סושיאל) and a unique ≥ 3-char prefix; `nameKey` drops punctuation and Hebrew final letters.
+  Unknown → "no agent called X — the team is: …"; two candidates → "did you mean A or B?". The persona lists the team with slugs, maps
+  "תן ל-X / תבקש מ-X / מה X עושה" to `ask_agent` / `list_sessions({agent})`, and asks to confirm a garbled name in one word first.
+- **Audit**: sessions created by voice carry `metadata.createdBy='voice'` (+ `metadata.agent`); tool cards show the slug
+  (`📞 ask_agent · chief`, `voice.agent`). Sending to third parties, merge and delete stay in-app cards (PLAN.md decision 2). No team → no
+  team line, nothing else changes. Tests: `test/voice-clerk-agents.test.ts`, the agent case in `test/voice-realtime-host.test.ts`.
+- **Language**: `config.voiceLang` (default `he`) is the clerk's opening language on both paths — the persona gets `HEBREW_FIRST` (greet in
+  Hebrew, follow the caller after that), Gemini's `speechConfig.languageCode` gets `speechLang()` (`he-IL`), OpenAI's input transcription gets
+  `he`; a browser that names its own `lang` wins for that call. Any other `voiceLang` drops the Hebrew line and maps to its BCP-47 code.
+
 ## Stage 1d — the floating voice box (`web/src/components/VoiceHUD.jsx`, `web/src/lib/voiceDock.js`)
 
 - Hands-free (1b) and call mode (1c) no longer open the centred window; they show a small **floating box**: one state line
