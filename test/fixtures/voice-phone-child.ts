@@ -48,7 +48,7 @@ async function flow(): Promise<void> {
   // first contact → gather
   const first = voice({ CallSid: callSid(2), From: OWNER });
   out.first = first;
-  out.firstGather = has(first, `<Gather input="dtmf" finishOnKey="#" timeout="10" action="${BASE}${vp.TWILIO_VOICE_PATH}" method="POST"><Say language="he-IL">`);
+  out.firstGather = has(first, `<Gather input="dtmf" finishOnKey="#" timeout="10" action="${BASE}${vp.TWILIO_VOICE_PATH}" method="POST"><Say voice="Google.he-IL-Wavenet-A" language="he-IL">`);
   // two wrong, third wrong → lockout
   out.wrong1 = voice({ CallSid: callSid(2), From: OWNER, Digits: '0000' });
   out.wrong2 = voice({ CallSid: callSid(2), From: OWNER, Digits: '1111' });

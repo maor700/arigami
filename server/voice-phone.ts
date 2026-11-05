@@ -100,7 +100,9 @@ const mask = (n: string): string => (n.length > 4 ? `${n.slice(0, 4)}…${n.slic
 const esc = (s: string): string => s.replace(/[<>&"']/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&apos;' })[c] as string);
 export const twiml = (inner: string): string => `<?xml version="1.0" encoding="UTF-8"?><Response>${inner}</Response>`;
 const sayLang = (): string => (cfg.voiceLang === 'he' ? 'he-IL' : 'en-US');
-const say = (text: string): string => `<Say language="${sayLang()}">${esc(text)}</Say>`;
+// Twilio's default voice has no Hebrew (error 13512) — Hebrew prompts need a Google voice.
+const sayVoice = (): string => (cfg.voiceLang === 'he' ? ' voice="Google.he-IL-Wavenet-A"' : '');
+const say = (text: string): string => `<Say${sayVoice()} language="${sayLang()}">${esc(text)}</Say>`;
 const T = {
   he: { pin: 'שלום. הקישו את הקוד ואז סולמית.', again: 'קוד שגוי. נסו שוב ואז סולמית.', locked: 'יותר מדי ניסיונות. נסו שוב בעוד רבע שעה.', noInput: 'לא התקבל קוד. להתראות.', noPin: 'לא הוגדר קוד. הגדירו אותו בהגדרות קול וטלפון.', off: 'שכבת הקול כבויה.', budget: 'תקרת התקציב החודשית הושגה. להתראות.', noProvider: 'אין ספק קול מחובר.', busy: 'שיחה אחרת פעילה כרגע. להתראות.', connected: 'מחובר.', bye: 'השיחה הסתיימה. להתראות.' },
   en: { pin: 'Hello. Enter your code, then pound.', again: 'Wrong code. Try again, then pound.', locked: 'Too many attempts. Try again in fifteen minutes.', noInput: 'No code received. Goodbye.', noPin: 'No PIN is set. Set one under Voice and phone settings.', off: 'The voice layer is switched off.', budget: 'This month\'s budget cap is reached. Goodbye.', noProvider: 'No voice provider is connected.', busy: 'Another call is live right now. Goodbye.', connected: 'Connected.', bye: 'The call has ended. Goodbye.' },
