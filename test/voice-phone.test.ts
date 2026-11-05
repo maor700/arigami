@@ -204,7 +204,7 @@ describe('media-stream bridge (child)', () => {
     expect(o.busyStream).toEqual({ busyTwiml: true, code: 1008, backends: 1 });
     expect(o.killSwitch.code).toBe(1000);
     expect(o.killSwitch.restUrl).toBe('/2010-04-01/Accounts/ACaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/Calls/CA00000000000000000000000000000033.json');
-    expect(o.killSwitch.twiml).toContain('<Say language="he-IL">שכבת הקול כבויה.</Say><Hangup/>');
+    expect(o.killSwitch.twiml).toContain('<Say voice="Google.he-IL-Wavenet-A" language="he-IL">שכבת הקול כבויה.</Say><Hangup/>');
     expect(o.killSwitch.reason).toContain('kill-switch');
     expect(o.statusEnds).toEqual({ code: 1000, live: 0 });
     expect(o.cards).toContain('sess_home:📞 list_sessions:list_sessions');
