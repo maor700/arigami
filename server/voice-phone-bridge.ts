@@ -7,8 +7,9 @@ import { mulawB64ToPcmB64, pcmB64ToMulawB64 } from './lib/audio-g711.js';
 import { providerSecretFields, openaiBase, scrubProviderSecrets } from './voice-providers.js';
 import {
   geminiSetup, geminiWsUrl, geminiModel, realtimeModel, realtimeVoice, realtimeSessionConfig, phoneInstructions,
-  openHostCall, touchCall, handleClerkTool, addRealtimeTranscript, endRealtimeCall, MAX_CALL_S, type ClerkHost, type Turn,
+  openHostCall, touchCall, handleClerkTool, addRealtimeTranscript, endRealtimeCall, MAX_CALL_S, type ClerkHost, type Turn, type ToolDef,
 } from './voice-realtime.js';
+import { consumeOutboundToken, outboundInstructions, outboundKick, runOutboundTool, outboundStreamEnded, OUTBOUND_TOOLS } from './voice-outbound.js';
 import { consumeStreamToken, streamEnded, phoneGate, phoneText, hangupWithMessage, TWILIO_STREAM_PATH, type PhoneHost } from './voice-phone.js';
 
 export const START_TIMEOUT_MS = 10_000; // Twilio sends `start` right after the upgrade
@@ -19,7 +20,8 @@ const EARLY_FRAMES = 150; // ≈ 3 s of caller audio kept while the provider con
 
 export interface BackendEvents { audio(mulawB64: string): void; interrupted(): void; tool(c: { callId: string; name: string; args: Record<string, unknown> }): void; turn(t: Turn): void; closed(reason: string): void }
 export interface Backend { sendMulaw(b64: string): void; toolResult(c: { callId: string; name: string }, out: Record<string, unknown>): void; close(): void }
-export type BackendFactory = (o: { provider: string; token: string; instructions: string; events: BackendEvents }) => Promise<Backend>;
+export interface BackendOpts { provider: string; token: string; instructions: string; events: BackendEvents; lang?: string; tools?: readonly ToolDef[]; kick?: string }
+export type BackendFactory = (o: BackendOpts) => Promise<Backend>;
 
 const parse = (d: unknown): Record<string, any> | null => { try { return JSON.parse(typeof d === 'string' ? d : String(d)); } catch { return null; } };
 const openSocket = (url: string, headers: Record<string, string>, onMessage: (m: Record<string, any>) => void, onClose: (why: string) => void): Promise<WebSocket> =>
@@ -35,7 +37,7 @@ const openSocket = (url: string, headers: Record<string, string>, onMessage: (m:
 const sendJson = (w: WebSocket | null, m: unknown): void => { if (w && w.readyState === WebSocket.OPEN) w.send(JSON.stringify(m)); };
 
 // ---- Gemini Live: PCM 16 kHz in / 24 kHz out, transcripts on, BLOCKING tools, interruption by the model's VAD -----------
-export async function connectGeminiBackend(o: { token: string; instructions: string; events: BackendEvents }): Promise<Backend> {
+export async function connectGeminiBackend(o: Omit<BackendOpts, 'provider'>): Promise<Backend> {
   let ready: () => void = () => {};
   let fail: (e: Error) => void = () => {};
   const setup = new Promise<void>((res, rej) => { ready = res; fail = rej; });
@@ -55,9 +57,10 @@ export async function connectGeminiBackend(o: { token: string; instructions: str
   };
   // The host holds the API key, so it uses the plain endpoint; `…Constrained` is for the browser's ephemeral access_token (1007 otherwise).
   const ws = await openSocket(`${geminiWsUrl().replace(/Constrained$/, '')}?key=${encodeURIComponent(o.token)}`, {}, onMsg, (why) => o.events.closed(why));
-  sendJson(ws, { setup: geminiSetup({ instructions: o.instructions, lang: cfg.voiceLang }) });
+  sendJson(ws, { setup: geminiSetup({ instructions: o.instructions, lang: o.lang || cfg.voiceLang, ...(o.tools ? { tools: o.tools } : {}) }) });
   const t = setTimeout(() => fail(new Error('Gemini setup timed out')), CONNECT_TIMEOUT_MS);
   try { await setup; } finally { clearTimeout(t); }
+  if (o.kick) sendJson(ws, { clientContent: { turns: [{ role: 'user', parts: [{ text: o.kick }] }], turnComplete: true } }); // stage 4a: the caller speaks first
   return {
     sendMulaw: (b64) => sendJson(ws, { realtimeInput: { audio: { data: mulawB64ToPcmB64(b64, 16000), mimeType: 'audio/pcm;rate=16000' } } }),
     toolResult: ({ callId, name }, out) => sendJson(ws, { toolResponse: { functionResponses: [{ id: callId, name, response: out && out.error ? out : { result: out } }] } }),
@@ -66,7 +69,7 @@ export async function connectGeminiBackend(o: { token: string; instructions: str
 }
 
 // ---- OpenAI Realtime over WebSocket: μ-law both ways (`audio/pcmu`), so no resampling at all --------------------------
-export async function connectOpenAIBackend(o: { token: string; instructions: string; events: BackendEvents }): Promise<Backend> {
+export async function connectOpenAIBackend(o: Omit<BackendOpts, 'provider'>): Promise<Backend> {
   const model = realtimeModel();
   let ready: () => void = () => {};
   const updated = new Promise<void>((res) => { ready = res; });
@@ -86,13 +89,14 @@ export async function connectOpenAIBackend(o: { token: string; instructions: str
     }
   };
   const ws = await openSocket(`${openaiBase().replace(/^http/, 'ws')}/v1/realtime?model=${encodeURIComponent(model)}`, { Authorization: `Bearer ${o.token}` }, onMsg, (why) => o.events.closed(why));
-  const session = realtimeSessionConfig({ model, voice: realtimeVoice(), lang: cfg.voiceLang, instructions: o.instructions }) as any;
+  const session = realtimeSessionConfig({ model, voice: realtimeVoice(), lang: o.lang || cfg.voiceLang, instructions: o.instructions, ...(o.tools ? { tools: o.tools } : {}) }) as any;
   session.audio.input.format = { type: 'audio/pcmu' };
   session.audio.output.format = { type: 'audio/pcmu' };
   delete session.model;
   sendJson(ws, { type: 'session.update', session });
   const t = setTimeout(ready, CONNECT_TIMEOUT_MS); // an old server may not echo session.updated; proceed anyway
   try { await updated; } finally { clearTimeout(t); }
+  if (o.kick) { sendJson(ws, { type: 'conversation.item.create', item: { type: 'message', role: 'user', content: [{ type: 'input_text', text: o.kick }] } }); sendJson(ws, { type: 'response.create' }); }
   return {
     sendMulaw: (b64) => sendJson(ws, { type: 'input_audio_buffer.append', audio: b64 }),
     toolResult: ({ callId }, out) => { sendJson(ws, { type: 'conversation.item.create', item: { type: 'function_call_output', call_id: callId, output: JSON.stringify(out) } }); sendJson(ws, { type: 'response.create' }); },
@@ -139,38 +143,51 @@ export function createPhoneBridge(opts: BridgeOptions) {
       if (conn) {
         conns.delete(conn.callSid);
         const seconds = Math.round((now() - startedAt) / 1000);
-        endRealtimeCall({ sessionId: conn.sessionId, callId: conn.callId, seconds, reason }, opts.host, { now });
-        streamEnded(conn.callSid, now());
+        const r = endRealtimeCall({ sessionId: conn.sessionId, callId: conn.callId, seconds, reason }, opts.host, { now });
+        if (isOut) outboundStreamEnded(conn.callSid, { transcript: ((r.body as Record<string, unknown>).transcript as { role: string; text: string }[]) || [], reason });
+        else streamEnded(conn.callSid, now());
       }
       try { ws.close(); } catch { /* ignore */ }
     };
     let startedAt = now();
+    let isOut = false;
 
+    // inbound (PIN-verified owner) or stage 4a outbound (a call the owner approved on a card) — the token says which
     const onStart = async (start: Record<string, any>): Promise<void> => {
       clearTimeout(startTimer);
       const callSid = String(start.callSid || '');
       const token = String(start.customParameters?.token || '');
-      const call = consumeStreamToken(callSid, token, now());
-      if (!call) {
+      const inbound = consumeStreamToken(callSid, token, now());
+      const out = inbound ? null : consumeOutboundToken(callSid, token, now());
+      if (!inbound && !out) {
         console.log(`[voice-phone] stream refused (${callSid ? 'bad or used token' : 'no callSid'})`);
         try { ws.close(1008, 'unauthorized'); } catch { /* ignore */ }
         return;
       }
+      const lang = out ? out.language : cfg.voiceLang;
+      const refuse = (text: string, code: number, why: string): void => {
+        void hangupWithMessage(callSid, text, opts.fetchImpl);
+        if (out) outboundStreamEnded(callSid, { reason: why }); else streamEnded(callSid, now());
+        try { ws.close(code, why); } catch { /* ignore */ }
+      };
       const gate = phoneGate();
-      if (!gate.ok) { void hangupWithMessage(callSid, phoneText(gate.text), opts.fetchImpl); streamEnded(callSid, now()); try { ws.close(1011, 'gate'); } catch { /* ignore */ } return; }
+      if (!gate.ok) return refuse(phoneText(gate.text), 1011, 'gate');
       const provider = gate.provider;
       const key = providerSecretFields(provider)?.token || '';
       const model = provider === 'voice:gemini' ? geminiModel() : realtimeModel();
-      const sessionId = opts.host.voiceHome().id;
-      const opened = openHostCall({ sessionId, provider, model, lang: cfg.voiceLang, channel: 'phone', now });
-      if ('busy' in opened) { void hangupWithMessage(callSid, phoneText('busy'), opts.fetchImpl); streamEnded(callSid, now()); try { ws.close(1013, 'busy'); } catch { /* ignore */ } return; }
+      const sessionId = out ? out.sessionId : opts.host.voiceHome().id;
+      const opened = openHostCall({ sessionId, provider, model, lang, channel: out ? 'phone-out' : 'phone', now });
+      if ('busy' in opened) return refuse(phoneText('busy'), 1013, 'busy');
       startedAt = now();
+      const maxS = out ? Math.min(MAX_CALL_S, out.maxMinutes * 60) : MAX_CALL_S;
       conn = { callSid, streamSid, callId: opened.callId, sessionId, end };
       conns.set(callSid, conn);
+      isOut = !!out;
       const events: BackendEvents = {
         audio: (b64) => { for (const f of splitFrames(b64)) sendJson(ws, { event: 'media', streamSid, media: { payload: f } }); },
         interrupted: () => sendJson(ws, { event: 'clear', streamSid }),
         tool: async (c) => {
+          if (out) { touchCall(opened.callId, now); backend?.toolResult(c, await runOutboundTool(out, c.name, c.args)); return; }
           const r = await handleClerkTool({ sessionId, callId: opened.callId, name: c.name, args: c.args }, opts.host, { now });
           const body = r.body as Record<string, unknown>;
           backend?.toolResult(c, body.ok ? (body.result as Record<string, unknown>) : { error: String(body.error || 'tool failed') });
@@ -179,7 +196,9 @@ export function createPhoneBridge(opts: BridgeOptions) {
         closed: (why) => { console.log(`[voice-phone] ${callSid}: ${why}`); end('provider-closed'); },
       };
       try {
-        backend = await factory({ provider, token: key, instructions: phoneInstructions(opts.host.listAgents?.() || null), events });
+        backend = await factory(out
+          ? { provider, token: key, instructions: outboundInstructions(out), events, lang, tools: OUTBOUND_TOOLS, kick: outboundKick(out) }
+          : { provider, token: key, instructions: phoneInstructions(opts.host.listAgents?.() || null), events });
       } catch (e) {
         console.error('[voice-phone] provider connect failed:', scrubProviderSecrets((e as Error).message, provider));
         say(phoneText('noProvider'));
@@ -192,11 +211,11 @@ export function createPhoneBridge(opts: BridgeOptions) {
       const watchdog = setInterval(() => {
         const g = phoneGate();
         if (!g.ok) { say(phoneText(g.text)); end(g.text === 'off' ? 'kill-switch' : 'budget'); return; }
-        if ((now() - startedAt) / 1000 >= MAX_CALL_S) { say(phoneText('bye')); end('max-duration'); }
+        if ((now() - startedAt) / 1000 >= maxS) { say(phoneText('bye')); end('max-duration'); }
       }, opts.budgetEveryMs ?? BUDGET_EVERY_MS);
       watchdog.unref?.();
       timers.push(watchdog);
-      console.log(`[voice-phone] ${callSid} bridged to ${provider} (${model})`);
+      console.log(`[voice-phone] ${callSid} bridged to ${provider} (${model})${out ? ' outbound' : ''}`);
     };
 
     ws.on('message', (data) => {

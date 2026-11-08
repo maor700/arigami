@@ -63,7 +63,7 @@ function fakeHost(answer?: (id: string, text: string) => Ev[] | void, team = TEA
 test('schemas: list_agents + ask_agent exist, create_session/list_sessions take an optional agent; the web mints and the phone bridge share one table', async () => {
   const rt = await rtp();
   const names = rt.CLERK_TOOLS.map((t: any) => t.name);
-  expect(names).toEqual(['list_sessions', 'list_agents', 'session_status', 'ask_session', 'create_session', 'ask_agent', 'interrupt_session']);
+  expect(names).toEqual(['list_sessions', 'list_agents', 'session_status', 'ask_session', 'create_session', 'ask_agent', 'interrupt_session', 'call_contact']);
   const byName = (n: string) => rt.CLERK_TOOLS.find((t: any) => t.name === n) as any;
   expect(byName('ask_agent').parameters.required).toEqual(['agent', 'prompt']);
   expect(byName('create_session').parameters.required).toEqual(['title', 'prompt']);

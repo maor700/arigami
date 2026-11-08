@@ -137,6 +137,7 @@ export const strings = {
   'chat.commandRestore': 'Restore text',
   'agent.tool.web': 'Web fetch / search',
   'agent.tool.publish': 'Publish artifacts',
+  'agent.tool.phone': 'Phone calls & SMS (each on a Send card)',
   'agent.card.domains': 'Allowed domains',
   'agent.card.domainsHint': 'Comma-separated (example.com matches its subdomains). Enforced on open_tab + WebFetch; empty = any.',
   'agent.card.toolsHint': 'Enforced by the host: other tools are hidden or refused. Empty = everything.',

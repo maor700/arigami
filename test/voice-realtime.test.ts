@@ -67,7 +67,7 @@ test('mint: gate shapes pass through; ok → client secret, never the key; reque
   expect(s.audio.input.turn_detection.type).toBe('server_vad');
   expect(s.audio.input.transcription.language).toBe('he');
   expect(s.instructions).toContain('רגע, בודק');
-  expect(s.tools.map((t: any) => t.name)).toEqual(['list_sessions', 'list_agents', 'session_status', 'ask_session', 'create_session', 'ask_agent', 'interrupt_session']);
+  expect(s.tools.map((t: any) => t.name)).toEqual(['list_sessions', 'list_agents', 'session_status', 'ask_session', 'create_session', 'ask_agent', 'interrupt_session', 'call_contact']);
   expect(s.tools.every((t: any) => t.type === 'function' && t.parameters.type === 'object')).toBe(true);
   expect(out.mini).toEqual(['gpt-realtime-2.1-mini', 'cedar']);
   expect(out.junk).toEqual(['gpt-realtime-2.1', 'marin']);
@@ -274,7 +274,7 @@ test('Gemini Live: with only Gemini connected the mint is an ephemeral auth toke
   expect(su.model).toBe('models/gemini-3.8-live');
   expect(su.generationConfig.responseModalities).toEqual(['AUDIO']);
   expect(su.systemInstruction.parts[0].text).toContain('רגע, בודק');
-  expect(su.tools[0].functionDeclarations.map((t: any) => [t.name, t.behavior])).toEqual([['list_sessions', 'BLOCKING'], ['list_agents', 'BLOCKING'], ['session_status', 'BLOCKING'], ['ask_session', 'BLOCKING'], ['create_session', 'BLOCKING'], ['ask_agent', 'BLOCKING'], ['interrupt_session', 'BLOCKING']]);
+  expect(su.tools[0].functionDeclarations.map((t: any) => [t.name, t.behavior])).toEqual([['list_sessions', 'BLOCKING'], ['list_agents', 'BLOCKING'], ['session_status', 'BLOCKING'], ['ask_session', 'BLOCKING'], ['create_session', 'BLOCKING'], ['ask_agent', 'BLOCKING'], ['interrupt_session', 'BLOCKING'], ['call_contact', 'BLOCKING']]);
   expect(su.inputAudioTranscription).toEqual({});
   expect(su.outputAudioTranscription).toEqual({});
   expect(su.sessionResumption).toEqual({});

@@ -78,6 +78,7 @@ export const FAMILIES: Record<string, string[]> = {
   // A5 (#2): publishing is revocable — it used to be an unrevocable CORE tool, so a
   // "read-only" agent could publish a file and mint a public link.
   publish: ['publish_artifact', 'share_artifact', 'unshare_artifact'],
+  phone: ['call_contact', 'send_sms'], // stage 4a: calls/SMS to others — each still a Send card
 };
 // EXT: an extension contributes its own family, `ext:<name>` → the tool
 // patterns of the MCP server(s) the loader injects for it. FAMILIES is mutated

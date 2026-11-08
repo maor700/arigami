@@ -97,12 +97,14 @@ function audit(host: PhoneHost | null, title: string, body: string, extra: Recor
 const mask = (n: string): string => (n.length > 4 ? `${n.slice(0, 4)}…${n.slice(-3)}` : '•••');
 
 // ---- TwiML -------------------------------------------------------------------------------------------------------------
-const esc = (s: string): string => s.replace(/[<>&"']/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&apos;' })[c] as string);
+export const esc = (s: string): string => s.replace(/[<>&"']/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&apos;' })[c] as string);
 export const twiml = (inner: string): string => `<?xml version="1.0" encoding="UTF-8"?><Response>${inner}</Response>`;
 const sayLang = (): string => (cfg.voiceLang === 'he' ? 'he-IL' : 'en-US');
 // Twilio's default voice has no Hebrew (error 13512) — Hebrew prompts need a Google voice.
 const sayVoice = (): string => (cfg.voiceLang === 'he' ? ' voice="Google.he-IL-Wavenet-A"' : '');
 const say = (text: string): string => `<Say${sayVoice()} language="${sayLang()}">${esc(text)}</Say>`;
+/** <Say> in an explicit language (stage 4a: a call's own language, not cfg.voiceLang). */
+export const sayIn = (lang: string, text: string): string => (lang === 'he' ? `<Say voice="Google.he-IL-Wavenet-A" language="he-IL">${esc(text)}</Say>` : `<Say language="en-US">${esc(text)}</Say>`);
 const T = {
   he: { pin: 'שלום. הקישו את הקוד ואז סולמית.', again: 'קוד שגוי. נסו שוב ואז סולמית.', locked: 'יותר מדי ניסיונות. נסו שוב בעוד רבע שעה.', noInput: 'לא התקבל קוד. להתראות.', noPin: 'לא הוגדר קוד. הגדירו אותו בהגדרות קול וטלפון.', off: 'שכבת הקול כבויה.', budget: 'תקרת התקציב החודשית הושגה. להתראות.', noProvider: 'אין ספק קול מחובר.', busy: 'שיחה אחרת פעילה כרגע. להתראות.', connected: 'מחובר.', bye: 'השיחה הסתיימה. להתראות.' },
   en: { pin: 'Hello. Enter your code, then pound.', again: 'Wrong code. Try again, then pound.', locked: 'Too many attempts. Try again in fifteen minutes.', noInput: 'No code received. Goodbye.', noPin: 'No PIN is set. Set one under Voice and phone settings.', off: 'The voice layer is switched off.', budget: 'This month\'s budget cap is reached. Goodbye.', noProvider: 'No voice provider is connected.', busy: 'Another call is live right now. Goodbye.', connected: 'Connected.', bye: 'The call has ended. Goodbye.' },

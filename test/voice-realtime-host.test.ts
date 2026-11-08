@@ -127,7 +127,7 @@ test('the clerk over HTTP: mint without the key, tools through the host, transcr
   expect(JSON.stringify(mint.json)).not.toContain(KEY);
   expect(minted[0].auth).toBe(`Bearer ${KEY}`);
   expect(minted[0].body.session.model).toBe('gpt-realtime-2.1');
-  expect(minted[0].body.session.tools.length).toBe(7);
+  expect(minted[0].body.session.tools.length).toBe(8); // + call_contact (stage 4a)
   expect(minted[0].body.session.instructions).toContain("team of agents (list_agents): צ'יף (chief).");
   const call = mint.json.callId;
 

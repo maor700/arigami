@@ -227,6 +227,9 @@ export interface TelephonyConfig {
   ownerNumber: string; // E.164 or ''
   pinHash: string; // 'scrypt$<salt>$<hash>' or ''
   publicUrl?: string; // overrides cfg.publicUrl / the Funnel host for the webhook URLs
+  number?: string; // stage 4a: the agent's own Twilio number (E.164) — From for calls and SMS
+  callerIds?: { number: string; sid?: string; verifiedAt?: string }[]; // stage 4a: Twilio-verified caller IDs (the owner's own number)
+  outbound?: Record<string, unknown>; // stage 4a: calls/SMS to others — see OUTBOUND_DEFAULTS in server/voice-outbound.ts
 }
 
 export interface NotifyConfig {
