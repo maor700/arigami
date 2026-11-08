@@ -36,7 +36,7 @@ export interface OutboundConfig {
   maxSmsPerDay: number;
   allowTransfer: boolean;
   askOwnerSeconds: number;
-  defaultCountry: string; // local 05x… → +<country>5x…
+  defaultCountry: string; // '' = full numbers only; e.g. '972' turns 05x… into +9725x…
   quiet: QuietConfig;
 }
 export const OUTBOUND_DEFAULTS: OutboundConfig = {
@@ -49,9 +49,10 @@ export const OUTBOUND_DEFAULTS: OutboundConfig = {
   maxSmsPerDay: 10,
   allowTransfer: true,
   askOwnerSeconds: 60,
-  defaultCountry: '972',
-  quiet: { start: '21:00', end: '08:00', shabbat: true, timezone: 'Asia/Jerusalem', lat: 31.778, lon: 35.235, extraDates: [] },
+  defaultCountry: '',
+  quiet: { start: '21:00', end: '08:00', shabbat: false, timezone: hostTimezone(), lat: 31.778, lon: 35.235, extraDates: [] }, // shabbat: opt-in per instance; lat/lon = its candle-lighting reference
 };
+function hostTimezone(): string { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; } catch { return 'UTC'; } }
 export function outboundSettings(): OutboundConfig {
   const o = (cfg.telephony?.outbound || {}) as Partial<OutboundConfig>;
   return { ...OUTBOUND_DEFAULTS, ...o, disclosure: { ...OUTBOUND_DEFAULTS.disclosure, ...(o.disclosure || {}) }, quiet: { ...OUTBOUND_DEFAULTS.quiet, ...(o.quiet || {}) } };
@@ -163,7 +164,7 @@ export function resolveRecipient(to: unknown, dbPath?: string): Recipient {
   if (!raw) return { error: 'to required: a contact name or a phone number' };
   const n = normalizeNumber(raw);
   if (n) return { number: n, name: raw.replace(/[\d\s+\-().]/g, '') ? raw : '' };
-  if (/^\+?[\d\s\-().]+$/.test(raw)) return { error: `"${raw}" is not a full phone number — ask the owner for it` };
+  if (/^\+?[\d\s\-().]+$/.test(raw)) return { error: `"${raw}" is not a full international number (+…) — ask the owner for it, or set the default country code in Settings` };
   const db = dbPath || waDbPath();
   if (!db || !fs.existsSync(db)) return { error: `no number known for "${raw}" (WhatsApp contacts unavailable) — ask the owner for the number` };
   const hits = new Map<string, string>();
@@ -257,7 +258,7 @@ export function prepareCall(body: Record<string, unknown>, o: { origin?: 'agent'
   const cid = resolveCallerId(body.caller_id);
   if ('error' in cid) return { ok: false, error: `refused: ${cid.error}` };
   const s = outboundSettings();
-  const lang = body.language === 'en' ? 'en' : body.language === 'he' ? 'he' : cfg.voiceLang === 'en' ? 'en' : 'he';
+  const lang = body.language === 'en' || body.language === 'he' ? body.language : cfg.voiceLang === 'he' ? 'he' : 'en';
   return { ok: true, args: { to: r.number, name: r.name, goal, brief, from: cid.from, callerKind: cid.kind, language: lang, voicemail: str(body.voicemail, 400), amd: s.amd, maxMinutes: s.maxMinutes, usdPerMin: Math.round(callUsdPerMin() * 1000) / 1000, origin: o.origin || 'agent' } };
 }
 export function prepareSms(body: Record<string, unknown>, o: { now?: number; dbPath?: string } = {}): { ok: true; args: SmsArgs } | Refusal {
@@ -275,7 +276,7 @@ export function prepareSms(body: Record<string, unknown>, o: { now?: number; dbP
 }
 /** The card text: everything the call will do, nothing paraphrased later. */
 export function callCardText(a: CallArgs, why?: string): string {
-  const he = cfg.voiceLang !== 'en';
+  const he = cfg.voiceLang === 'he';
   const who = a.name ? `${a.name} (${a.to})` : a.to;
   const cid = a.callerKind === 'agent' ? (he ? `מספר הסוכן ${a.from}` : `the agent's number ${a.from}`) : he ? `המספר שלך ${a.from}` : `your number ${a.from}`;
   const amd = a.amd === 'voicemail' ? (he ? 'להשאיר הודעה קצרה' : 'leave a short message') : a.amd === 'hangup' ? (he ? 'לנתק' : 'hang up') : he ? 'ללא זיהוי' : 'no detection';
@@ -286,7 +287,7 @@ export function callCardText(a: CallArgs, why?: string): string {
   return lines.join('\n');
 }
 export function smsCardText(a: SmsArgs, why?: string): string {
-  const he = cfg.voiceLang !== 'en';
+  const he = cfg.voiceLang === 'he';
   const who = a.name ? `${a.name} (${a.to})` : a.to;
   return (he ? [`💬 לשלוח SMS ל-${who}?`, ...(why ? [`למה: ${why}`] : []), '', a.text, '', `מ-${a.from} · ${a.segments} הודעות · ${usd(a.estUsd)}`] : [`💬 Send an SMS to ${who}?`, ...(why ? [`Why: ${why}`] : []), '', a.text, '', `From ${a.from} · ${a.segments} segment(s) · ${usd(a.estUsd)}`]).join('\n');
 }
@@ -573,7 +574,7 @@ export function handleInboundSms(params: Params, h: SmsSinkHost | null): string 
   if (STOP_RE.test(body)) { setOptOut(from, true); tag = 'opt-out'; }
   else if (START_RE.test(body)) { setOptOut(from, false); tag = 'opt-in'; }
   try { (h?.receive || defaultReceive)(from, body); } catch (e) { console.error('[voice-outbound] sms store failed:', (e as Error).message); }
-  const he = cfg.voiceLang !== 'en';
+  const he = cfg.voiceLang === 'he';
   const note = tag === 'opt-out' ? (he ? '\n\n_ביקש/ה לא לקבל יותר הודעות ושיחות — נחסם._' : '\n\n_Asked to stop — no more calls or SMS to this number._') : tag === 'opt-in' ? (he ? '\n\n_ביטל/ה את החסימה._' : '\n\n_Opted back in._') : '';
   try { h?.appendChat(h.voiceHome().id, { kind: 'ext-card', extension: 'voice', title: `💬 SMS ${he ? 'מ-' : 'from '}${from}`, body: body + note, voice: { channel: 'sms', from, ...(tag ? { event: tag } : {}) } }); }
   catch (e) { console.error('[voice-outbound] sms card failed:', (e as Error).message); }
@@ -584,7 +585,7 @@ function defaultReceive(from: string, body: string): void { (require('./sms.js')
 // ---- caller-ID verification (Twilio OutgoingCallerIds) — the owner types the code on his phone; never auto-answered ----------------
 export async function startCallerIdVerification(number: unknown, fetchImpl?: typeof fetch): Promise<{ ok: true; code: string; number: string } | { ok: false; error: string }> {
   const n = normalizeNumber(number || cfg.telephony?.ownerNumber);
-  if (!n) return { ok: false, error: 'a number in international format is required (+9725…)' };
+  if (!n) return { ok: false, error: 'a number in international format is required (+…)' };
   const r = await twilioRequest('POST', 'OutgoingCallerIds.json', new URLSearchParams({ PhoneNumber: n, FriendlyName: 'Arigami owner' }), fetchImpl || fetcher);
   if (!r.ok) return { ok: false, error: r.error };
   const code = String(r.json.validation_code || '');
@@ -593,7 +594,7 @@ export async function startCallerIdVerification(number: unknown, fetchImpl?: typ
 }
 export async function checkCallerIdVerification(number: unknown, fetchImpl?: typeof fetch): Promise<{ ok: true; verified: boolean; number: string } | { ok: false; error: string }> {
   const n = normalizeNumber(number || cfg.telephony?.ownerNumber);
-  if (!n) return { ok: false, error: 'a number in international format is required (+9725…)' };
+  if (!n) return { ok: false, error: 'a number in international format is required (+…)' };
   const r = await twilioRequest('GET', 'OutgoingCallerIds.json', new URLSearchParams({ PhoneNumber: n }), fetchImpl || fetcher);
   if (!r.ok) return { ok: false, error: r.error };
   const hit = (Array.isArray(r.json.outgoing_caller_ids) ? r.json.outgoing_caller_ids : []).find((x: any) => String(x?.phone_number || '') === n);
@@ -605,7 +606,7 @@ export async function checkCallerIdVerification(number: unknown, fetchImpl?: typ
 }
 
 // ---- Settings → Voice & phone → outbound -----------------------------------------------------------------------------------------
-// The numbers on the Twilio account (the local one, the 053 mobile…) — Settings picks the agent's number from these.
+// The numbers on the Twilio account (several numbers possible) — Settings picks the agent's number from these.
 export interface AccountNumber { number: string; name: string; voice: boolean; sms: boolean }
 let numbersCache: { at: number; list: AccountNumber[] } | null = null;
 export async function listAccountNumbers(fetchImpl?: typeof fetch, now = Date.now()): Promise<AccountNumber[]> {
@@ -645,9 +646,11 @@ export function updateOutbound(body: Record<string, unknown>, base = ''): Record
     if (s.maxCallsPerDay !== undefined) next.maxCallsPerDay = int(s.maxCallsPerDay, 0, 100, 'maxCallsPerDay');
     if (s.maxSmsPerDay !== undefined) next.maxSmsPerDay = int(s.maxSmsPerDay, 0, 200, 'maxSmsPerDay');
     if (s.allowTransfer !== undefined) next.allowTransfer = s.allowTransfer === true;
+    if (s.defaultCountry !== undefined) { const c = String(s.defaultCountry || '').replace(/^\+/, ''); if (!/^\d{0,3}$/.test(c)) throw new Error('defaultCountry is 1–3 digits or empty'); next.defaultCountry = c; }
     if (s.quiet) {
       for (const k of ['start', 'end'] as const) if (s.quiet[k] !== undefined) { if (!HM_RE.test(String(s.quiet[k]))) throw new Error(`quiet.${k} must be HH:MM`); next.quiet[k] = String(s.quiet[k]); }
       if (s.quiet.shabbat !== undefined) next.quiet.shabbat = s.quiet.shabbat === true;
+      if (s.quiet.timezone !== undefined) { const tz = String(s.quiet.timezone || '').trim(); try { new Intl.DateTimeFormat('en-US', { timeZone: tz }); } catch { throw new Error('quiet.timezone must be an IANA zone, e.g. Europe/London'); } if (!tz) throw new Error('quiet.timezone required'); next.quiet.timezone = tz; }
     }
     patch.outbound = next;
   }

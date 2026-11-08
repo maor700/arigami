@@ -72,6 +72,9 @@ function waDb(): string {
 setProviderSecret('telephony:twilio', { sid: SID, token: TOKEN });
 setProviderSecret('voice:gemini', { token: 'AIza-test-gemini-key-outbound' });
 updateTelephonyConfig({ ownerNumber: OWNER, pinHash: vp.hashPin('4321'), publicUrl: BASE, number: AGENT });
+// an instance that opted in: Hebrew, local numbers, Shabbat/holidays, Israel time (none of these are the generic defaults)
+(cfg as any).voiceLang = 'he';
+updateTelephonyConfig({ outbound: { ...vo.outboundSettings(), defaultCountry: '972', quiet: { ...vo.outboundSettings().quiet, shabbat: true, timezone: 'Asia/Jerusalem' } } });
 
 // ---- filing: validation, refusals, the card; nothing dials ---------------------------------------------------------------
 async function file(): Promise<void> {

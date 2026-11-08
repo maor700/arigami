@@ -50,6 +50,8 @@ test('with a view: number, caller ID (owner disabled until verified), verify but
     expect(html).toContain('value="08:00"');
     expect(html).toContain('data-outbound-shabbat="1"');
     expect(html).toContain('data-outbound-transfer="1"');
+    expect(html).toContain('value="Asia/Jerusalem"');
+    expect(html).toContain('value="972"');
     expect(html).toContain(lang === 'he' ? 'היום: 1/5 שיחות · 2/10 SMS' : 'Today: 1/5 calls · 2/10 SMS');
     expect(html).not.toContain('data-outbound-quiet=');
     expect(html).not.toMatch(/settings\.connections\.outbound[a-zA-Z.]*/);

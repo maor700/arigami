@@ -25,6 +25,7 @@ function scenario(name: string): any {
   return j.out;
 }
 const S = (patch: Partial<typeof OUTBOUND_DEFAULTS> = {}) => ({ ...OUTBOUND_DEFAULTS, ...patch, quiet: { ...OUTBOUND_DEFAULTS.quiet, ...(patch.quiet || {}) } });
+const ILQ = { ...OUTBOUND_DEFAULTS.quiet, shabbat: true, timezone: 'Asia/Jerusalem' }; // an instance that opted in
 const il = (y: number, m: number, d: number, hh: number, mm = 0) => Date.UTC(y, m - 1, d, hh - 2, mm); // Israel winter time (UTC+2)
 
 describe('pure', () => {
@@ -35,8 +36,9 @@ describe('pure', () => {
     expect(normalizeNumber('972520000001', '972')).toBe('+972520000001');
     for (const x of ['0521', 'Dana', '', '5211122', '+0123456789']) expect([x, normalizeNumber(x, '972')]).toEqual([x, '']);
   });
-  test('quiet: 21:00–08:00, Shabbat from candle-lighting to after nightfall, Yom Tov from its eve; a weekday noon is open', () => {
-    const s = S();
+  test('quiet: 21:00–08:00; Shabbat (opt-in) from candle-lighting to after nightfall, Yom Tov from its eve; a weekday noon is open', () => {
+    expect([OUTBOUND_DEFAULTS.quiet.shabbat, OUTBOUND_DEFAULTS.defaultCountry]).toEqual([false, '']); // generic defaults: no personal observance or country
+    const s = S({ quiet: ILQ });
     expect(quietReason(il(2026, 11, 10, 12), s)).toBe('');
     expect(quietReason(il(2026, 11, 10, 21, 30), s)).toBe('quiet hours (21:00–08:00)');
     expect(quietReason(il(2026, 11, 10, 7, 59), s)).toBe('quiet hours (21:00–08:00)');
@@ -46,8 +48,8 @@ describe('pure', () => {
     expect(quietReason(il(2026, 11, 14, 17, 45), s)).toBe(''); // after nightfall
     expect(quietReason(Date.UTC(2027, 9, 11, 9), s)).toBe('Yom Kippur'); // 12:00 IDT
     expect(quietReason(Date.UTC(2027, 9, 10, 16, 30), s)).toBe('Yom Kippur'); // its eve, 19:30 IDT — after candles
-    expect(quietReason(il(2026, 11, 14, 11), S({ quiet: { ...OUTBOUND_DEFAULTS.quiet, shabbat: false } }))).toBe('');
-    expect(quietReason(il(2026, 11, 10, 12), S({ quiet: { ...OUTBOUND_DEFAULTS.quiet, extraDates: ['2026-11-10'] } }))).toBe('a holiday');
+    expect(quietReason(il(2026, 11, 14, 11), S({ quiet: { ...ILQ, shabbat: false } }))).toBe('');
+    expect(quietReason(il(2026, 11, 10, 12), S({ quiet: { ...ILQ, extraDates: ['2026-11-10'] } }))).toBe('a holiday');
     expect(Object.keys(HOLIDAYS).every((d) => /^\d{4}-\d\d-\d\d$/.test(d))).toBe(true);
   });
   test('sunset: Jerusalem ≈ 16:40 in mid-November, ≈ 19:48 in late June (local)', () => {

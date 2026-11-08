@@ -118,7 +118,7 @@ const actionOf = async (id: string) => (await api('GET', `/__api/sessions/${id}`
 test('outbound settings → call card → Don\'t send / Send → fake Twilio → signed TwiML + status → outcome card; SMS both ways; caller-ID code', async () => {
   expect((await api('POST', '/__api/voice/phone', { ownerNumber: OWNER, publicUrl: PUB })).status).toBe(200);
   // quiet hours off so the test does not depend on the clock / Shabbat
-  const view = (await api('POST', '/__api/voice/outbound', { number: AGENT, settings: { ownerName: 'דני', quiet: { start: '00:00', end: '00:00', shabbat: false } } })).json;
+  const view = (await api('POST', '/__api/voice/outbound', { number: AGENT, settings: { ownerName: 'דני', defaultCountry: '972', quiet: { start: '00:00', end: '00:00', shabbat: false, timezone: 'Asia/Jerusalem' } } })).json;
   expect(view).toMatchObject({ smsUrl: PUB + TWILIO_SMS_PATH, number: AGENT, settings: { ownerName: 'דני', callerId: 'agent', amd: 'voicemail', maxMinutes: 10 } });
   expect((await api('POST', '/__api/voice/outbound', { settings: { amd: 'nope' } })).status).toBe(400);
   const sid = (await api('POST', '/__api/sessions', { title: 'calls', cwd: path.join(dir, 'workspace') })).json.id;
