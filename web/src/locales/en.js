@@ -209,6 +209,7 @@ export const en = {
   'settings.connections.outbound.number': "Agent's number",
   'settings.connections.outbound.number.hint': 'The Twilio number calls and SMS go out from (any number on your Twilio account).',
   'settings.connections.outbound.smsUrl': 'Twilio console: your number → Messaging → "A message comes in" = Webhook, POST, this URL.',
+  'settings.connections.outbound.number.pick': 'Choose a number…',
   'settings.connections.outbound.callerId': 'Default caller ID',
   'settings.connections.outbound.callerId.hint': 'Who the other side sees. Your own number needs verification first; a call back then rings your phone, not the agent.',
   'settings.connections.outbound.callerId.agent': "The agent's number",

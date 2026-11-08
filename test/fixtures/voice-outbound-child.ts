@@ -39,6 +39,7 @@ const stubFetch = (async (input: any, init: any = {}) => {
   const json = (o: unknown, status = 200) => new Response(JSON.stringify(o), { status, headers: { 'content-type': 'application/json' } });
   if (url.includes('/Calls.json')) return json({ sid: callSid(++n + 100), status: 'queued' }, 201);
   if (url.includes('/Messages.json')) return json({ sid: 'SM' + '1'.repeat(32), status: 'queued' }, 201);
+  if (url.includes('/IncomingPhoneNumbers.json')) return json({ incoming_phone_numbers: [{ phone_number: AGENT, friendly_name: 'local', capabilities: { voice: true, sms: false } }, { phone_number: '+972530000000', friendly_name: '053 mobile', capabilities: { voice: true, sms: true } }, { phone_number: 'junk' }] });
   if (url.includes('/OutgoingCallerIds.json') && init.method === 'POST') return json({ phone_number: params.PhoneNumber?.[0], validation_code: '482913', call_sid: callSid(999) }, 201);
   if (url.includes('/OutgoingCallerIds.json')) return json({ outgoing_caller_ids: verifiedAtTwilio ? [{ phone_number: OWNER, sid: 'PN' + '2'.repeat(32) }] : [] });
   return json({});
@@ -162,6 +163,10 @@ async function place(): Promise<void> {
   out.verifyCheckReq = reqs[reqs.length - 1];
   out.callerIdsAfter = cfg.telephony.callerIds;
   out.view = vo.outboundView(NOON);
+  out.accountNumbers = await vo.listAccountNumbers(stubFetch, NOON);
+  out.numbersReq = reqs[reqs.length - 1];
+  vo.updateOutbound({ number: '+972530000000' });
+  out.switched = vo.prepareSms({ to: '+972521112222', text: 'x' }, { now: NOON });
   const bad: string[] = [];
   for (const b of [{ number: '12' }, { settings: { amd: 'x' } }, { settings: { maxMinutes: 0 } }, { settings: { quiet: { start: '25:00' } } }, { settings: { disclosure: { he: '' } } }]) { try { vo.updateOutbound(b); bad.push('accepted'); } catch (e) { bad.push((e as Error).message); } }
   out.badUpdates = bad;

@@ -4607,7 +4607,7 @@ export async function handle(
       let funnelHost = '';
       try { funnelHost = String(((await import('./remote.js')) as any).remoteStatus().hostname || ''); } catch { /* no tailscale */ }
       const obBase = (await import('./voice-phone.js')).publicBase(null, funnelHost);
-      if (m === 'GET') return json(res, vo.outboundView(Date.now(), obBase));
+      if (m === 'GET') return json(res, { ...vo.outboundView(Date.now(), obBase), accountNumbers: await vo.listAccountNumbers().catch(() => []) });
       const body = ((await readBody(req)) || {}) as Record<string, unknown>;
       if (p.endsWith('/caller-id')) {
         const r = body.action === 'check' ? await vo.checkCallerIdVerification(body.number) : await vo.startCallerIdVerification(body.number);

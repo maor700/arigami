@@ -197,6 +197,11 @@ describe('Send (child, stubbed Twilio)', () => {
     expect(o.verifyCheckReq.method).toBe('GET');
     expect(o.callerIdsAfter.map((c: any) => c.number)).toEqual(['+972500000000']);
   });
+  test('number-agnostic: the account\'s numbers are listed for the picker; switching the agent number moves From', () => {
+    expect(o.accountNumbers).toEqual([{ number: '+97233000000', name: 'local', voice: true, sms: false }, { number: '+972530000000', name: '053 mobile', voice: true, sms: true }]);
+    expect(o.numbersReq.url).toContain('/IncomingPhoneNumbers.json?PageSize=50');
+    expect(o.switched.args.from).toBe('+972530000000');
+  });
   test('settings: validated; the view has the number, caller IDs, settings, today', () => {
     expect(o.badUpdates.every((x: string) => x !== 'accepted')).toBe(true);
     expect(o.updated).toMatchObject({ ownerName: 'מאור', maxMinutes: 5, quiet: { start: '22:00', end: '08:00', shabbat: true } });

@@ -56,6 +56,15 @@ test('with a view: number, caller ID (owner disabled until verified), verify but
   }
 });
 
+test('with the account\'s numbers: a picker instead of the text field, the current one selected', () => {
+  prefs.setPrefs({ language: 'en' });
+  const html = render(h(OutboundSetup, { admin: true, tick: 'x', initial: { ...VIEW, accountNumbers: [{ number: '+97233000000', name: 'local', voice: true, sms: false }, { number: '+972530000000', name: '053 mobile', voice: true, sms: true }] } }));
+  expect(html).toContain('data-outbound-number-pick');
+  expect(html).not.toContain('data-outbound-number=');
+  expect(html).toContain('+972530000000 · 053 mobile');
+  expect(html).toMatch(/<option value="\+97233000000" selected="">/);
+});
+
 test('a verified owner number is listed and selectable; quiet-now line shows the reason', () => {
   prefs.setPrefs({ language: 'en' });
   const html = render(h(OutboundSetup, { admin: true, tick: 'x', initial: { ...VIEW, callerIds: [{ number: '+972500000000', verifiedAt: '2026-11-08T00:00:00Z' }], quietNow: 'Shabbat' } }));
