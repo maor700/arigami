@@ -253,7 +253,7 @@ Call `requireVoiceProvider(kind)` first and return its non-ok shapes as the tool
 - **SMS**: Send → `POST Messages.json` from the agent's number, cost `$0.2575`/segment (70 Hebrew / 160 GSM chars) in the ledger. Inbound on
   `…/twilio/sms` (signed) → a card in the **Voice calls** session + the sms store (sms listeners wake). `STOP`/`הסר`/… opts the number out
   of calls and SMS; `START` lifts it; no auto-reply.
-- **Caller ID**: `telephony.number` (the agent's Twilio number — any number on the account) or the owner's own number once verified:
+- **Caller ID**: `telephony.number` (the agent's number — Settings lists the account's numbers via `IncomingPhoneNumbers.json`, e.g. the local one and the 053 mobile) or the owner's own number once verified:
   Settings → *Verify my number as caller ID* → `POST OutgoingCallerIds.json`, the 6-digit code is shown and the owner types it on his phone
   (never answered by the host); *I typed it — check* / a 5 s poll lists it into `telephony.callerIds`. A call back to the owner's caller ID
   rings his phone, not the agent.

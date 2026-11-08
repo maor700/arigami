@@ -208,6 +208,7 @@ export const he = {
   'settings.connections.outbound.number': 'המספר של הסוכן',
   'settings.connections.outbound.number.hint': 'מספר ה-Twilio שממנו יוצאות שיחות ו-SMS (כל מספר בחשבון Twilio שלך).',
   'settings.connections.outbound.smsUrl': 'בקונסולת Twilio: המספר → Messaging → "A message comes in" = Webhook, POST, הכתובת הזו.',
+  'settings.connections.outbound.number.pick': 'בחר מספר…',
   'settings.connections.outbound.callerId': 'מזהה מתקשר ברירת מחדל',
   'settings.connections.outbound.callerId.hint': 'מה הצד השני רואה. המספר שלך דורש אימות קודם; החזרת שיחה תגיע אז לטלפון שלך, לא לסוכן.',
   'settings.connections.outbound.callerId.agent': 'המספר של הסוכן',

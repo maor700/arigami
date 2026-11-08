@@ -186,7 +186,7 @@ export function OutboundSetup({ admin, tick, initial = null }) {
   const set = (k) => (e) => setDraft((x) => ({ ...x, [k]: e.target.value }));
   const post = async (body) => {
     setBusy(true); setErr('');
-    try { setView(await api.post('/voice/outbound', body)); setDraft({}); }
+    try { const v = await api.post('/voice/outbound', body); setView((cur) => ({ ...v, accountNumbers: cur?.accountNumbers })); setDraft({}); }
     catch (e) { setErr(String(e?.message || e)); }
     finally { setBusy(false); }
   };
@@ -214,7 +214,13 @@ export function OutboundSetup({ admin, tick, initial = null }) {
       <div className="text-xs text-fgdim" data-outbound-today>{t('settings.connections.outbound.today', { calls: view.today?.calls || 0, maxCalls: s.maxCallsPerDay, sms: view.today?.sms || 0, maxSms: s.maxSmsPerDay })}</div>
       <Field label={t('settings.connections.outbound.number')} hint={t('settings.connections.outbound.number.hint')}>
         <span className="flex items-center gap-2">
-          <input dir="ltr" type="tel" placeholder="+972…" className={`${INPUT} w-44`} value={val('number', view.number || '')} disabled={!admin || busy} onChange={set('number')} data-outbound-number />
+          {view.accountNumbers?.length ? (
+            <select dir="ltr" className={INPUT} value={view.number || ''} disabled={!admin || busy} onChange={(e) => post({ number: e.target.value })} data-outbound-number-pick>
+              <option value="">{t('settings.connections.outbound.number.pick')}</option>
+              {view.accountNumbers.map((n) => <option key={n.number} value={n.number}>{n.number}{n.name && n.name !== n.number ? ` · ${n.name}` : ''}{n.sms ? '' : ' · no SMS'}</option>)}
+              {view.number && !view.accountNumbers.some((n) => n.number === view.number) && <option value={view.number}>{view.number}</option>}
+            </select>
+          ) : <input dir="ltr" type="tel" placeholder="+972…" className={`${INPUT} w-44`} value={val('number', view.number || '')} disabled={!admin || busy} onChange={set('number')} data-outbound-number />}
           {draft.number !== undefined && draft.number !== (view.number || '') && <button type="button" className={BTN_PRIMARY} disabled={busy} onClick={() => post({ number: draft.number })}>{t('settings.connections.phone.save')}</button>}
         </span>
       </Field>

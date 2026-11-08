@@ -603,6 +603,20 @@ export async function checkCallerIdVerification(number: unknown, fetchImpl?: typ
 }
 
 // ---- Settings → Voice & phone → outbound -----------------------------------------------------------------------------------------
+// The numbers on the Twilio account (the local one, the 053 mobile…) — Settings picks the agent's number from these.
+export interface AccountNumber { number: string; name: string; voice: boolean; sms: boolean }
+let numbersCache: { at: number; list: AccountNumber[] } | null = null;
+export async function listAccountNumbers(fetchImpl?: typeof fetch, now = Date.now()): Promise<AccountNumber[]> {
+  if (numbersCache && now - numbersCache.at < 60_000) return numbersCache.list;
+  const r = await twilioRequest('GET', 'IncomingPhoneNumbers.json', new URLSearchParams({ PageSize: '50' }), fetchImpl || fetcher);
+  if (!r.ok) return [];
+  const list = (Array.isArray(r.json.incoming_phone_numbers) ? r.json.incoming_phone_numbers : [])
+    .map((x: any) => ({ number: String(x?.phone_number || ''), name: String(x?.friendly_name || ''), voice: x?.capabilities?.voice !== false, sms: x?.capabilities?.sms === true }))
+    .filter((x: AccountNumber) => E164_RE.test(x.number));
+  numbersCache = { at: now, list };
+  return list;
+}
+export const __clearNumbersCache = (): void => { numbersCache = null; };
 export function outboundView(now = Date.now(), base = ''): Record<string, unknown> {
   return { smsUrl: base ? base + TWILIO_SMS_PATH : '', number: cfg.telephony?.number || '', callerIds: cfg.telephony?.callerIds || [], settings: outboundSettings(), today: usageToday(now), optOuts: readState().optOut.length, quietNow: quietReason(now), live: liveOutboundCalls(), usdPerMin: Math.round(callUsdPerMin() * 1000) / 1000, smsUsd: TWILIO_SMS_USD };
 }
