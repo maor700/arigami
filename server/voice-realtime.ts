@@ -38,7 +38,8 @@ export const CLERK_INSTRUCTIONS =
   'Everything about sessions comes from the tools; never invent a session, a status or a result. ' +
   "Before a tool that takes time (ask_session, create_session) say a short 'רגע, בודק' (or 'one moment, checking'), then report what came back, summarized. " +
   "If a tool answers 'still working', say so and offer to check again later. Refer to sessions by title, never read ids aloud. " +
-  'You cannot send anything to other people, merge, delete, or do work yourself: offer only what a tool can do.';
+  'You cannot merge, delete, or do work yourself: offer only what a tool can do. ' +
+  'To phone another person for the owner use call_contact: it only puts a card in the app, the owner presses Send there — say so; never guess a number, ask for it.';
 // The owner's team (agents) the clerk may hand work to by voice: ask_agent / create_session({agent}); names arrive by ASR, so confirm when unsure.
 export const TEAM_INSTRUCTIONS =
   ' The owner also has a team of agents (list_agents): {team}. "תן ל-X", "תבקש מ-X", "מה X עושה" or "ask X" mean that agent: ' +
@@ -64,13 +65,15 @@ export const CLERK_TOOLS = [
   { type: 'function', name: 'create_session', description: 'Start a new work session with a title and its first instruction; with agent, the session is born from that team member (its persona, engine and permissions).', parameters: { type: 'object', properties: { title: { type: 'string', description: 'A short title' }, prompt: { type: 'string', description: 'The first instruction for the agent' }, agent: { type: 'string', description: 'Optional: the team member (slug or spoken name) the session is born from' } }, required: ['title', 'prompt'] } },
   { type: 'function', name: 'ask_agent', description: "Ask or task a team member by name: reuses its most recent idle session (or opens one) and waits up to 90 seconds for the answer. Returns the final text, or 'still working' with what it said so far.", parameters: { type: 'object', properties: { agent: { type: 'string', description: 'The team member: slug or spoken name (צ\'יף, chief, קשר, סטודיו, astra, נדל"ן…)' }, prompt: { type: 'string', description: 'What to ask or tell the agent, in full sentences' } }, required: ['agent', 'prompt'] } },
   { type: 'function', name: 'interrupt_session', description: "Stop what a session's agent is doing right now.", parameters: { type: 'object', properties: idParam, required: ['id'] } },
+  { type: 'function', name: 'call_contact', description: 'Stage 4a: ask the owner to approve a phone call you place to ANOTHER person on their behalf. Files a card in the app (recipient, goal, brief, caller ID, cost); nothing dials until the owner presses Send there. to = a WhatsApp contact name or a full phone number — never guess a number; if unknown, ask.', parameters: { type: 'object', properties: { to: { type: 'string', description: 'Contact name or phone number (+9725…)' }, goal: { type: 'string', description: 'One sentence: what the call should achieve' }, brief: { type: 'string', description: 'What the caller may say and agree to, in full sentences' }, caller_id: { type: 'string', description: 'Optional: "agent" or "owner"' }, language: { type: 'string', description: 'Optional: he or en' } }, required: ['to', 'goal', 'brief'] } },
 ] as const;
 export type ClerkToolName = (typeof CLERK_TOOLS)[number]['name'];
 const TOOL_NAMES = new Set<string>(CLERK_TOOLS.map((t) => t.name));
 
 // ---- live calls (in memory; a host restart forgets them) ----
 export interface Turn { role: 'user' | 'assistant'; text: string; id?: string }
-interface Call { id: string; sessionId: string; contextSessionId?: string | null; provider: string; model: string; lang: string; startedAt: number; lastSeen: number; turns: Turn[]; tools: number; channel?: 'phone' }
+export type CallChannel = 'phone' | 'phone-out';
+interface Call { id: string; sessionId: string; contextSessionId?: string | null; provider: string; model: string; lang: string; startedAt: number; lastSeen: number; turns: Turn[]; tools: number; channel?: CallChannel }
 const calls = new Map<string, Call>();
 export const liveCall = (callId: string): Readonly<Call> | null => calls.get(callId) || null;
 export const liveCallCount = (): number => calls.size;
@@ -107,13 +110,14 @@ export function clerkInstructions(context: ClerkContext | null = null, team: rea
 export const PHONE_INSTRUCTIONS = ' The owner is calling by phone: there is no screen, so keep every answer to one short sentence and never spell out ids or URLs.';
 export const phoneInstructions = (team: readonly AgentLite[] | null = null, lang: string = voiceLang()): string => CLERK_INSTRUCTIONS + langInstructions(lang) + teamInstructions(team) + PHONE_INSTRUCTIONS;
 
-export function geminiSetup({ model = geminiModel(), voice = geminiVoice(), handle = '', context = null as ClerkContext | null, instructions = '', lang = voiceLang() } = {}): Record<string, unknown> {
+export type ToolDef = { type: 'function'; name: string; description: string; parameters: Record<string, unknown> };
+export function geminiSetup({ model = geminiModel(), voice = geminiVoice(), handle = '', context = null as ClerkContext | null, instructions = '', lang = voiceLang(), tools = CLERK_TOOLS as readonly ToolDef[] } = {}): Record<string, unknown> {
   const blocking = /^gemini-3\.8-live$/.test(model); // 3.8-live defaults to NON_BLOCKING; the clerk waits for its tools
   return {
     model: `models/${model}`,
     generationConfig: { responseModalities: ['AUDIO'], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } }, languageCode: speechLang(lang) } },
     systemInstruction: { parts: [{ text: instructions || clerkInstructions(context, null, lang) }] },
-    tools: [{ functionDeclarations: CLERK_TOOLS.map((t) => ({ name: t.name, description: t.description, parameters: t.parameters, ...(blocking ? { behavior: 'BLOCKING' } : {}) })) }],
+    tools: [{ functionDeclarations: tools.map((t) => ({ name: t.name, description: t.description, parameters: t.parameters, ...(blocking ? { behavior: 'BLOCKING' } : {}) })) }],
     realtimeInputConfig: { automaticActivityDetection: {}, activityHandling: 'START_OF_ACTIVITY_INTERRUPTS' },
     inputAudioTranscription: {},
     outputAudioTranscription: {},
@@ -124,7 +128,7 @@ export function geminiSetup({ model = geminiModel(), voice = geminiVoice(), hand
 export const geminiWsUrl = (): string => `${geminiBase().replace(/^http/, 'ws')}/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained`;
 
 /** The session config sent to OpenAI (pure; tests read it). */
-export function realtimeSessionConfig({ model = realtimeModel(), voice = realtimeVoice(), lang = voiceLang(), context = null as ClerkContext | null, instructions = '' } = {}): Record<string, unknown> {
+export function realtimeSessionConfig({ model = realtimeModel(), voice = realtimeVoice(), lang = voiceLang(), context = null as ClerkContext | null, instructions = '', tools = CLERK_TOOLS as readonly ToolDef[] } = {}): Record<string, unknown> {
   return {
     type: 'realtime',
     model,
@@ -134,7 +138,7 @@ export function realtimeSessionConfig({ model = realtimeModel(), voice = realtim
       input: { transcription: { model: 'gpt-4o-transcribe', ...(lang ? { language: lang } : {}) }, turn_detection: { type: 'server_vad', create_response: true, interrupt_response: true } },
       output: { voice },
     },
-    tools: CLERK_TOOLS,
+    tools,
     tool_choice: 'auto',
   };
 }
@@ -228,7 +232,7 @@ async function mintGemini(token: string, f: typeof fetch, now: () => number = Da
 }
 
 /** Stage 2: a call the host opens itself (the phone bridge) — same map, tools, transcript and ledger as a browser call; no mint. */
-export function openHostCall(o: { sessionId: string; provider: string; model: string; lang?: string; channel?: 'phone'; now?: () => number }): { callId: string } | { busy: true } {
+export function openHostCall(o: { sessionId: string; provider: string; model: string; lang?: string; channel?: CallChannel; now?: () => number }): { callId: string } | { busy: true } {
   sweep(o.now);
   if (calls.size) return { busy: true };
   const now = (o.now || Date.now)();
@@ -284,6 +288,7 @@ export interface ClerkHost {
   getChat(id: string, since: number): ChatEvent[];
   appendChat(id: string, ev: Record<string, unknown>): void;
   folderName?(folderId: string): string | null;
+  fileCall?(sessionId: string, args: Record<string, unknown>): Promise<Record<string, unknown>>; // stage 4a: call_contact → an outbound card
 }
 export interface SessionLite {
   id: string;
@@ -387,7 +392,7 @@ async function awaitAnswer(host: ClerkHost, id: string, since: number, timeoutMs
 }
 
 /** Run one clerk tool with the host's authority; throws on a bad name/args. */
-export async function runClerkTool(host: ClerkHost, name: string, args: Record<string, unknown>, opts: { askTimeoutMs?: number; pollMs?: number; folderId?: string | null } = {}): Promise<Record<string, unknown>> {
+export async function runClerkTool(host: ClerkHost, name: string, args: Record<string, unknown>, opts: { askTimeoutMs?: number; pollMs?: number; folderId?: string | null; sessionId?: string } = {}): Promise<Record<string, unknown>> {
   if (!TOOL_NAMES.has(name)) throw new Error(`unknown tool: ${name}`);
   if (!args || typeof args !== 'object' || Array.isArray(args)) throw new Error('args must be an object');
   const askTimeout = Math.min(ASK_MAX_TIMEOUT_MS, opts.askTimeoutMs || ASK_TIMEOUT_MS);
@@ -430,6 +435,10 @@ export async function runClerkTool(host: ClerkHost, name: string, args: Record<s
       const s = liveSession(host, args.id);
       return { id: s.id, interrupted: host.interrupt(s.id) };
     }
+    case 'call_contact': {
+      if (!host.fileCall || !opts.sessionId) throw new Error('phone calls to others are not available on this host');
+      return host.fileCall(opts.sessionId, args);
+    }
   }
 }
 
@@ -443,12 +452,13 @@ function summarize(name: string, r: Record<string, unknown>): string {
     case 'ask_session': return r.done ? head(String(r.answer), 400) : `still working${r.partial ? ` — ${head(String(r.partial), 200)}` : ''}`;
     case 'create_session': return `created "${r.title}"${r.agent ? ` as ${r.agent}` : ''}`;
     case 'interrupt_session': return r.interrupted ? 'interrupted' : 'nothing to interrupt';
+    case 'call_contact': return r.pending ? 'card filed — waiting for the owner\'s Send' : `not filed: ${String(r.error || r.why || 'refused')}`;
     default: return head(JSON.stringify(r), 300);
   }
 }
 const asked = (name: string, args: Record<string, unknown>): string => {
   const a = { ...args };
-  for (const k of ['prompt', 'title']) if (typeof a[k] === 'string') a[k] = head(a[k] as string, 200);
+  for (const k of ['prompt', 'title', 'brief']) if (typeof a[k] === 'string') a[k] = head(a[k] as string, 200);
   return Object.keys(a).length ? `${name} ${JSON.stringify(a)}` : name;
 };
 
@@ -467,7 +477,7 @@ export async function handleClerkTool(body: Record<string, unknown>, host: Clerk
   let agent: string | null = null;
   const folderId = (c.contextSessionId && host.getSession(c.contextSessionId)?.folderId) || null;
   try {
-    const result = await runClerkTool(host, name, args, { ...opts, folderId });
+    const result = await runClerkTool(host, name, args, { ...opts, folderId, sessionId: c.sessionId });
     got = summarize(name, result);
     agent = typeof result.agent === 'string' ? result.agent : null;
     out = json(200, { ok: true, result });
@@ -495,6 +505,8 @@ function transcriptCard(c: Call, seconds: number, reason: string): Record<string
 function finish(c: Call, seconds: number, reason: string, host: Pick<ClerkHost, 'appendChat'> | null): Record<string, unknown> {
   calls.delete(c.id);
   const usage = recordVoiceUsage(c.provider, { seconds });
+  // stage 4a: an outbound call's card is the outcome card (voice-outbound.ts), so the turns go back to the caller
+  if (c.channel === 'phone-out') return { ok: true, seconds, turns: c.turns.length, tools: c.tools, usd: usage.usd, transcript: c.turns.map((t) => ({ role: t.role, text: t.text })) };
   try { host?.appendChat(c.sessionId, transcriptCard(c, seconds, reason)); } catch (e) { console.error('[voice-realtime] transcript card failed:', (e as Error).message); }
   console.log(`[voice-realtime] call ${c.id} ended (${reason}) after ${mmss(seconds)}, ${c.tools} tools, ${c.turns.length} turns`);
   return { ok: true, seconds, turns: c.turns.length, tools: c.tools, usd: usage.usd };

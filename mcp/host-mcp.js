@@ -879,6 +879,34 @@ export async function createArigamiServer(env = process.env) {
       run: (a) => api('POST', '/__api/whatsapp/tool', { tool: a.tool, args: a.args || {}, why: a.why }),
     },
     {
+      name: 'call_contact',
+      description:
+        'Phone ANOTHER person for the owner (stage 4a): files a card with the recipient, goal, the brief the voice caller will follow, caller ID and cost — NOTHING dials until the owner presses Send. ' +
+        'to = a WhatsApp contact name or a phone number (+9725… / 05…); never guess a number — if the result says it is unknown or ambiguous, ask the owner. ' +
+        'The caller introduces itself as the owner\'s digital assistant, follows only the brief, can take notes, ask the owner (≤60 s) or transfer to them, and leaves a voicemail per settings. ' +
+        'Refusals (quiet hours/Shabbat, daily cap, budget, opted out) come back as {ok:false, error} — tell the owner the reason. On success {pending:true}: stop and wait for the "[host] …" lines; the outcome, summary and transcript arrive as a card when the call ends. ' +
+        'If Twilio is not connected you get {needs_setup} — call request_setup({capability:"telephony:twilio", why}).',
+      inputSchema: obj({
+        to: { type: 'string', description: 'Contact name or phone number' },
+        goal: { type: 'string', description: 'One sentence: what the call should achieve' },
+        brief: { type: 'string', description: 'What the caller may say, ask and agree to — full sentences; it never goes beyond this' },
+        caller_id: { type: 'string', description: 'Optional: "agent" (the agent\'s Twilio number) or "owner" (the owner\'s own number, once verified); default from settings' },
+        language: { type: 'string', enum: ['he', 'en'], description: 'Optional: the call\'s language (default the voice language)' },
+        voicemail: { type: 'string', description: 'Optional: the short message to leave on an answering machine' },
+        why: { type: 'string', description: 'Shown on the card' },
+        ...SID_PROP,
+      }, ['to', 'goal', 'brief']),
+      run: (a) => api('POST', '/__api/voice/call', { to: a.to, goal: a.goal, brief: a.brief, caller_id: a.caller_id, language: a.language, voicemail: a.voicemail, why: a.why }),
+    },
+    {
+      name: 'send_sms',
+      description:
+        'Send an SMS to ANOTHER person from the agent\'s Twilio number (stage 4a): files a card with the recipient and your exact text — NOTHING is sent until the owner presses Send. ' +
+        'to = a WhatsApp contact name or a phone number; never guess a number. Refusals come back as {ok:false, error}. On success {pending:true}: stop and wait for the "[host] …" message. Replies to the number land in the "Voice calls" session and wake sms listeners.',
+      inputSchema: obj({ to: { type: 'string', description: 'Contact name or phone number' }, text: { type: 'string', description: 'The exact message' }, why: { type: 'string', description: 'Shown on the card' }, ...SID_PROP }, ['to', 'text']),
+      run: (a) => api('POST', '/__api/voice/sms', { to: a.to, text: a.text, why: a.why }),
+    },
+    {
       name: 'check_setup',
       description:
         'Cheap probe: is a capability connected right now? Returns {ok:true, detail}, the needs_setup shape {needs_setup, why, hint}, or {ok:false, denied:true, detail, hint} when it IS connected but your agent\'s tool allowlist excludes it (then request_setup cannot help — ask the human via request_action instead). ' +

@@ -82,6 +82,7 @@ export function VoicePhoneSection({ caps, budget, admin, busy, onConnect, onDisc
         })}
       </div>
       {present.some((c) => c.id === 'telephony:twilio' && c.ok) && <PhoneSetup admin={admin} tick={budget?.month} />}
+      {present.some((c) => c.id === 'telephony:twilio' && c.ok) && <OutboundSetup admin={admin} tick={budget?.month} />}
     </Section>
   );
 }
@@ -151,6 +152,137 @@ export function PhoneSetup({ admin, tick, initial = null }) {
           <input dir="ltr" type="url" placeholder="https://…" className={`${INPUT} w-56`} value={pub} disabled={!admin || busy} onChange={(e) => setPub(e.target.value)} data-phone-public-url />
           {dirtyPub && <button type="button" className={BTN_PRIMARY} disabled={busy} onClick={() => post({ publicUrl: pub })}>{t('settings.connections.phone.save')}</button>}
         </span>
+      </Field>
+    </div>
+  );
+}
+
+// Stage 4a (docs/VOICE.md): calls/SMS to others — the agent's number, caller IDs (+ Twilio verification), disclosure, caps,
+// quiet hours, voicemail. Rendered only while telephony:twilio is connected; every call/SMS still needs a Send card.
+export function OutboundSetup({ admin, tick, initial = null }) {
+  const t = useT();
+  const [view, setView] = useState(initial);
+  const [draft, setDraft] = useState({});
+  const [err, setErr] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [verify, setVerify] = useState(null); // {code, number, state:'waiting'|'verified'|'not-yet'}
+  useEffect(() => { api.get('/voice/outbound').then(setView).catch((e) => setErr(String(e?.message || e))); }, [tick]);
+  useEffect(() => {
+    if (verify?.state !== 'waiting') return undefined;
+    let n = 0;
+    const id = setInterval(async () => {
+      n += 1;
+      try {
+        const r = await api.post('/voice/phone/caller-id', { action: 'check', number: verify.number });
+        if (r.verified) { setVerify((v) => ({ ...v, state: 'verified' })); setView(r.view); }
+        else if (n >= 36) setVerify((v) => ({ ...v, state: 'not-yet' }));
+      } catch { /* keep polling */ }
+    }, 5000);
+    return () => clearInterval(id);
+  }, [verify?.state, verify?.number]);
+  if (!view) return null;
+  const s = view.settings || {};
+  const val = (k, d) => (draft[k] !== undefined ? draft[k] : d);
+  const set = (k) => (e) => setDraft((x) => ({ ...x, [k]: e.target.value }));
+  const post = async (body) => {
+    setBusy(true); setErr('');
+    try { setView(await api.post('/voice/outbound', body)); setDraft({}); }
+    catch (e) { setErr(String(e?.message || e)); }
+    finally { setBusy(false); }
+  };
+  const saveSettings = (patch) => post({ settings: patch });
+  const startVerify = async () => {
+    setBusy(true); setErr('');
+    try { const r = await api.post('/voice/phone/caller-id', { action: 'start' }); setVerify({ code: r.code, number: r.number, state: 'waiting' }); }
+    catch (e) { setErr(String(e?.message || e)); }
+    finally { setBusy(false); }
+  };
+  const ownerVerified = (view.callerIds || []).length > 0;
+  const commit = (k, path) => () => {
+    if (draft[k] === undefined) return;
+    const v = draft[k];
+    const patch = path === 'quiet' ? { quiet: { [k]: v } } : path === 'disclosure' ? { disclosure: { [k.slice(4)]: v } } : { [k]: ['maxMinutes', 'maxCallsPerDay', 'maxSmsPerDay'].includes(k) ? Number(v) : v };
+    saveSettings(patch);
+  };
+  const num = (k) => <input type="number" min="0" className={`${INPUT} w-20`} value={val(k, String(s[k] ?? ''))} disabled={!admin || busy} onChange={set(k)} onBlur={commit(k)} data-outbound-field={k} />;
+  return (
+    <div className="mt-4" data-outbound-setup>
+      <div className="text-sm font-medium text-fg">{t('settings.connections.outbound')}</div>
+      <div className="mb-1 text-xs text-fgdim">{t('settings.connections.outbound.hint')}</div>
+      <ErrorLine>{err}</ErrorLine>
+      {view.quietNow && <div className="text-xs text-fgdim" data-outbound-quiet>🌙 {t('settings.connections.outbound.quietNow', { why: view.quietNow })}</div>}
+      <div className="text-xs text-fgdim" data-outbound-today>{t('settings.connections.outbound.today', { calls: view.today?.calls || 0, maxCalls: s.maxCallsPerDay, sms: view.today?.sms || 0, maxSms: s.maxSmsPerDay })}</div>
+      <Field label={t('settings.connections.outbound.number')} hint={t('settings.connections.outbound.number.hint')}>
+        <span className="flex items-center gap-2">
+          <input dir="ltr" type="tel" placeholder="+972…" className={`${INPUT} w-44`} value={val('number', view.number || '')} disabled={!admin || busy} onChange={set('number')} data-outbound-number />
+          {draft.number !== undefined && draft.number !== (view.number || '') && <button type="button" className={BTN_PRIMARY} disabled={busy} onClick={() => post({ number: draft.number })}>{t('settings.connections.phone.save')}</button>}
+        </span>
+      </Field>
+      {view.smsUrl && (
+        <div className="py-2 border-b border-hair" data-outbound-sms-url>
+          <div className="text-xs text-fgdim">{t('settings.connections.outbound.smsUrl')}</div>
+          <CopyRow url={view.smsUrl} />
+        </div>
+      )}
+      <Field label={t('settings.connections.outbound.callerId')} hint={t('settings.connections.outbound.callerId.hint')}>
+        <select className={INPUT} value={s.callerId || 'agent'} disabled={!admin || busy} onChange={(e) => saveSettings({ callerId: e.target.value })} data-outbound-caller-id>
+          <option value="agent">{t('settings.connections.outbound.callerId.agent')}</option>
+          <option value="owner" disabled={!ownerVerified}>{t('settings.connections.outbound.callerId.owner')}</option>
+        </select>
+      </Field>
+      <div className="py-3 border-b border-hair" data-outbound-verify>
+        <div className="text-sm font-medium text-fg">{t('settings.connections.outbound.verify')}</div>
+        <div className="text-xs text-fgdim">{t('settings.connections.outbound.verify.hint')}</div>
+        {(view.callerIds || []).map((c) => (
+          <div key={c.number} className="mt-1 flex items-center gap-2 text-xs" data-outbound-verified={c.number}>
+            <span dir="ltr" className="font-mono">✓ {c.number}</span>
+            {admin && <button type="button" className="cursor-pointer text-fgdim hover:text-err" disabled={busy} onClick={() => post({ removeCallerId: c.number })}>{t('setup.connections.disconnect')}</button>}
+          </div>
+        ))}
+        {verify?.code && verify.state !== 'verified' && (
+          <div className="mt-2" data-outbound-code>
+            <div className="text-xs text-fgdim">{t('settings.connections.outbound.verify.code', { number: verify.number })}</div>
+            <div dir="ltr" className="font-mono text-2xl tracking-widest text-fg">{verify.code}</div>
+            {verify.state === 'not-yet' && <div className="text-xs text-err">{t('settings.connections.outbound.verify.notYet')}</div>}
+          </div>
+        )}
+        {verify?.state === 'verified' && <div className="mt-1 text-xs text-fgdim" data-outbound-verify-ok>✓ {t('settings.connections.outbound.verify.ok')}</div>}
+        <div className="mt-2 flex items-center gap-2">
+          <button type="button" className={BTN} disabled={!admin || busy || verify?.state === 'waiting'} onClick={startVerify} data-outbound-verify-start>{t('settings.connections.outbound.verify.start')}</button>
+          {verify?.code && verify.state !== 'verified' && <button type="button" className={BTN_SM} disabled={busy} onClick={() => setVerify((v) => ({ ...v, state: 'waiting' }))}>{t('settings.connections.outbound.verify.check')}</button>}
+        </div>
+      </div>
+      <Field label={t('settings.connections.outbound.ownerName')} hint={t('settings.connections.outbound.ownerName.hint')}>
+        <input className={`${INPUT} w-40`} value={val('ownerName', s.ownerName || '')} disabled={!admin || busy} onChange={set('ownerName')} onBlur={commit('ownerName')} data-outbound-owner-name />
+      </Field>
+      <Field label={t('settings.connections.outbound.disclosure')} hint={t('settings.connections.outbound.disclosure.hint')}>
+        <span className="flex flex-col gap-1">
+          <input dir="rtl" className={`${INPUT} w-72`} value={val('dis_he', s.disclosure?.he || '')} disabled={!admin || busy} onChange={set('dis_he')} onBlur={commit('dis_he', 'disclosure')} data-outbound-disclosure="he" />
+          <input dir="ltr" className={`${INPUT} w-72`} value={val('dis_en', s.disclosure?.en || '')} disabled={!admin || busy} onChange={set('dis_en')} onBlur={commit('dis_en', 'disclosure')} data-outbound-disclosure="en" />
+        </span>
+      </Field>
+      <Field label={t('settings.connections.outbound.amd')} hint={t('settings.connections.outbound.amd.hint')}>
+        <select className={INPUT} value={s.amd || 'voicemail'} disabled={!admin || busy} onChange={(e) => saveSettings({ amd: e.target.value })} data-outbound-amd>
+          <option value="voicemail">{t('settings.connections.outbound.amd.voicemail')}</option>
+          <option value="hangup">{t('settings.connections.outbound.amd.hangup')}</option>
+          <option value="off">{t('settings.connections.outbound.amd.off')}</option>
+        </select>
+      </Field>
+      <Field label={t('settings.connections.outbound.caps')} hint={t('settings.connections.outbound.caps.hint', { usd: (view.usdPerMin || 0).toFixed(3) })}>
+        <span className="flex items-center gap-2 text-xs text-fgdim">{num('maxMinutes')} {t('settings.connections.outbound.caps.minutes')} {num('maxCallsPerDay')} {t('settings.connections.outbound.caps.calls')} {num('maxSmsPerDay')} {t('settings.connections.outbound.caps.sms')}</span>
+      </Field>
+      <Field label={t('settings.connections.outbound.quiet')} hint={t('settings.connections.outbound.quiet.hint')}>
+        <span dir="ltr" className="flex items-center gap-2">
+          <input type="time" className={INPUT} value={val('start', s.quiet?.start || '21:00')} disabled={!admin || busy} onChange={set('start')} onBlur={commit('start', 'quiet')} data-outbound-quiet-start />
+          –
+          <input type="time" className={INPUT} value={val('end', s.quiet?.end || '08:00')} disabled={!admin || busy} onChange={set('end')} onBlur={commit('end', 'quiet')} data-outbound-quiet-end />
+        </span>
+      </Field>
+      <Field label={t('settings.connections.outbound.shabbat')}>
+        <Toggle on={s.quiet?.shabbat !== false} disabled={!admin || busy} onChange={(v) => saveSettings({ quiet: { shabbat: v } })} data-outbound-shabbat={s.quiet?.shabbat !== false ? '1' : '0'} />
+      </Field>
+      <Field label={t('settings.connections.outbound.transfer')}>
+        <Toggle on={s.allowTransfer !== false} disabled={!admin || busy} onChange={(v) => saveSettings({ allowTransfer: v })} data-outbound-transfer={s.allowTransfer !== false ? '1' : '0'} />
       </Field>
     </div>
   );

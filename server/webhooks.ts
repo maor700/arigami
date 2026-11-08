@@ -41,11 +41,19 @@ export const setTwilioSink = (s: TwilioSink | null): void => { liveTwilio = s; }
 function defaultTwilioSink(): TwilioSink {
   if (liveTwilio) return liveTwilio;
   const vp = require('./voice-phone.js') as typeof import('./voice-phone.js');
-  return { token: vp.twilioToken, bases: vp.signatureBases, voice: (params, req) => vp.handleVoice(params, { base: vp.publicBase(req) }), status: (params) => vp.handleStatus(params) };
+  const vo = require('./voice-outbound.js') as typeof import('./voice-outbound.js');
+  return {
+    token: vp.twilioToken, bases: vp.signatureBases,
+    voice: (params, req) => vp.handleVoice(params, { base: vp.publicBase(req) }),
+    status: (params) => vp.handleStatus(params),
+    outbound: (params, req, query) => vo.handleOutboundTwiml(params, query, { base: vp.publicBase(req) }),
+    outboundStatus: (params, query) => vo.handleOutboundStatus(params, query),
+    sms: (params) => vo.handleInboundSms(params, null),
+  };
 }
 
-//   twilio/<voice|status>  `X-Twilio-Signature` = base64(HMAC-SHA1(auth token, url + sorted params)) — server/voice-phone.ts
-export const INBOUND_RE = /^\/__api\/webhooks\/(sms|slack|github|custom\/([A-Za-z0-9_.-]{1,64})|twilio\/(voice|status))$/;
+//   twilio/<voice|status|outbound|outbound-status|sms>  `X-Twilio-Signature` = base64(HMAC-SHA1(auth token, url + sorted params)) — voice-phone.ts / voice-outbound.ts
+export const INBOUND_RE = /^\/__api\/webhooks\/(sms|slack|github|custom\/([A-Za-z0-9_.-]{1,64})|twilio\/(voice|status|outbound|outbound-status|sms))$/;
 export const CUSTOM_ID_RE = /^[A-Za-z0-9_.-]{1,64}$/;
 export const isInboundWebhookPath = (pathname: string): boolean => INBOUND_RE.test(pathname);
 
@@ -96,6 +104,9 @@ export interface TwilioSink {
   bases(req: IncomingMessage): string[];
   voice(params: Record<string, string>, req: IncomingMessage): string; // TwiML
   status(params: Record<string, string>): void;
+  outbound?(params: Record<string, string>, req: IncomingMessage, query: URLSearchParams): string; // stage 4a: the placed call's TwiML
+  outboundStatus?(params: Record<string, string>, query: URLSearchParams): void;
+  sms?(params: Record<string, string>): string; // stage 4a: inbound SMS on the agent's number
 }
 
 const hmacHex = (secret: string, data: string | Buffer): string =>
@@ -409,11 +420,16 @@ export function createWebhooks(opts: WebhooksOptions) {
     if (kind === 'twilio') {
       const tw = opts.twilio || defaultTwilioSink();
       const params = Object.fromEntries(new URLSearchParams(raw.toString('utf8'))) as Record<string, string>;
-      const why = verifyTwilioSignature({ token: tw.token(), sig: headerOf(req, 'x-twilio-signature'), bases: tw.bases(req), pathAndQuery: u.pathname + u.search, params, now: now(), replay: twilioSub !== 'voice' });
-      if (why) { deny(res, `twilio/${twilioSub}`, why, rlHeaders); return true; } // voice: a replay is inert in the call's state machine (same wrong PIN twice must not 401)
-      record('twilio', { CallSid: params.CallSid, CallStatus: params.CallStatus, Direction: params.Direction }, { event: twilioSub }); // never the number or digits
-      if (twilioSub === 'status') { tw.status(params); res.writeHead(204, { 'cache-control': 'no-store', ...rlHeaders }); res.end(); return true; }
-      const xml = tw.voice(params, req);
+      const why = verifyTwilioSignature({ token: tw.token(), sig: headerOf(req, 'x-twilio-signature'), bases: tw.bases(req), pathAndQuery: u.pathname + u.search, params, now: now(), replay: twilioSub !== 'voice' && twilioSub !== 'outbound' });
+      if (why) { deny(res, `twilio/${twilioSub}`, why, rlHeaders); return true; } // voice/outbound: a replay is inert in the call's state machine (same wrong PIN twice must not 401)
+      record('twilio', twilioSub === 'sms' ? { MessageSid: params.MessageSid } : { CallSid: params.CallSid, CallStatus: params.CallStatus, Direction: params.Direction }, { event: twilioSub }); // never the number, digits or text
+      if (twilioSub === 'status' || twilioSub === 'outbound-status') {
+        if (twilioSub === 'status') tw.status(params); else tw.outboundStatus?.(params, u.searchParams);
+        res.writeHead(204, { 'cache-control': 'no-store', ...rlHeaders }); res.end(); return true;
+      }
+      const xml = twilioSub === 'sms' ? (tw.sms ? tw.sms(params) : '<?xml version="1.0" encoding="UTF-8"?><Response></Response>')
+        : twilioSub === 'outbound' ? (tw.outbound ? tw.outbound(params, req, u.searchParams) : '<?xml version="1.0" encoding="UTF-8"?><Response><Hangup/></Response>')
+        : tw.voice(params, req);
       res.writeHead(200, { 'content-type': 'text/xml; charset=utf-8', 'cache-control': 'no-store', ...rlHeaders });
       res.end(xml);
       return true;

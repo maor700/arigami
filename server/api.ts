@@ -1728,6 +1728,47 @@ async function fileOutbound(sessionId: string, exec: import('./lib/outbound.js')
     note: 'NOT sent. The owner sees the exact message on a card; the host sends it, unchanged, only if they press Send, and messages you "[host] …" with the outcome. Stop and wait — do not try another way to send it.',
   };
 }
+// Stage 4a (voice-outbound.ts): a "[host] …" line for the session that asked — the voice home has no agent to wake.
+function tellSession(id: string, line: string): void {
+  if (state.getSession(id)?.metadata?.voiceHome) claude.appendChat(id, { kind: 'system', text: line });
+  else claude.sendMessage(id, line);
+}
+// The owner's Send on a call/SMS card: the host performs it with the card's own arguments.
+async function placeOutbound(sessionId: string, exec: import('./lib/outbound.js').OutboundExec): Promise<{ ok: boolean; error?: string }> {
+  const vo = await import('./voice-outbound.js');
+  ensureOutboundHost();
+  if (exec.via === 'sms') return vo.sendSms(exec.args as unknown as import('./voice-outbound.js').SmsArgs);
+  const vph = await import('./voice-phone.js');
+  let funnelHost = '';
+  try { funnelHost = String(((await import('./remote.js')) as any).remoteStatus().hostname || ''); } catch { /* no tailscale */ }
+  return vo.placeCall(exec.args as unknown as import('./voice-outbound.js').CallArgs, sessionId, { base: vph.publicBase(null, funnelHost) });
+}
+// ask_owner on a live outbound call: a card in the requesting session, answered by a person within the timeout.
+const CALL_QUESTION_KIND = 'call-question';
+const CALL_LATER = '__later';
+const callQuestionWaiters = new Map<string, (v: string) => void>();
+let outboundHostSet = false;
+function ensureOutboundHost(): void {
+  if (outboundHostSet) return;
+  outboundHostSet = true;
+  const vo = require('./voice-outbound.js') as typeof import('./voice-outbound.js');
+  vo.setOutboundHost({
+    appendChat: (id, ev) => { claude.appendChat(id, ev); },
+    tell: (id, line) => { try { tellSession(id, line); } catch (e) { console.error('[voice-outbound] tell:', (e as Error).message); } },
+    askOwner: ({ sessionId, prompt, options, timeoutMs }) => new Promise((resolve) => {
+      const action = { id: 'act_' + nano(), at: new Date().toISOString(), kind: CALL_QUESTION_KIND, prompt, buttons: [...options.map((o, i) => ({ label: o, value: `opt${i}`, ...(i === 0 ? { style: 'primary' } : {}) })), { label: cfg.voiceLang === 'en' ? "I'll get back to them" : 'אחזור אליהם', value: CALL_LATER }] };
+      state.patchSession(sessionId, { action });
+      claude.appendChat(sessionId, { kind: 'action-request', actionId: action.id, prompt, actionKind: CALL_QUESTION_KIND });
+      pushIntervention(sessionId, 'action', prompt, 'a call is waiting for your answer');
+      const t = setTimeout(() => {
+        callQuestionWaiters.delete(action.id);
+        if ((state.getSession(sessionId)?.action as any)?.id === action.id) state.patchSession(sessionId, { action: null });
+        resolve(null);
+      }, timeoutMs);
+      callQuestionWaiters.set(action.id, (v) => { clearTimeout(t); resolve(v || null); });
+    }),
+  });
+}
 function shareGate(s: unknown, me?: unknown): { mode: 'allow' | 'ask' | 'deny'; agent: agents.AgentView | null } {
   // A logged-in human clicking "mint a link" in the artifact card IS the approval.
   if ((me as any)?.kind === 'user') return { mode: 'allow', agent: null };
@@ -2868,6 +2909,12 @@ function clerkHost(): import('./voice-realtime.js').ClerkHost {
     getChat: (id, since) => claude.getChat(id, since),
     appendChat: (id, ev) => { claude.appendChat(id, ev); },
     folderName: (fid) => state.getFolder(fid)?.name || null,
+    fileCall: async (sessionId, args) => {
+      const vo = await import('./voice-outbound.js');
+      const prep = vo.prepareCall(args, { origin: 'clerk' });
+      if (!prep.ok) return prep;
+      return fileOutbound(sessionId, { via: 'call', tool: 'call_contact', args: prep.args as unknown as Record<string, unknown> }, 'asked on a voice call');
+    },
   };
 }
 
@@ -2876,6 +2923,7 @@ let phoneBridgeInst: import('./voice-phone-bridge.js').PhoneBridge | null = null
 function phoneBridge(): import('./voice-phone-bridge.js').PhoneBridge {
   if (phoneBridgeInst) return phoneBridgeInst;
   const { createPhoneBridge } = require('./voice-phone-bridge.js') as typeof import('./voice-phone-bridge.js');
+  ensureOutboundHost();
   phoneBridgeInst = createPhoneBridge({ host: { ...clerkHost(), voiceHome: voiceHomeSession } });
   return phoneBridgeInst;
 }
@@ -2890,7 +2938,16 @@ function installTwilioSink(): void {
   const vp = require('./voice-phone.js') as typeof import('./voice-phone.js');
   const { setTwilioSink } = require('./webhooks.js') as typeof import('./webhooks.js');
   const host = { ...clerkHost(), voiceHome: voiceHomeSession };
-  setTwilioSink({ token: vp.twilioToken, bases: vp.signatureBases, voice: (params, req) => vp.handleVoice(params, { host, base: vp.publicBase(req) }), status: (params) => vp.handleStatus(params, (sid) => phoneBridge().closeCall(sid)) });
+  const vo = require('./voice-outbound.js') as typeof import('./voice-outbound.js');
+  ensureOutboundHost();
+  setTwilioSink({
+    token: vp.twilioToken, bases: vp.signatureBases,
+    voice: (params, req) => vp.handleVoice(params, { host, base: vp.publicBase(req) }),
+    status: (params) => vp.handleStatus(params, (sid) => phoneBridge().closeCall(sid)),
+    outbound: (params, req, query) => vo.handleOutboundTwiml(params, query, { base: vp.publicBase(req) }),
+    outboundStatus: (params, query) => vo.handleOutboundStatus(params, query),
+    sms: (params) => vo.handleInboundSms(params, { voiceHome: voiceHomeSession, appendChat: (id, ev) => claude.appendChat(id, ev) }),
+  });
 }
 
 // Stage 1d: where a global call (the rail's phone button) lands its audit cards and transcript — one worktree-less session,
@@ -4541,6 +4598,41 @@ export async function handle(
       if (m === 'GET') return json(res, vph.phoneView(funnelHost));
       const body = (await readBody(req)) as Record<string, unknown>;
       try { return json(res, vph.updatePhone(body, funnelHost)); } catch (e) { return badRequest(res, (e as Error).message); }
+    }
+    // Stage 4a (voice-outbound.ts): outbound settings + caller-ID verification (admin); the code is shown, never typed by the host.
+    if ((p === '/__api/voice/outbound' && (m === 'GET' || m === 'POST')) || (p === '/__api/voice/phone/caller-id' && m === 'POST')) {
+      const me = (req as any).auth as import('./auth.js').Principal | null;
+      if (!auth.isAdmin(me)) return json(res, { error: 'admin only' }, 403);
+      const vo = await import('./voice-outbound.js');
+      let funnelHost = '';
+      try { funnelHost = String(((await import('./remote.js')) as any).remoteStatus().hostname || ''); } catch { /* no tailscale */ }
+      const obBase = (await import('./voice-phone.js')).publicBase(null, funnelHost);
+      if (m === 'GET') return json(res, vo.outboundView(Date.now(), obBase));
+      const body = ((await readBody(req)) || {}) as Record<string, unknown>;
+      if (p.endsWith('/caller-id')) {
+        const r = body.action === 'check' ? await vo.checkCallerIdVerification(body.number) : await vo.startCallerIdVerification(body.number);
+        return r.ok ? json(res, { ...r, view: vo.outboundView(Date.now(), obBase) }) : badRequest(res, r.error);
+      }
+      try { return json(res, vo.updateOutbound(body, obBase)); } catch (e) { return badRequest(res, (e as Error).message); }
+    }
+    // Stage 4a: call_contact / send_sms (host-mcp) → an outbound card on the asking session; nothing dials or sends here.
+    if ((p === '/__api/voice/call' || p === '/__api/voice/sms') && m === 'POST') {
+      const me = (req as any).auth as import('./auth.js').Principal | null;
+      const body = ((await readBody(req)) || {}) as Record<string, unknown>;
+      const sid = me?.kind === 'session' ? me.sessionId : auth.isAdmin(me) && typeof body.sessionId === 'string' ? body.sessionId : '';
+      if (!sid || !state.getSession(sid)) return json(res, { error: 'a session is required (call this from a session)' }, 403);
+      const need = vp.requireVoiceProvider('telephony', p.endsWith('/call') ? 'place a phone call' : 'send an SMS');
+      if ('needs_setup' in need) return json(res, need);
+      const vo = await import('./voice-outbound.js');
+      const why = typeof body.why === 'string' ? body.why.slice(0, 300) : undefined;
+      if (p.endsWith('/call')) {
+        const prep = vo.prepareCall(body, { origin: 'agent' });
+        if (!prep.ok) return json(res, prep);
+        return json(res, await fileOutbound(sid, { via: 'call', tool: 'call_contact', args: prep.args as unknown as Record<string, unknown> }, why), 202);
+      }
+      const prep = vo.prepareSms(body);
+      if (!prep.ok) return json(res, prep);
+      return json(res, await fileOutbound(sid, { via: 'sms', tool: 'send_sms', args: prep.args as unknown as Record<string, unknown> }, why), 202);
     }
     if (p === '/__api/telemetry/rotate' && m === 'POST') {
       const me = (req as any).auth as import('./auth.js').Principal | null;
@@ -7569,7 +7661,7 @@ export async function handle(
         return json(res, { error: 'This request has expired. Use the current action card.' }, 409);
       if (!cur.buttons?.some((b: any) => b.value === value)) return badRequest(res, 'value is not a current action option');
       const cardKind = cur.kind;
-      if (([LOGIN_KIND, LOGIN_SAVE_KIND, SHARE_KIND, OUTBOUND_KIND, 'review'].includes(cardKind) && (req as any).auth?.kind === 'session') ||
+      if (([LOGIN_KIND, LOGIN_SAVE_KIND, SHARE_KIND, OUTBOUND_KIND, CALL_QUESTION_KIND, 'review'].includes(cardKind) && (req as any).auth?.kind === 'session') ||
         (cardKind === SSO_KIND && ['session', 'host'].includes((req as any).auth?.kind)))
         return json(res, { error: 'only a person can answer this card' }, 403);
       // The review card's Approve ('verified' = cards raised before the rename)
@@ -7609,7 +7701,9 @@ export async function handle(
           // Exactly what the card showed — the stored arguments, nothing re-read.
           let r: any;
           try {
-            if (exec.via === 'whatsapp') {
+            if (exec.via === 'call' || exec.via === 'sms') {
+              r = await placeOutbound(id, exec);
+            } else if (exec.via === 'whatsapp') {
               const wp = await import('./whatsapp-proxy.js');
               r = await wp.callWhatsapp('send_message', exec.args);
             } else if (exec.via === 'mcp') {
@@ -7627,16 +7721,27 @@ export async function handle(
             r = { ok: false, error: (e as Error).message };
           }
           line = r?.ok
-            ? `[host] SENT on ${d.channel}${d.to ? ` to ${d.to}` : ''}, exactly as the owner approved it.`
-            : `[host] The owner approved, but sending on ${d.channel} failed: ${r?.error || 'unknown error'}. Tell them; do not retry on your own.`;
+            ? exec.via === 'call'
+              ? `[host] The owner pressed Send: calling ${d.to} now, exactly as the card showed. The outcome, summary and transcript arrive as a card and a "[host] The call … ended" message.`
+              : `[host] SENT on ${d.channel}${d.to ? ` to ${d.to}` : ''}, exactly as the owner approved it.`
+            : `[host] The owner approved, but ${exec.via === 'call' ? 'placing the call' : `sending on ${d.channel}`} failed: ${r?.error || 'unknown error'}. Tell them; do not retry on your own.`;
         } else {
-          line = `[host] The owner chose NOT to send the ${d.channel} message${d.to ? ` to ${d.to}` : ''}. Nothing was sent. Do not send it another way.`;
+          line = exec.via === 'call'
+            ? `[host] The owner chose NOT to place the call${d.to ? ` to ${d.to}` : ''}. Nothing was dialled. Do not call another way.`
+            : `[host] The owner chose NOT to send the ${d.channel} message${d.to ? ` to ${d.to}` : ''}. Nothing was sent. Do not send it another way.`;
         }
         try {
-          claude.sendMessage(id, line);
+          tellSession(id, line);
         } catch (e) {
           return json(res, { error: (e as Error).message }, 500);
         }
+        return json(res, { ok: true });
+      }
+      if (cardKind === CALL_QUESTION_KIND) {
+        const w = callQuestionWaiters.get(cur.id);
+        const label = (cur.buttons || []).find((b: any) => b.value === value)?.label;
+        if (w) { callQuestionWaiters.delete(cur.id); w(String(value) === CALL_LATER ? '' : String(label || value)); }
+        claude.appendChat(id, { kind: 'system', text: `📞 ${String(value) === CALL_LATER ? 'You will get back to them.' : `Answered on the call: ${label || value}`}` });
         return json(res, { ok: true });
       }
       if (cardKind === SSO_KIND && (cur as any).sso?.site) {

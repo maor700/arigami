@@ -15,6 +15,7 @@ export const CARTESIA_USD_PER_1K_CHARS = 0.055; // midpoint of $0.045–0.065
 export const DEEPGRAM_USD_PER_MIN = 0.0092; // Nova-3
 export const TWILIO_INBOUND_USD_PER_MIN = 0.0107; // Israel, inbound
 export const TWILIO_OUTBOUND_USD_PER_MIN = 0.0646; // Israel, outbound to mobile
+export const TWILIO_SMS_USD = 0.2575; // Israel, per outbound SMS segment (PLAN.md)
 
 export interface Usage {
   seconds?: number;

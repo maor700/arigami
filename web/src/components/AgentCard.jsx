@@ -21,7 +21,7 @@ import { AgentAvatar, CardFrame, Btn, ACCENT } from '../openui/primitives.jsx';
 import { defineHostComponent, loose, str, any, z } from '../openui/define.js';
 
 // A3: families are expanded + ENFORCED by the host (server/agent-policy.ts FAMILIES).
-export const TOOL_FAMILIES = ['desktop', 'browser', 'whatsapp', 'gmail', 'calendar', 'drive', 'git', 'sessions', 'triggers', 'web', 'publish'];
+export const TOOL_FAMILIES = ['desktop', 'browser', 'whatsapp', 'gmail', 'calendar', 'drive', 'git', 'sessions', 'triggers', 'web', 'publish', 'phone'];
 
 const field = 'w-full rounded-md border border-[var(--term-accent-border)] bg-transparent px-2 py-1 font-mono text-xs text-[var(--term-accent-strong)] outline-none coarse:min-h-11 focus:border-[var(--term-accent-fg)]';
 const label = 'mb-0.5 block text-xs tracking-[0.06em] text-[var(--term-accent-dim)] uppercase';

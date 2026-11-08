@@ -225,3 +225,41 @@ Call `requireVoiceProvider(kind)` first and return its non-ok shapes as the tool
   on interruption, ledger entries, kill-switch/budget mid-call, status billing), `test/voice-phone-host.test.ts` (a real isolated host: admin routes, the
   cookie-less webhook + stream upgrade, the real Gemini Live backend against a fake Live server, cards + ledgers), `test/voice-phone-web.test.js` (the settings panel).
   No real call was placed: there is no Twilio account in CI or on the dev host.
+
+## Stage 4a — calls and SMS to others (`server/voice-outbound.ts`)
+
+- **Rule**: the agent drafts, the owner presses **Send** on a card. `call_contact({to, goal, brief, caller_id?, language?, voicemail?})` and
+  `send_sms({to, text})` (host-mcp, agent family `phone`) and the clerk's `call_contact` only file an outbound card (`lib/outbound.ts`,
+  `via:'call'|'sms'`) with the recipient, goal, the brief, the opening line, caller ID, voicemail behaviour and the estimated cost. Nothing
+  dials or sends before Send; "Don't send" ends it. Only a person can answer the card.
+- **Recipient**: an E.164 number, a local number (`05x…` → `+972…`, `outbound.defaultCountry`), or a WhatsApp contact/chat name with a
+  phone. Ambiguous or unknown → `{ok:false, error, candidates?}` and the agent asks; it never guesses.
+- **Guards** (on filing and again on Send, refused with a sayable reason): kill-switch, Twilio connected, Twilio monthly cap, a realtime
+  provider (calls), quiet hours (default 21:00–08:00, `Asia/Jerusalem`), Shabbat and Yom Tov (candle-lighting −40 min to sunset +45 min,
+  NOAA sunset at `quiet.lat/lon`, holiday table through 5790 Sukkot + `quiet.extraDates`), daily caps (5 calls / 10 SMS), opted-out
+  numbers, one live call at a time.
+- **Send → call**: `POST Calls.json` with `To`, `From` (caller ID), `Url` = `…/twilio/outbound?ob=<id>`, `StatusCallback` =
+  `…/twilio/outbound-status?ob=<id>` (initiated/ringing/answered/completed), `MachineDetection=DetectMessageEnd` (unless AMD off),
+  `Timeout=30`, `TimeLimit` = the minute cap (Twilio enforces it; the bridge's watchdog too). Both routes are signed like stage 2.
+- **Answered**: a machine → the voicemail (`voicemail` arg, else disclosure + goal) in the call's language, or hang-up (`amd`). A person →
+  `<Connect><Stream>` with a one-time token into an **outbound clerk**: persona = disclosure ("שלום, כאן העוזר הדיגיטלי של {owner}") +
+  goal + brief + rules (never claims to be human, nothing beyond the brief); it speaks first; tools only `end_call({summary, outcome})`,
+  `take_note`, `ask_owner` (a card in the requesting session with tap answers + "I'll get back to them", ≤60 s) and `transfer_to_owner`
+  (REST `<Dial>` to the owner's number).
+- **After**: on the final status (and the stream's end) one card in the requesting session — outcome (reached / voicemail / no-answer / busy
+  / failed, transferred), the summary, notes, both sides of the transcript — plus a `[host]` line to its agent (the voice home gets a system
+  line). Twilio's outbound minutes from `CallDuration`, the realtime minutes from the bridge. The transferred leg is billed by Twilio, not
+  estimated here. Live calls are in memory (a restart forgets them); counters and opt-outs live in `voice-outbound.json`.
+- **SMS**: Send → `POST Messages.json` from the agent's number, cost `$0.2575`/segment (70 Hebrew / 160 GSM chars) in the ledger. Inbound on
+  `…/twilio/sms` (signed) → a card in the **Voice calls** session + the sms store (sms listeners wake). `STOP`/`הסר`/… opts the number out
+  of calls and SMS; `START` lifts it; no auto-reply.
+- **Caller ID**: `telephony.number` (the agent's Twilio number — any number on the account) or the owner's own number once verified:
+  Settings → *Verify my number as caller ID* → `POST OutgoingCallerIds.json`, the 6-digit code is shown and the owner types it on his phone
+  (never answered by the host); *I typed it — check* / a 5 s poll lists it into `telephony.callerIds`. A call back to the owner's caller ID
+  rings his phone, not the agent.
+- **Settings → Voice & phone → Calls & SMS to others** (only with Twilio connected): agent number, default caller ID, verify, owner name,
+  opening line he/en, AMD, minutes/calls/SMS caps, quiet hours, Shabbat/holidays, transfer. `GET/POST /__api/voice/outbound`,
+  `POST /__api/voice/phone/caller-id {action:'start'|'check'}` (admin); `POST /__api/voice/call|sms` (a session; admin may pass `sessionId`).
+- **Twilio console**: the number's *Messaging → A message comes in* = `…/__api/webhooks/twilio/sms`, POST. Calls need no console setting.
+- **Tests**: `test/voice-outbound.test.ts` (+ `fixtures/voice-outbound-child.ts`), `test/voice-outbound-host.test.ts`,
+  `test/voice-outbound-web.test.js`. Twilio is stubbed; no real call or SMS was placed.
