@@ -232,10 +232,10 @@ Call `requireVoiceProvider(kind)` first and return its non-ok shapes as the tool
   `send_sms({to, text})` (host-mcp, agent family `phone`) and the clerk's `call_contact` only file an outbound card (`lib/outbound.ts`,
   `via:'call'|'sms'`) with the recipient, goal, the brief, the opening line, caller ID, voicemail behaviour and the estimated cost. Nothing
   dials or sends before Send; "Don't send" ends it. Only a person can answer the card.
-- **Recipient**: an E.164 number, a local number (`05x…` → `+972…`, `outbound.defaultCountry`), or a WhatsApp contact/chat name with a
+- **Recipient**: an E.164 number, a local number once `outbound.defaultCountry` is set (e.g. `972`: `05x…` → `+9725x…`), or a WhatsApp contact/chat name with a
   phone. Ambiguous or unknown → `{ok:false, error, candidates?}` and the agent asks; it never guesses.
 - **Guards** (on filing and again on Send, refused with a sayable reason): kill-switch, Twilio connected, Twilio monthly cap, a realtime
-  provider (calls), quiet hours (default 21:00–08:00, `Asia/Jerusalem`), Shabbat and Yom Tov (candle-lighting −40 min to sunset +45 min,
+  provider (calls), quiet hours (default 21:00–08:00 in the host's time zone, `quiet.timezone`), opt-in Shabbat and Yom Tov (`quiet.shabbat`; candle-lighting −40 min to sunset +45 min,
   NOAA sunset at `quiet.lat/lon`, holiday table through 5790 Sukkot + `quiet.extraDates`), daily caps (5 calls / 10 SMS), opted-out
   numbers, one live call at a time.
 - **Send → call**: `POST Calls.json` with `To`, `From` (caller ID), `Url` = `…/twilio/outbound?ob=<id>`, `StatusCallback` =
@@ -246,6 +246,7 @@ Call `requireVoiceProvider(kind)` first and return its non-ok shapes as the tool
   goal + brief + rules (never claims to be human, nothing beyond the brief); it speaks first; tools only `end_call({summary, outcome})`,
   `take_note`, `ask_owner` (a card in the requesting session with tap answers + "I'll get back to them", ≤60 s) and `transfer_to_owner`
   (REST `<Dial>` to the owner's number).
+- **Language**: the call's `language` (default: the instance's `voiceLang`) drives the persona, the summary/notes the clerk writes, the card's labels, and the ASR — the host's phone bridge sends Gemini `inputAudioTranscription.languageCodes:[<call language, e.g. he-IL>]` (inbound and outbound; retried once without it if refused).
 - **After**: on the final status (and the stream's end) one card in the requesting session — outcome (reached / voicemail / no-answer / busy
   / failed, transferred), the summary, notes, both sides of the transcript — plus a `[host]` line to its agent (the voice home gets a system
   line). Twilio's outbound minutes from `CallDuration`, the realtime minutes from the bridge. The transferred leg is billed by Twilio, not
@@ -253,7 +254,7 @@ Call `requireVoiceProvider(kind)` first and return its non-ok shapes as the tool
 - **SMS**: Send → `POST Messages.json` from the agent's number, cost `$0.2575`/segment (70 Hebrew / 160 GSM chars) in the ledger. Inbound on
   `…/twilio/sms` (signed) → a card in the **Voice calls** session + the sms store (sms listeners wake). `STOP`/`הסר`/… opts the number out
   of calls and SMS; `START` lifts it; no auto-reply.
-- **Caller ID**: `telephony.number` (the agent's number — Settings lists the account's numbers via `IncomingPhoneNumbers.json`, e.g. the local one and the 053 mobile) or the owner's own number once verified:
+- **Caller ID**: `telephony.number` (the agent's number — Settings lists the account's numbers via `IncomingPhoneNumbers.json`) or the owner's own number once verified:
   Settings → *Verify my number as caller ID* → `POST OutgoingCallerIds.json`, the 6-digit code is shown and the owner types it on his phone
   (never answered by the host); *I typed it — check* / a 5 s poll lists it into `telephony.callerIds`. A call back to the owner's caller ID
   rings his phone, not the agent.

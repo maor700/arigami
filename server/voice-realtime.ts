@@ -65,7 +65,7 @@ export const CLERK_TOOLS = [
   { type: 'function', name: 'create_session', description: 'Start a new work session with a title and its first instruction; with agent, the session is born from that team member (its persona, engine and permissions).', parameters: { type: 'object', properties: { title: { type: 'string', description: 'A short title' }, prompt: { type: 'string', description: 'The first instruction for the agent' }, agent: { type: 'string', description: 'Optional: the team member (slug or spoken name) the session is born from' } }, required: ['title', 'prompt'] } },
   { type: 'function', name: 'ask_agent', description: "Ask or task a team member by name: reuses its most recent idle session (or opens one) and waits up to 90 seconds for the answer. Returns the final text, or 'still working' with what it said so far.", parameters: { type: 'object', properties: { agent: { type: 'string', description: 'The team member: slug or spoken name (צ\'יף, chief, קשר, סטודיו, astra, נדל"ן…)' }, prompt: { type: 'string', description: 'What to ask or tell the agent, in full sentences' } }, required: ['agent', 'prompt'] } },
   { type: 'function', name: 'interrupt_session', description: "Stop what a session's agent is doing right now.", parameters: { type: 'object', properties: idParam, required: ['id'] } },
-  { type: 'function', name: 'call_contact', description: 'Stage 4a: ask the owner to approve a phone call you place to ANOTHER person on their behalf. Files a card in the app (recipient, goal, brief, caller ID, cost); nothing dials until the owner presses Send there. to = a WhatsApp contact name or a full phone number — never guess a number; if unknown, ask.', parameters: { type: 'object', properties: { to: { type: 'string', description: 'Contact name or phone number (+9725…)' }, goal: { type: 'string', description: 'One sentence: what the call should achieve' }, brief: { type: 'string', description: 'What the caller may say and agree to, in full sentences' }, caller_id: { type: 'string', description: 'Optional: "agent" or "owner"' }, language: { type: 'string', description: 'Optional: he or en' } }, required: ['to', 'goal', 'brief'] } },
+  { type: 'function', name: 'call_contact', description: 'Stage 4a: ask the owner to approve a phone call you place to ANOTHER person on their behalf. Files a card in the app (recipient, goal, brief, caller ID, cost); nothing dials until the owner presses Send there. to = a WhatsApp contact name or a full phone number — never guess a number; if unknown, ask.', parameters: { type: 'object', properties: { to: { type: 'string', description: 'Contact name or full phone number (+…)' }, goal: { type: 'string', description: 'One sentence: what the call should achieve' }, brief: { type: 'string', description: 'What the caller may say and agree to, in full sentences' }, caller_id: { type: 'string', description: 'Optional: "agent" or "owner"' }, language: { type: 'string', description: 'Optional: he or en' } }, required: ['to', 'goal', 'brief'] } },
 ] as const;
 export type ClerkToolName = (typeof CLERK_TOOLS)[number]['name'];
 const TOOL_NAMES = new Set<string>(CLERK_TOOLS.map((t) => t.name));
@@ -111,7 +111,7 @@ export const PHONE_INSTRUCTIONS = ' The owner is calling by phone: there is no s
 export const phoneInstructions = (team: readonly AgentLite[] | null = null, lang: string = voiceLang()): string => CLERK_INSTRUCTIONS + langInstructions(lang) + teamInstructions(team) + PHONE_INSTRUCTIONS;
 
 export type ToolDef = { type: 'function'; name: string; description: string; parameters: Record<string, unknown> };
-export function geminiSetup({ model = geminiModel(), voice = geminiVoice(), handle = '', context = null as ClerkContext | null, instructions = '', lang = voiceLang(), tools = CLERK_TOOLS as readonly ToolDef[] } = {}): Record<string, unknown> {
+export function geminiSetup({ model = geminiModel(), voice = geminiVoice(), handle = '', context = null as ClerkContext | null, instructions = '', lang = voiceLang(), tools = CLERK_TOOLS as readonly ToolDef[], transcriptionHint = false } = {}): Record<string, unknown> {
   const blocking = /^gemini-3\.8-live$/.test(model); // 3.8-live defaults to NON_BLOCKING; the clerk waits for its tools
   return {
     model: `models/${model}`,
@@ -119,7 +119,7 @@ export function geminiSetup({ model = geminiModel(), voice = geminiVoice(), hand
     systemInstruction: { parts: [{ text: instructions || clerkInstructions(context, null, lang) }] },
     tools: [{ functionDeclarations: tools.map((t) => ({ name: t.name, description: t.description, parameters: t.parameters, ...(blocking ? { behavior: 'BLOCKING' } : {}) })) }],
     realtimeInputConfig: { automaticActivityDetection: {}, activityHandling: 'START_OF_ACTIVITY_INTERRUPTS' },
-    inputAudioTranscription: {},
+    inputAudioTranscription: transcriptionHint ? { languageCodes: [speechLang(lang)] } : {}, // the host's phone bridge pins the ASR to the call's language ('na' for Hebrew otherwise)
     outputAudioTranscription: {},
     sessionResumption: handle ? { handle } : {},
     contextWindowCompression: { slidingWindow: {} }, // lifts the 15-minute audio-session cap

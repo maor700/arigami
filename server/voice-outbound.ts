@@ -36,7 +36,7 @@ export interface OutboundConfig {
   maxSmsPerDay: number;
   allowTransfer: boolean;
   askOwnerSeconds: number;
-  defaultCountry: string; // local 05x… → +<country>5x…
+  defaultCountry: string; // '' = full numbers only; e.g. '972' turns 05x… into +9725x…
   quiet: QuietConfig;
 }
 export const OUTBOUND_DEFAULTS: OutboundConfig = {
@@ -49,9 +49,10 @@ export const OUTBOUND_DEFAULTS: OutboundConfig = {
   maxSmsPerDay: 10,
   allowTransfer: true,
   askOwnerSeconds: 60,
-  defaultCountry: '972',
-  quiet: { start: '21:00', end: '08:00', shabbat: true, timezone: 'Asia/Jerusalem', lat: 31.778, lon: 35.235, extraDates: [] },
+  defaultCountry: '',
+  quiet: { start: '21:00', end: '08:00', shabbat: false, timezone: hostTimezone(), lat: 31.778, lon: 35.235, extraDates: [] }, // shabbat: opt-in per instance; lat/lon = its candle-lighting reference
 };
+function hostTimezone(): string { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; } catch { return 'UTC'; } }
 export function outboundSettings(): OutboundConfig {
   const o = (cfg.telephony?.outbound || {}) as Partial<OutboundConfig>;
   return { ...OUTBOUND_DEFAULTS, ...o, disclosure: { ...OUTBOUND_DEFAULTS.disclosure, ...(o.disclosure || {}) }, quiet: { ...OUTBOUND_DEFAULTS.quiet, ...(o.quiet || {}) } };
@@ -144,7 +145,7 @@ function setOptOut(n: string, out: boolean): void {
 }
 
 // ---- numbers, recipients, caller IDs ------------------------------------------------------------------------------------
-/** '+972 50-123 4567' / '050-1234567' / '972501234567' → E.164, or '' (never a guess beyond the configured country). */
+/** '+972 50-000 0001' / '050-0000001' / '972500000001' → E.164, or '' (never a guess beyond the configured country). */
 export function normalizeNumber(raw: unknown, country = outboundSettings().defaultCountry): string {
   const t = String(raw ?? '').trim();
   if (!/^\+?[\d\s\-().]{6,20}$/.test(t)) return '';
@@ -163,7 +164,7 @@ export function resolveRecipient(to: unknown, dbPath?: string): Recipient {
   if (!raw) return { error: 'to required: a contact name or a phone number' };
   const n = normalizeNumber(raw);
   if (n) return { number: n, name: raw.replace(/[\d\s+\-().]/g, '') ? raw : '' };
-  if (/^\+?[\d\s\-().]+$/.test(raw)) return { error: `"${raw}" is not a full phone number — ask the owner for it` };
+  if (/^\+?[\d\s\-().]+$/.test(raw)) return { error: `"${raw}" is not a full international number (+…) — ask the owner for it, or set the default country code in Settings` };
   const db = dbPath || waDbPath();
   if (!db || !fs.existsSync(db)) return { error: `no number known for "${raw}" (WhatsApp contacts unavailable) — ask the owner for the number` };
   const hits = new Map<string, string>();
@@ -257,7 +258,7 @@ export function prepareCall(body: Record<string, unknown>, o: { origin?: 'agent'
   const cid = resolveCallerId(body.caller_id);
   if ('error' in cid) return { ok: false, error: `refused: ${cid.error}` };
   const s = outboundSettings();
-  const lang = body.language === 'en' ? 'en' : body.language === 'he' ? 'he' : cfg.voiceLang === 'en' ? 'en' : 'he';
+  const lang = body.language === 'en' || body.language === 'he' ? body.language : cfg.voiceLang === 'he' ? 'he' : 'en';
   return { ok: true, args: { to: r.number, name: r.name, goal, brief, from: cid.from, callerKind: cid.kind, language: lang, voicemail: str(body.voicemail, 400), amd: s.amd, maxMinutes: s.maxMinutes, usdPerMin: Math.round(callUsdPerMin() * 1000) / 1000, origin: o.origin || 'agent' } };
 }
 export function prepareSms(body: Record<string, unknown>, o: { now?: number; dbPath?: string } = {}): { ok: true; args: SmsArgs } | Refusal {
@@ -275,7 +276,7 @@ export function prepareSms(body: Record<string, unknown>, o: { now?: number; dbP
 }
 /** The card text: everything the call will do, nothing paraphrased later. */
 export function callCardText(a: CallArgs, why?: string): string {
-  const he = cfg.voiceLang !== 'en';
+  const he = cfg.voiceLang === 'he';
   const who = a.name ? `${a.name} (${a.to})` : a.to;
   const cid = a.callerKind === 'agent' ? (he ? `מספר הסוכן ${a.from}` : `the agent's number ${a.from}`) : he ? `המספר שלך ${a.from}` : `your number ${a.from}`;
   const amd = a.amd === 'voicemail' ? (he ? 'להשאיר הודעה קצרה' : 'leave a short message') : a.amd === 'hangup' ? (he ? 'לנתק' : 'hang up') : he ? 'ללא זיהוי' : 'no detection';
@@ -286,7 +287,7 @@ export function callCardText(a: CallArgs, why?: string): string {
   return lines.join('\n');
 }
 export function smsCardText(a: SmsArgs, why?: string): string {
-  const he = cfg.voiceLang !== 'en';
+  const he = cfg.voiceLang === 'he';
   const who = a.name ? `${a.name} (${a.to})` : a.to;
   return (he ? [`💬 לשלוח SMS ל-${who}?`, ...(why ? [`למה: ${why}`] : []), '', a.text, '', `מ-${a.from} · ${a.segments} הודעות · ${usd(a.estUsd)}`] : [`💬 Send an SMS to ${who}?`, ...(why ? [`Why: ${why}`] : []), '', a.text, '', `From ${a.from} · ${a.segments} segment(s) · ${usd(a.estUsd)}`]).join('\n');
 }
@@ -422,7 +423,7 @@ export function consumeOutboundToken(callSid: string, token: string, now = Date.
 
 // ---- the outbound clerk: persona + its four tools -----------------------------------------------------------------------------
 export const OUTBOUND_TOOLS: readonly ToolDef[] = [
-  { type: 'function', name: 'end_call', description: 'Hang up. Say goodbye FIRST, then call this with a two-sentence summary for the owner and the outcome.', parameters: { type: 'object', properties: { summary: { type: 'string', description: 'What was said and agreed, for the owner' }, outcome: { type: 'string', description: 'done | partial | refused | wrong-number | call-back' } }, required: ['summary'] } },
+  { type: 'function', name: 'end_call', description: 'Hang up. Say goodbye FIRST, then call this with a two-sentence summary for the owner and the outcome.', parameters: { type: 'object', properties: { summary: { type: 'string', description: "What was said and agreed, for the owner — in the call's language" }, outcome: { type: 'string', description: 'done | partial | refused | wrong-number | call-back' } }, required: ['summary'] } },
   { type: 'function', name: 'take_note', description: 'Keep one fact for the owner (a time, a name, a price, a number, a commitment).', parameters: { type: 'object', properties: { note: { type: 'string' } }, required: ['note'] } },
   { type: 'function', name: 'ask_owner', description: "Ask the owner a question the brief does not answer; waits up to a minute. Say 'רגע, אני בודק' first. If no answer comes, tell the person the owner will get back to them.", parameters: { type: 'object', properties: { question: { type: 'string' }, options: { type: 'array', items: { type: 'string' }, description: 'Optional: 2–4 short answers the owner can tap' } }, required: ['question'] } },
   { type: 'function', name: 'transfer_to_owner', description: 'Connect the person to the owner directly (only when they ask for the owner, or the brief says so). Say you are transferring first.', parameters: { type: 'object', properties: { reason: { type: 'string' } }, required: [] } },
@@ -442,6 +443,7 @@ export function outboundInstructions(c: Pick<CallArgs, 'language' | 'goal' | 'br
       `${s.allowTransfer ? 'If they ask to speak with the owner, use transfer_to_owner. ' : ''}` +
       'If the person asks not to be called again, apologise, note it and end the call. When the goal is reached or the person wants to stop, say goodbye and call end_call with a summary.',
     he ? 'Speak Hebrew unless the person clearly speaks another language.' : 'Speak English unless the person clearly speaks another language.',
+    he ? 'Write every end_call summary, take_note and ask_owner question in Hebrew — the owner reads them.' : 'Write every end_call summary, take_note and ask_owner question in English — the owner reads them.',
   ].join('\n');
 }
 export const outboundKick = (c: Pick<CallArgs, 'language'>): string => (c.language === 'he' ? '(השיחה התחברה — פתח עכשיו בהצגה עצמית.)' : '(The call just connected — open now with the introduction.)');
@@ -469,8 +471,8 @@ export async function runOutboundTool(c: OutboundCall, name: string, args: Recor
       if (!host) return { answer: null, say: 'The owner cannot be reached now; say they will get back to them.' };
       const options = (Array.isArray(args.options) ? args.options : []).map((x) => str(x, 60)).filter(Boolean).slice(0, 4);
       const who = c.name || c.to;
-      const prompt = cfg.voiceLang !== 'en' ? `📞 בשיחה עם ${who} (${c.goal}) שואלים:\n\n${q}` : `📞 On the call with ${who} (${c.goal}):\n\n${q}`;
-      const answer = await host.askOwner({ sessionId: c.sessionId, prompt, options: options.length ? options : cfg.voiceLang !== 'en' ? ['כן', 'לא'] : ['Yes', 'No'], timeoutMs: outboundSettings().askOwnerSeconds * 1000 });
+      const prompt = c.language !== 'en' ? `📞 בשיחה עם ${who} (${c.goal}) שואלים:\n\n${q}` : `📞 On the call with ${who} (${c.goal}):\n\n${q}`;
+      const answer = await host.askOwner({ sessionId: c.sessionId, prompt, options: options.length ? options : c.language !== 'en' ? ['כן', 'לא'] : ['Yes', 'No'], timeoutMs: outboundSettings().askOwnerSeconds * 1000 });
       if (answer) c.notes.length < NOTES_MAX && c.notes.push(`${q} → ${answer}`);
       return answer ? { answer } : { answer: null, say: 'No answer from the owner yet; say they will get back to them.' };
     }
@@ -527,6 +529,7 @@ export function handleOutboundStatus(params: Params, query: URLSearchParams): vo
   if (c.streamLive) arm(c, FINAL_FALLBACK_MS); // the bridge's end posts the card with the transcript
   else finalize(c);
 }
+const CLERK_OUTCOME_HE: Record<string, string> = { done: 'הושג', partial: 'חלקית', refused: 'סירבו', 'wrong-number': 'מספר שגוי', 'call-back': 'לחזור אליהם' };
 const LABEL: Record<Outcome, [string, string]> = { reached: ['נענתה', 'reached'], voicemail: ['משיבון', 'voicemail'], 'no-answer': ['לא ענו', 'no answer'], busy: ['תפוס', 'busy'], failed: ['נכשלה', 'failed'] };
 const mmss = (s: number): string => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`;
 function finalize(c: OutboundCall): void {
@@ -536,7 +539,7 @@ function finalize(c: OutboundCall): void {
   const outcome = outcomeOf(c);
   const seconds = c.duration || 0;
   if (seconds > 0) recordVoiceUsage('telephony:twilio', { seconds, inbound: false });
-  const he = cfg.voiceLang !== 'en';
+  const he = c.language !== 'en'; // the card follows the call's language, not the cockpit's
   const who = c.name || c.to;
   const label = LABEL[outcome][he ? 0 : 1];
   const summary = c.summary || (outcome === 'voicemail' ? (c.voicemailLeft ? (he ? 'הושארה הודעה במשיבון.' : 'A voicemail was left.') : he ? 'משיבון — ניתקתי בלי הודעה.' : 'Voicemail — hung up without a message.') : outcome === 'reached' && !c.turns.length ? (he ? 'נענתה, בלי שיחה מתועדת.' : 'Answered, no conversation recorded.') : '');
@@ -544,7 +547,7 @@ function finalize(c: OutboundCall): void {
   const turns = c.turns.map((t) => `**${t.role === 'assistant' ? (he ? 'הסוכן' : 'Agent') : them}:** ${t.text}`).join('\n\n');
   const body = [
     `**${he ? 'מטרה' : 'Goal'}:** ${c.goal}`,
-    `**${he ? 'תוצאה' : 'Outcome'}:** ${label}${c.transferred ? (he ? ' · הועבר אליך' : ' · transferred to you') : ''}${c.clerkOutcome ? ` (${c.clerkOutcome})` : ''}`,
+    `**${he ? 'תוצאה' : 'Outcome'}:** ${label}${c.transferred ? (he ? ' · הועבר אליך' : ' · transferred to you') : ''}${c.clerkOutcome ? ` (${he ? CLERK_OUTCOME_HE[c.clerkOutcome] || c.clerkOutcome : c.clerkOutcome})` : ''}`,
     ...(summary ? [`**${he ? 'סיכום' : 'Summary'}:** ${summary}`] : []),
     ...(c.notes.length ? [`**${he ? 'הערות' : 'Notes'}:**\n${c.notes.map((n) => `- ${n}`).join('\n')}`] : []),
     ...(turns ? ['---', turns] : []),
@@ -571,7 +574,7 @@ export function handleInboundSms(params: Params, h: SmsSinkHost | null): string 
   if (STOP_RE.test(body)) { setOptOut(from, true); tag = 'opt-out'; }
   else if (START_RE.test(body)) { setOptOut(from, false); tag = 'opt-in'; }
   try { (h?.receive || defaultReceive)(from, body); } catch (e) { console.error('[voice-outbound] sms store failed:', (e as Error).message); }
-  const he = cfg.voiceLang !== 'en';
+  const he = cfg.voiceLang === 'he';
   const note = tag === 'opt-out' ? (he ? '\n\n_ביקש/ה לא לקבל יותר הודעות ושיחות — נחסם._' : '\n\n_Asked to stop — no more calls or SMS to this number._') : tag === 'opt-in' ? (he ? '\n\n_ביטל/ה את החסימה._' : '\n\n_Opted back in._') : '';
   try { h?.appendChat(h.voiceHome().id, { kind: 'ext-card', extension: 'voice', title: `💬 SMS ${he ? 'מ-' : 'from '}${from}`, body: body + note, voice: { channel: 'sms', from, ...(tag ? { event: tag } : {}) } }); }
   catch (e) { console.error('[voice-outbound] sms card failed:', (e as Error).message); }
@@ -582,7 +585,7 @@ function defaultReceive(from: string, body: string): void { (require('./sms.js')
 // ---- caller-ID verification (Twilio OutgoingCallerIds) — the owner types the code on his phone; never auto-answered ----------------
 export async function startCallerIdVerification(number: unknown, fetchImpl?: typeof fetch): Promise<{ ok: true; code: string; number: string } | { ok: false; error: string }> {
   const n = normalizeNumber(number || cfg.telephony?.ownerNumber);
-  if (!n) return { ok: false, error: 'a number in international format is required (+9725…)' };
+  if (!n) return { ok: false, error: 'a number in international format is required (+…)' };
   const r = await twilioRequest('POST', 'OutgoingCallerIds.json', new URLSearchParams({ PhoneNumber: n, FriendlyName: 'Arigami owner' }), fetchImpl || fetcher);
   if (!r.ok) return { ok: false, error: r.error };
   const code = String(r.json.validation_code || '');
@@ -591,7 +594,7 @@ export async function startCallerIdVerification(number: unknown, fetchImpl?: typ
 }
 export async function checkCallerIdVerification(number: unknown, fetchImpl?: typeof fetch): Promise<{ ok: true; verified: boolean; number: string } | { ok: false; error: string }> {
   const n = normalizeNumber(number || cfg.telephony?.ownerNumber);
-  if (!n) return { ok: false, error: 'a number in international format is required (+9725…)' };
+  if (!n) return { ok: false, error: 'a number in international format is required (+…)' };
   const r = await twilioRequest('GET', 'OutgoingCallerIds.json', new URLSearchParams({ PhoneNumber: n }), fetchImpl || fetcher);
   if (!r.ok) return { ok: false, error: r.error };
   const hit = (Array.isArray(r.json.outgoing_caller_ids) ? r.json.outgoing_caller_ids : []).find((x: any) => String(x?.phone_number || '') === n);
@@ -603,7 +606,7 @@ export async function checkCallerIdVerification(number: unknown, fetchImpl?: typ
 }
 
 // ---- Settings → Voice & phone → outbound -----------------------------------------------------------------------------------------
-// The numbers on the Twilio account (the local one, the 053 mobile…) — Settings picks the agent's number from these.
+// The numbers on the Twilio account (several numbers possible) — Settings picks the agent's number from these.
 export interface AccountNumber { number: string; name: string; voice: boolean; sms: boolean }
 let numbersCache: { at: number; list: AccountNumber[] } | null = null;
 export async function listAccountNumbers(fetchImpl?: typeof fetch, now = Date.now()): Promise<AccountNumber[]> {
@@ -643,9 +646,11 @@ export function updateOutbound(body: Record<string, unknown>, base = ''): Record
     if (s.maxCallsPerDay !== undefined) next.maxCallsPerDay = int(s.maxCallsPerDay, 0, 100, 'maxCallsPerDay');
     if (s.maxSmsPerDay !== undefined) next.maxSmsPerDay = int(s.maxSmsPerDay, 0, 200, 'maxSmsPerDay');
     if (s.allowTransfer !== undefined) next.allowTransfer = s.allowTransfer === true;
+    if (s.defaultCountry !== undefined) { const c = String(s.defaultCountry || '').replace(/^\+/, ''); if (!/^\d{0,3}$/.test(c)) throw new Error('defaultCountry is 1–3 digits or empty'); next.defaultCountry = c; }
     if (s.quiet) {
       for (const k of ['start', 'end'] as const) if (s.quiet[k] !== undefined) { if (!HM_RE.test(String(s.quiet[k]))) throw new Error(`quiet.${k} must be HH:MM`); next.quiet[k] = String(s.quiet[k]); }
       if (s.quiet.shabbat !== undefined) next.quiet.shabbat = s.quiet.shabbat === true;
+      if (s.quiet.timezone !== undefined) { const tz = String(s.quiet.timezone || '').trim(); try { new Intl.DateTimeFormat('en-US', { timeZone: tz }); } catch { throw new Error('quiet.timezone must be an IANA zone, e.g. Europe/London'); } if (!tz) throw new Error('quiet.timezone required'); next.quiet.timezone = tz; }
     }
     patch.outbound = next;
   }

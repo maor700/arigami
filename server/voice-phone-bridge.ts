@@ -38,9 +38,14 @@ const sendJson = (w: WebSocket | null, m: unknown): void => { if (w && w.readySt
 
 // ---- Gemini Live: PCM 16 kHz in / 24 kHz out, transcripts on, BLOCKING tools, interruption by the model's VAD -----------
 export async function connectGeminiBackend(o: Omit<BackendOpts, 'provider'>): Promise<Backend> {
+  try { return await geminiAttempt(o, true); }
+  catch (e) { console.error(`[voice-phone] gemini setup with the ${o.lang || cfg.voiceLang} transcription hint failed (${scrubProviderSecrets((e as Error).message, 'voice:gemini')}); retrying without it`); return geminiAttempt(o, false); }
+}
+async function geminiAttempt(o: Omit<BackendOpts, 'provider'>, hint: boolean): Promise<Backend> {
   let ready: () => void = () => {};
   let fail: (e: Error) => void = () => {};
   const setup = new Promise<void>((res, rej) => { ready = res; fail = rej; });
+  let live = false; // before setupComplete a close is a failed attempt, not a dropped call
   let n = 0;
   let user: Turn | null = null;
   let asst: Turn | null = null;
@@ -56,10 +61,11 @@ export async function connectGeminiBackend(o: Omit<BackendOpts, 'provider'>): Pr
     if (sc.turnComplete) { asst = null; user = null; }
   };
   // The host holds the API key, so it uses the plain endpoint; `…Constrained` is for the browser's ephemeral access_token (1007 otherwise).
-  const ws = await openSocket(`${geminiWsUrl().replace(/Constrained$/, '')}?key=${encodeURIComponent(o.token)}`, {}, onMsg, (why) => o.events.closed(why));
-  sendJson(ws, { setup: geminiSetup({ instructions: o.instructions, lang: o.lang || cfg.voiceLang, ...(o.tools ? { tools: o.tools } : {}) }) });
+  const ws = await openSocket(`${geminiWsUrl().replace(/Constrained$/, '')}?key=${encodeURIComponent(o.token)}`, {}, onMsg, (why) => (live ? o.events.closed(why) : fail(new Error(why))));
+  sendJson(ws, { setup: geminiSetup({ instructions: o.instructions, lang: o.lang || cfg.voiceLang, transcriptionHint: hint, ...(o.tools ? { tools: o.tools } : {}) }) });
   const t = setTimeout(() => fail(new Error('Gemini setup timed out')), CONNECT_TIMEOUT_MS);
-  try { await setup; } finally { clearTimeout(t); }
+  try { await setup; } catch (e) { try { ws.close(); } catch { /* ignore */ } throw e; } finally { clearTimeout(t); }
+  live = true;
   if (o.kick) sendJson(ws, { clientContent: { turns: [{ role: 'user', parts: [{ text: o.kick }] }], turnComplete: true } }); // stage 4a: the caller speaks first
   return {
     sendMulaw: (b64) => sendJson(ws, { realtimeInput: { audio: { data: mulawB64ToPcmB64(b64, 16000), mimeType: 'audio/pcm;rate=16000' } } }),

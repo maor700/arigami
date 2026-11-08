@@ -27,7 +27,7 @@ beforeAll(async () => {
   ({ OutboundSetup } = await import(web('components/settings/VoicePhone.jsx')));
 });
 
-const S = { disclosure: { he: 'שלום, כאן העוזר הדיגיטלי של {owner}.', en: "Hello, this is {owner}'s digital assistant." }, ownerName: 'מאור', callerId: 'agent', amd: 'voicemail', maxMinutes: 10, maxCallsPerDay: 5, maxSmsPerDay: 10, allowTransfer: true, askOwnerSeconds: 60, defaultCountry: '972', quiet: { start: '21:00', end: '08:00', shabbat: true, timezone: 'Asia/Jerusalem', lat: 31.778, lon: 35.235, extraDates: [] } };
+const S = { disclosure: { he: 'שלום, כאן העוזר הדיגיטלי של {owner}.', en: "Hello, this is {owner}'s digital assistant." }, ownerName: 'דני', callerId: 'agent', amd: 'voicemail', maxMinutes: 10, maxCallsPerDay: 5, maxSmsPerDay: 10, allowTransfer: true, askOwnerSeconds: 60, defaultCountry: '972', quiet: { start: '21:00', end: '08:00', shabbat: true, timezone: 'Asia/Jerusalem', lat: 31.778, lon: 35.235, extraDates: [] } };
 const VIEW = { number: '+97233000000', callerIds: [], settings: S, today: { calls: 1, sms: 2 }, optOuts: 0, quietNow: '', live: 0, usdPerMin: 0.088, smsUsd: 0.2575 };
 
 test('before its view loads it renders nothing', () => {
@@ -44,12 +44,14 @@ test('with a view: number, caller ID (owner disabled until verified), verify but
     expect(html).toMatch(/<option value="owner" disabled="">/);
     expect(html).toContain('data-outbound-verify-start');
     expect(html).toContain('value="שלום, כאן העוזר הדיגיטלי של {owner}."');
-    expect(html).toContain('value="מאור"');
+    expect(html).toContain('value="דני"');
     expect(html).toContain('data-outbound-amd');
     expect(html).toContain('value="21:00"');
     expect(html).toContain('value="08:00"');
     expect(html).toContain('data-outbound-shabbat="1"');
     expect(html).toContain('data-outbound-transfer="1"');
+    expect(html).toContain('value="Asia/Jerusalem"');
+    expect(html).toContain('value="972"');
     expect(html).toContain(lang === 'he' ? 'היום: 1/5 שיחות · 2/10 SMS' : 'Today: 1/5 calls · 2/10 SMS');
     expect(html).not.toContain('data-outbound-quiet=');
     expect(html).not.toMatch(/settings\.connections\.outbound[a-zA-Z.]*/);

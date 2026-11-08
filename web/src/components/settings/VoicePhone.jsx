@@ -220,7 +220,7 @@ export function OutboundSetup({ admin, tick, initial = null }) {
               {view.accountNumbers.map((n) => <option key={n.number} value={n.number}>{n.number}{n.name && n.name !== n.number ? ` · ${n.name}` : ''}{n.sms ? '' : ' · no SMS'}</option>)}
               {view.number && !view.accountNumbers.some((n) => n.number === view.number) && <option value={view.number}>{view.number}</option>}
             </select>
-          ) : <input dir="ltr" type="tel" placeholder="+972…" className={`${INPUT} w-44`} value={val('number', view.number || '')} disabled={!admin || busy} onChange={set('number')} data-outbound-number />}
+          ) : <input dir="ltr" type="tel" placeholder="+…" className={`${INPUT} w-44`} value={val('number', view.number || '')} disabled={!admin || busy} onChange={set('number')} data-outbound-number />}
           {draft.number !== undefined && draft.number !== (view.number || '') && <button type="button" className={BTN_PRIMARY} disabled={busy} onClick={() => post({ number: draft.number })}>{t('settings.connections.phone.save')}</button>}
         </span>
       </Field>
@@ -284,8 +284,14 @@ export function OutboundSetup({ admin, tick, initial = null }) {
           <input type="time" className={INPUT} value={val('end', s.quiet?.end || '08:00')} disabled={!admin || busy} onChange={set('end')} onBlur={commit('end', 'quiet')} data-outbound-quiet-end />
         </span>
       </Field>
+      <Field label={t('settings.connections.outbound.timezone')} hint={t('settings.connections.outbound.timezone.hint')}>
+        <input dir="ltr" className={`${INPUT} w-44`} value={val('timezone', s.quiet?.timezone || '')} disabled={!admin || busy} onChange={set('timezone')} onBlur={commit('timezone', 'quiet')} data-outbound-timezone />
+      </Field>
+      <Field label={t('settings.connections.outbound.country')} hint={t('settings.connections.outbound.country.hint')}>
+        <input dir="ltr" inputMode="numeric" placeholder="+…" className={`${INPUT} w-20`} value={val('defaultCountry', s.defaultCountry || '')} disabled={!admin || busy} onChange={set('defaultCountry')} onBlur={commit('defaultCountry')} data-outbound-country />
+      </Field>
       <Field label={t('settings.connections.outbound.shabbat')}>
-        <Toggle on={s.quiet?.shabbat !== false} disabled={!admin || busy} onChange={(v) => saveSettings({ quiet: { shabbat: v } })} data-outbound-shabbat={s.quiet?.shabbat !== false ? '1' : '0'} />
+        <Toggle on={s.quiet?.shabbat === true} disabled={!admin || busy} onChange={(v) => saveSettings({ quiet: { shabbat: v } })} data-outbound-shabbat={s.quiet?.shabbat === true ? '1' : '0'} />
       </Field>
       <Field label={t('settings.connections.outbound.transfer')}>
         <Toggle on={s.allowTransfer !== false} disabled={!admin || busy} onChange={(v) => saveSettings({ allowTransfer: v })} data-outbound-transfer={s.allowTransfer !== false ? '1' : '0'} />

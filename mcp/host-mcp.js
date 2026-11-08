@@ -882,7 +882,7 @@ export async function createArigamiServer(env = process.env) {
       name: 'call_contact',
       description:
         'Phone ANOTHER person for the owner (stage 4a): files a card with the recipient, goal, the brief the voice caller will follow, caller ID and cost — NOTHING dials until the owner presses Send. ' +
-        'to = a WhatsApp contact name or a phone number (+9725… / 05…); never guess a number — if the result says it is unknown or ambiguous, ask the owner. ' +
+        'to = a WhatsApp contact name or a phone number (+… international; a local number only when Settings has a default country code); never guess a number — if the result says it is unknown or ambiguous, ask the owner. ' +
         'The caller introduces itself as the owner\'s digital assistant, follows only the brief, can take notes, ask the owner (≤60 s) or transfer to them, and leaves a voicemail per settings. ' +
         'Refusals (quiet hours/Shabbat, daily cap, budget, opted out) come back as {ok:false, error} — tell the owner the reason. On success {pending:true}: stop and wait for the "[host] …" lines; the outcome, summary and transcript arrive as a card when the call ends. ' +
         'If Twilio is not connected you get {needs_setup} — call request_setup({capability:"telephony:twilio", why}).',

@@ -1756,7 +1756,7 @@ function ensureOutboundHost(): void {
     appendChat: (id, ev) => { claude.appendChat(id, ev); },
     tell: (id, line) => { try { tellSession(id, line); } catch (e) { console.error('[voice-outbound] tell:', (e as Error).message); } },
     askOwner: ({ sessionId, prompt, options, timeoutMs }) => new Promise((resolve) => {
-      const action = { id: 'act_' + nano(), at: new Date().toISOString(), kind: CALL_QUESTION_KIND, prompt, buttons: [...options.map((o, i) => ({ label: o, value: `opt${i}`, ...(i === 0 ? { style: 'primary' } : {}) })), { label: cfg.voiceLang === 'en' ? "I'll get back to them" : 'אחזור אליהם', value: CALL_LATER }] };
+      const action = { id: 'act_' + nano(), at: new Date().toISOString(), kind: CALL_QUESTION_KIND, prompt, buttons: [...options.map((o, i) => ({ label: o, value: `opt${i}`, ...(i === 0 ? { style: 'primary' } : {}) })), { label: cfg.voiceLang === 'he' ? 'אחזור אליהם' : "I'll get back to them", value: CALL_LATER }] };
       state.patchSession(sessionId, { action });
       claude.appendChat(sessionId, { kind: 'action-request', actionId: action.id, prompt, actionKind: CALL_QUESTION_KIND });
       pushIntervention(sessionId, 'action', prompt, 'a call is waiting for your answer');
