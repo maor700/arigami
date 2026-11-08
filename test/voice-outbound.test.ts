@@ -29,10 +29,10 @@ const il = (y: number, m: number, d: number, hh: number, mm = 0) => Date.UTC(y, 
 
 describe('pure', () => {
   test('numbers: E.164 as given, local 05x → +972, never a guess', () => {
-    expect(normalizeNumber('+972 52-111-2222', '972')).toBe('+972521112222');
-    expect(normalizeNumber('052-1112222', '972')).toBe('+972521112222');
-    expect(normalizeNumber('00972521112222', '972')).toBe('+972521112222');
-    expect(normalizeNumber('972521112222', '972')).toBe('+972521112222');
+    expect(normalizeNumber('+972 52-000-0001', '972')).toBe('+972520000001');
+    expect(normalizeNumber('052-0000001', '972')).toBe('+972520000001');
+    expect(normalizeNumber('00972520000001', '972')).toBe('+972520000001');
+    expect(normalizeNumber('972520000001', '972')).toBe('+972520000001');
     for (const x of ['0521', 'Dana', '', '5211122', '+0123456789']) expect([x, normalizeNumber(x, '972')]).toEqual([x, '']);
   });
   test('quiet: 21:00–08:00, Shabbat from candle-lighting to after nightfall, Yom Tov from its eve; a weekday noon is open', () => {
@@ -74,11 +74,13 @@ describe('pure', () => {
     expect(START_RE.test('START')).toBe(true);
   });
   test('persona: disclosure (with the owner name) + goal + brief + the rules; the four tools only', () => {
-    const s = S({ ownerName: 'מאור' });
-    expect(disclosureText('he', s)).toBe('שלום, כאן העוזר הדיגיטלי של מאור.');
+    const s = S({ ownerName: 'דני' });
+    expect(disclosureText('he', s)).toBe('שלום, כאן העוזר הדיגיטלי של דני.');
     expect(disclosureText('en', S())).toBe("Hello, this is the account owner's digital assistant.");
     const p = outboundInstructions({ language: 'he', goal: 'לקבוע תור', brief: 'בוקר בלבד', name: 'דנה' }, s);
-    for (const x of ['שלום, כאן העוזר הדיגיטלי של מאור.', 'Goal: לקבוע תור', 'בוקר בלבד', 'never claim to be human', 'ask_owner', 'transfer_to_owner', 'end_call', 'Speak Hebrew']) expect([x, p.includes(x)]).toEqual([x, true]);
+    for (const x of ['שלום, כאן העוזר הדיגיטלי של דני.', 'Goal: לקבוע תור', 'בוקר בלבד', 'never claim to be human', 'ask_owner', 'transfer_to_owner', 'end_call', 'Speak Hebrew']) expect([x, p.includes(x)]).toEqual([x, true]);
+    expect(p).toContain('Write every end_call summary, take_note and ask_owner question in Hebrew');
+    expect(outboundInstructions({ language: 'en', goal: 'g', brief: 'b', name: '' }, S())).toContain('Write every end_call summary, take_note and ask_owner question in English');
     expect(outboundInstructions({ language: 'en', goal: 'g', brief: 'b', name: '' }, S({ allowTransfer: false }))).not.toContain('transfer_to_owner');
     expect(OUTBOUND_TOOLS.map((t) => t.name)).toEqual(['end_call', 'take_note', 'ask_owner', 'transfer_to_owner']);
     for (const t of OUTBOUND_TOOLS) expect(t.parameters.type).toBe('object');
@@ -123,10 +125,10 @@ test('host-mcp: call_contact and send_sms schemas', async () => {
 describe('filing (child)', () => {
   const o = scenario('file');
   test('recipients: number, local number, a unique WhatsApp name, a chat name; ambiguous/unknown/partial ask instead of guessing', () => {
-    expect(o.recipients.e164).toEqual({ number: '+972521112222', name: '' });
-    expect(o.recipients.local.number).toBe('+972521112222');
-    expect(o.recipients.byName).toEqual({ number: '+972521112222', name: 'Dana Plumber' });
-    expect(o.recipients.chatName).toEqual({ number: '+972551110000', name: 'Clinic Desk' });
+    expect(o.recipients.e164).toEqual({ number: '+972520000001', name: '' });
+    expect(o.recipients.local.number).toBe('+972520000001');
+    expect(o.recipients.byName).toEqual({ number: '+972520000001', name: 'Dana Plumber' });
+    expect(o.recipients.chatName).toEqual({ number: '+972550000004', name: 'Clinic Desk' });
     expect(o.recipients.ambiguous.error).toContain('ask the owner which one');
     expect(o.recipients.ambiguous.candidates.length).toBe(2);
     for (const k of ['noPhone', 'unknown', 'partial']) expect([k, String(o.recipients[k].error)]).toEqual([k, expect.stringContaining('ask the owner')]);
@@ -138,10 +140,10 @@ describe('filing (child)', () => {
   });
   test('the card carries recipient, goal, the brief, the disclosure, caller ID, AMD and the cost', () => {
     expect(o.prepared.ok).toBe(true);
-    expect(o.prepared.args).toMatchObject({ to: '+972521112222', name: 'Dana Plumber', from: '+97233000000', callerKind: 'agent', language: 'he', amd: 'voicemail', maxMinutes: 10, origin: 'agent' });
-    for (const x of ['Dana Plumber (+972521112222)', 'Book a plumber visit', 'Do not agree to a price above 400 NIS', 'העוזר הדיגיטלי', 'מספר הסוכן +97233000000', 'להשאיר הודעה קצרה', 'עד 10 דק׳', '$0.88', 'the owner asked']) expect([x, o.card.includes(x)]).toEqual([x, true]);
-    expect(o.describe).toEqual({ channel: 'phone call', to: 'Dana Plumber (+972521112222)', text: 'Book a plumber visit for the kitchen sink', rest: {} });
-    expect(o.sms.args).toMatchObject({ to: '+972521112222', from: '+97233000000', segments: 1, estUsd: 0.26 });
+    expect(o.prepared.args).toMatchObject({ to: '+972520000001', name: 'Dana Plumber', from: '+97233000000', callerKind: 'agent', language: 'he', amd: 'voicemail', maxMinutes: 10, origin: 'agent' });
+    for (const x of ['Dana Plumber (+972520000001)', 'Book a plumber visit', 'Do not agree to a price above 400 NIS', 'העוזר הדיגיטלי', 'מספר הסוכן +97233000000', 'להשאיר הודעה קצרה', 'עד 10 דק׳', '$0.88', 'the owner asked']) expect([x, o.card.includes(x)]).toEqual([x, true]);
+    expect(o.describe).toEqual({ channel: 'phone call', to: 'Dana Plumber (+972520000001)', text: 'Book a plumber visit for the kitchen sink', rest: {} });
+    expect(o.sms.args).toMatchObject({ to: '+972520000001', from: '+97233000000', segments: 1, estUsd: 0.26 });
     expect(o.smsCard).toContain('שלום, כאן העוזר הדיגיטלי. נשמח לתיאום.');
   });
   test('refusals say why: quiet hours, Shabbat (Friday after candle-lighting too), budget, kill-switch, daily cap, unverified caller ID', () => {
@@ -166,7 +168,7 @@ describe('Send (child, stubbed Twilio)', () => {
     expect(o.placed.ok).toBe(true);
     const p = o.callReq.params;
     expect(o.callReq.url).toBe('/2010-04-01/Accounts/AC' + 'b'.repeat(32) + '/Calls.json');
-    expect(p.To).toEqual(['+972521112222']);
+    expect(p.To).toEqual(['+972520000001']);
     expect(p.From).toEqual(['+97233000000']);
     expect(p.Url[0]).toBe(`https://pub.example${TWILIO_OUTBOUND_PATH}?ob=${o.placed.id}`);
     expect(p.StatusCallback[0]).toBe(`https://pub.example${TWILIO_OUTBOUND_STATUS_PATH}?ob=${o.placed.id}`);
@@ -186,7 +188,7 @@ describe('Send (child, stubbed Twilio)', () => {
   test('SMS: Messages API from the agent number, cost in the ledger', () => {
     expect(o.smsSent.ok).toBe(true);
     expect(o.smsReq.url).toContain('/Messages.json');
-    expect(o.smsReq.params).toEqual({ To: ['+972521112222'], From: ['+97233000000'], Body: ['Your appointment is confirmed for Tuesday.'] });
+    expect(o.smsReq.params).toEqual({ To: ['+972520000001'], From: ['+97233000000'], Body: ['Your appointment is confirmed for Tuesday.'] });
     expect(o.smsLedger.usd).toBeCloseTo(0.26, 2);
   });
   test('caller-ID verification: the code comes back for the owner to type; the number counts only once Twilio lists it', () => {
@@ -204,7 +206,7 @@ describe('Send (child, stubbed Twilio)', () => {
   });
   test('settings: validated; the view has the number, caller IDs, settings, today', () => {
     expect(o.badUpdates.every((x: string) => x !== 'accepted')).toBe(true);
-    expect(o.updated).toMatchObject({ ownerName: 'מאור', maxMinutes: 5, quiet: { start: '22:00', end: '08:00', shabbat: true } });
+    expect(o.updated).toMatchObject({ ownerName: 'דני', maxMinutes: 5, quiet: { start: '22:00', end: '08:00', shabbat: true } });
     expect(o.view).toMatchObject({ number: '+97233000000', today: { calls: 2, sms: 1 }, quietNow: '' });
     expect(o.secretLeak).toBe(false);
   });
@@ -218,10 +220,16 @@ describe('answered call + outcome (child)', () => {
     expect(o.machine).toContain('<Say voice="Google.he-IL-Wavenet-A" language="he-IL">שלום, כאן העוזר הדיגיטלי של בעל החשבון. Please call back about Friday.</Say><Hangup/>');
     expect(o.machineHangup).toBe('<?xml version="1.0" encoding="UTF-8"?><Response><Hangup/></Response>');
   });
+  test('the card follows the call language, not the cockpit voiceLang', () => {
+    expect(o.cards[3].title).toBe('📞 שיחה ל-+972520000001 · תפוס'); // he call, voiceLang en
+    expect(o.cards[3].body).toContain('**מטרה:**');
+    expect(o.cards[4].title).toBe('📞 Call to +972520000001 · no answer'); // en call, voiceLang he
+    expect(o.cards[4].body).toContain('**Outcome:** no answer');
+  });
   test('final status → one card + a [host] line in the requesting session; outbound minutes in the ledger', () => {
-    expect(o.cards.map((c: any) => [c.id, c.outcome])).toEqual([['sess_req', 'busy'], ['sess_req', 'voicemail'], ['sess_req', 'no-answer']]);
+    expect(o.cards.map((c: any) => [c.id, c.outcome])).toEqual([['sess_req', 'busy'], ['sess_req', 'voicemail'], ['sess_req', 'no-answer'], ['sess_req', 'busy'], ['sess_req', 'no-answer']]);
     expect(o.cards[1].body).toContain('הושארה הודעה במשיבון');
-    expect(o.told.map((t: any) => t.line.match(/outcome: ([a-z-]+)/)[1])).toEqual(['busy', 'voicemail', 'no-answer']);
+    expect(o.told.map((t: any) => t.line.match(/outcome: ([a-z-]+)/)[1])).toEqual(['busy', 'voicemail', 'no-answer', 'busy', 'no-answer']);
     expect(o.ledger.seconds).toBe(19);
     expect(o.ledger.usd).toBeCloseTo((19 / 60) * 0.0646, 4);
     expect(o.live).toBe(0);
@@ -233,7 +241,7 @@ describe('outbound clerk on the stream (child)', () => {
   test('a bad token is refused; the backend gets the outbound persona, its four tools, the call language and a kick to speak first', () => {
     expect(o.badToken).toBe(1008);
     expect(o.backend.provider).toBe('voice:gemini');
-    expect(o.backend.instructions).toContain('שלום, כאן העוזר הדיגיטלי של מאור.');
+    expect(o.backend.instructions).toContain('שלום, כאן העוזר הדיגיטלי של דני.');
     expect(o.backend.instructions).toContain('Goal: לקבוע תור לטכנאי');
     expect(o.backend.instructions).toContain('לבקש את התור הראשון בשבוע הבא');
     expect(o.backend.tools).toEqual(['end_call', 'take_note', 'ask_owner', 'transfer_to_owner']);
@@ -256,7 +264,8 @@ describe('outbound clerk on the stream (child)', () => {
     expect(o.cardsBeforeStatus).toBe(0);
     expect(o.card.id).toBe('sess_req');
     expect(o.card.voice).toMatchObject({ channel: 'phone-out', outcome: 'reached', seconds: 95, turns: 2, transferred: true });
-    for (const x of ['**סיכום:** Booked Tuesday 10:00.', '- Tuesday 10:00', 'Is Tuesday 10:00 OK? → Tuesday works', '**הסוכן:** שלום, כאן העוזר הדיגיטלי של מאור', '**הצד השני:** יש ביום שלישי בעשר.']) expect([x, o.card.body.includes(x)]).toEqual([x, true]);
+    expect(o.card.body).toContain('**תוצאה:** נענתה · הועבר אליך (הושג)');
+    for (const x of ['**סיכום:** Booked Tuesday 10:00.', '- Tuesday 10:00', 'Is Tuesday 10:00 OK? → Tuesday works', '**הסוכן:** שלום, כאן העוזר הדיגיטלי של דני', '**הצד השני:** יש ביום שלישי בעשר.']) expect([x, o.card.body.includes(x)]).toEqual([x, true]);
     expect(o.noInboundTranscriptCard).toBe(true);
     expect(o.told[0].line).toContain('outcome: reached (transferred to the owner)');
     expect(o.ledger.twilio.seconds).toBe(95);
@@ -271,14 +280,14 @@ describe('webhooks over HTTP (child)', () => {
     expect(o.smsReplay.status).toBe(401);
     expect(o.smsOk.status).toBe(200);
     expect(o.smsOk.text).toBe('<?xml version="1.0" encoding="UTF-8"?><Response></Response>');
-    expect(o.smsStore[0]).toEqual({ from: '+972521112222', body: 'Got it, thanks' });
+    expect(o.smsStore[0]).toEqual({ from: '+972520000001', body: 'Got it, thanks' });
     expect(o.smsCards[0]).toMatchObject({ id: 'sess_home', body: 'Got it, thanks' });
   });
   test('STOP opts the number out of calls and SMS; START lifts it', () => {
     expect(o.optedOut).toBe(true);
     expect(o.smsCards[1].event).toBe('opt-out');
-    expect(o.afterStopSms.error).toBe('refused: +972521112222 opted out (STOP)');
-    expect(o.afterStopCall.error).toBe('refused: +972521112222 opted out (STOP)');
+    expect(o.afterStopSms.error).toBe('refused: +972520000001 opted out (STOP)');
+    expect(o.afterStopCall.error).toBe('refused: +972520000001 opted out (STOP)');
     expect(o.optedOutAfterStart).toBe(false);
   });
   test('outbound TwiML + status over the signed route; the event log never carries the number or the text', () => {
@@ -289,5 +298,15 @@ describe('webhooks over HTTP (child)', () => {
     expect(o.obCard).toEqual(['failed']);
     expect(o.events.map((e: any) => e.event)).toEqual(['sms', 'sms', 'sms', 'outbound', 'outbound-status']);
     expect(o.leak).toBe(false);
+  });
+});
+
+describe('the real Gemini backend on the outbound path (child, fake Live server)', () => {
+  const o = scenario('gemini');
+  test('setup carries the he-IL transcription hint + speech language, the outbound tools and the kick', () => {
+    expect(o.hinted).toEqual({ transcription: { languageCodes: ['he-IL'] }, speech: 'he-IL', tools: ['end_call', 'take_note', 'ask_owner', 'transfer_to_owner'], kick: '(השיחה התחברה — פתח עכשיו בהצגה עצמית.)' });
+  });
+  test('if Gemini refuses the hint, the bridge retries once without it — the call is not dropped', () => {
+    expect(o.fallback).toEqual({ setups: [{ languageCodes: ['he-IL'] }, {}], closedEvents: 0 });
   });
 });

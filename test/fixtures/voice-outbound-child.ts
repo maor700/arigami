@@ -9,7 +9,7 @@ import * as rt from '../../server/voice-realtime.js';
 import * as vp from '../../server/voice-phone.js';
 import * as vo from '../../server/voice-outbound.js';
 import { describe as describeOutbound, cardPrompt } from '../../server/lib/outbound.js';
-import { createPhoneBridge, type Backend, type BackendEvents } from '../../server/voice-phone-bridge.js';
+import { createPhoneBridge, connectGeminiBackend, type Backend, type BackendEvents } from '../../server/voice-phone-bridge.js';
 import { createWebhooks } from '../../server/webhooks.js';
 
 const OWNER = '+972500000000';
@@ -60,11 +60,11 @@ function waDb(): string {
   const p = path.join(process.env.ARIGAMI_DIR!, 'wa.db');
   const d = new DatabaseSync(p);
   d.exec(`CREATE TABLE contacts (jid TEXT, name TEXT, notify TEXT, phone_number TEXT); CREATE TABLE chats (jid TEXT, name TEXT); CREATE TABLE messages (chat_jid TEXT, content TEXT, timestamp TEXT);`);
-  d.prepare('INSERT INTO contacts VALUES (?,?,?,?)').run('111@lid', 'Dana Plumber', null, '972521112222');
-  d.prepare('INSERT INTO contacts VALUES (?,?,?,?)').run('972531234567@s.whatsapp.net', 'Yossi Garage', null, null);
-  d.prepare('INSERT INTO contacts VALUES (?,?,?,?)').run('972541234567@s.whatsapp.net', 'Yossi Bank', null, null);
+  d.prepare('INSERT INTO contacts VALUES (?,?,?,?)').run('111@lid', 'Dana Plumber', null, '972520000001');
+  d.prepare('INSERT INTO contacts VALUES (?,?,?,?)').run('972530000002@s.whatsapp.net', 'Yossi Garage', null, null);
+  d.prepare('INSERT INTO contacts VALUES (?,?,?,?)').run('972540000003@s.whatsapp.net', 'Yossi Bank', null, null);
   d.prepare('INSERT INTO contacts VALUES (?,?,?,?)').run('222@lid', 'NoPhone Guy', null, null);
-  d.prepare('INSERT INTO chats VALUES (?,?)').run('972551110000@s.whatsapp.net', 'Clinic Desk');
+  d.prepare('INSERT INTO chats VALUES (?,?)').run('972550000004@s.whatsapp.net', 'Clinic Desk');
   d.close();
   return p;
 }
@@ -77,8 +77,8 @@ updateTelephonyConfig({ ownerNumber: OWNER, pinHash: vp.hashPin('4321'), publicU
 async function file(): Promise<void> {
   const db = waDb();
   out.recipients = {
-    e164: vo.resolveRecipient('+972 52-111-2222', db),
-    local: vo.resolveRecipient('052-1112222', db),
+    e164: vo.resolveRecipient('+972 52-000-0001', db),
+    local: vo.resolveRecipient('052-0000001', db),
     byName: vo.resolveRecipient('Dana', db),
     chatName: vo.resolveRecipient('Clinic', db),
     ambiguous: vo.resolveRecipient('Yossi', db),
@@ -95,7 +95,7 @@ async function file(): Promise<void> {
     out.card = cardPrompt(exec, 'the owner asked');
     out.describe = describeOutbound(exec);
   }
-  const sms = vo.prepareSms({ to: '+972521112222', text: 'שלום, כאן העוזר הדיגיטלי. נשמח לתיאום.' }, { now: NOON });
+  const sms = vo.prepareSms({ to: '+972520000001', text: 'שלום, כאן העוזר הדיגיטלי. נשמח לתיאום.' }, { now: NOON });
   out.sms = sms;
   if (sms.ok) out.smsCard = cardPrompt({ via: 'sms', tool: 'send_sms', args: sms.args as unknown as Record<string, unknown> });
   // refusals with a clear reason
@@ -110,7 +110,7 @@ async function file(): Promise<void> {
   vo.__setOutboundFetch(stubFetch);
   rtRecord(); // a tiny spend so the cap is reached
   r.budget = vo.prepareCall(body, { now: NOON, dbPath: db });
-  r.smsBudget = vo.prepareSms({ to: '+972521112222', text: 'hi' }, { now: NOON });
+  r.smsBudget = vo.prepareSms({ to: '+972520000001', text: 'hi' }, { now: NOON });
   updateVoiceConfig({ caps: { 'telephony:twilio': null } });
   updateVoiceConfig({ enabled: false });
   r.off = vo.prepareCall(body, { now: NOON, dbPath: db });
@@ -125,7 +125,7 @@ function rtRecord(): void { (require('../../server/voice-usage.js') as typeof im
 
 // ---- Send: the Calls / Messages API request shape against the stub; guards re-checked; caller-ID verification ------------
 async function place(): Promise<void> {
-  const prep = vo.prepareCall({ to: '+972521112222', goal: 'Confirm the Tuesday appointment', brief: 'Confirm Tuesday 10:00. If they cannot, ask for Wednesday.', language: 'he' }, { now: NOON });
+  const prep = vo.prepareCall({ to: '+972520000001', goal: 'Confirm the Tuesday appointment', brief: 'Confirm Tuesday 10:00. If they cannot, ask for Wednesday.', language: 'he' }, { now: NOON });
   if (!prep.ok) throw new Error('prepare failed: ' + prep.error);
   out.beforeSend = reqs.length;
   const placed = await vo.placeCall(prep.args, 'sess_req', { base: BASE, fetchImpl: stubFetch, now: NOON });
@@ -142,13 +142,13 @@ async function place(): Promise<void> {
   out.nightRequests = reqs.length - before;
   // caller ID = the owner, once verified; AMD hang-up / off change the request
   updateTelephonyConfig({ callerIds: [{ number: OWNER, verifiedAt: new Date(NOON).toISOString() }], outbound: { ...vo.outboundSettings(), amd: 'off' } });
-  const own = vo.prepareCall({ to: '+972521112222', goal: 'g', brief: 'b', caller_id: 'owner' }, { now: NOON });
+  const own = vo.prepareCall({ to: '+972520000001', goal: 'g', brief: 'b', caller_id: 'owner' }, { now: NOON });
   if (!own.ok) throw new Error('owner caller id: ' + own.error);
   await vo.placeCall(own.args, 'sess_req', { base: BASE, fetchImpl: stubFetch, now: NOON });
   out.ownerReq = reqs[reqs.length - 1];
   vo.__resetOutbound();
   // SMS
-  const sms = vo.prepareSms({ to: '+972521112222', text: 'Your appointment is confirmed for Tuesday.' }, { now: NOON });
+  const sms = vo.prepareSms({ to: '+972520000001', text: 'Your appointment is confirmed for Tuesday.' }, { now: NOON });
   if (!sms.ok) throw new Error('sms: ' + sms.error);
   out.smsSent = await vo.sendSms(sms.args, { fetchImpl: stubFetch, now: NOON });
   out.smsReq = reqs[reqs.length - 1];
@@ -166,18 +166,18 @@ async function place(): Promise<void> {
   out.accountNumbers = await vo.listAccountNumbers(stubFetch, NOON);
   out.numbersReq = reqs[reqs.length - 1];
   vo.updateOutbound({ number: '+972530000000' });
-  out.switched = vo.prepareSms({ to: '+972521112222', text: 'x' }, { now: NOON });
+  out.switched = vo.prepareSms({ to: '+972520000001', text: 'x' }, { now: NOON });
   const bad: string[] = [];
   for (const b of [{ number: '12' }, { settings: { amd: 'x' } }, { settings: { maxMinutes: 0 } }, { settings: { quiet: { start: '25:00' } } }, { settings: { disclosure: { he: '' } } }]) { try { vo.updateOutbound(b); bad.push('accepted'); } catch (e) { bad.push((e as Error).message); } }
   out.badUpdates = bad;
-  out.updated = (vo.updateOutbound({ settings: { ownerName: 'מאור', maxMinutes: 5, quiet: { start: '22:00' } } }).settings as any);
+  out.updated = (vo.updateOutbound({ settings: { ownerName: 'דני', maxMinutes: 5, quiet: { start: '22:00' } } }).settings as any);
   out.secretLeak = JSON.stringify({ out, logs }).includes(TOKEN);
 }
 
 // ---- the answered call: TwiML per AMD; the final status → the outcome card ------------------------------------------------
 async function twimlAndStatus(): Promise<void> {
   const mk = async (args: Record<string, unknown> = {}) => {
-    const p = vo.prepareCall({ to: '+972521112222', goal: 'Ask about opening hours', brief: 'Ask when they open on Friday.', name: 'x', ...args }, { now: NOON });
+    const p = vo.prepareCall({ to: '+972520000001', goal: 'Ask about opening hours', brief: 'Ask when they open on Friday.', name: 'x', ...args }, { now: NOON });
     if (!p.ok) throw new Error(p.error);
     const r = await vo.placeCall(p.args, 'sess_req', { base: BASE, fetchImpl: stubFetch, now: NOON });
     if (!r.ok) throw new Error(r.error);
@@ -198,6 +198,13 @@ async function twimlAndStatus(): Promise<void> {
   const c = await mk();
   out.machineHangup = vo.handleOutboundTwiml({ CallSid: c.callSid, AnsweredBy: 'machine_start' }, q(c.id), { base: BASE });
   vo.handleOutboundStatus({ CallSid: c.callSid, CallStatus: 'no-answer' }, q(c.id));
+  // the card follows the call's language, not the cockpit's voiceLang
+  (cfg as any).voiceLang = 'en';
+  const heCall = await mk({ language: 'he' });
+  vo.handleOutboundStatus({ CallSid: heCall.callSid, CallStatus: 'busy' }, q(heCall.id));
+  (cfg as any).voiceLang = 'he';
+  const enCall = await mk({ language: 'en' });
+  vo.handleOutboundStatus({ CallSid: enCall.callSid, CallStatus: 'no-answer' }, q(enCall.id));
   out.cards = cards.map((x) => ({ id: x.id, title: x.ev.title, body: x.ev.body, outcome: x.ev.voice?.outcome, seconds: x.ev.voice?.seconds }));
   out.told = told.map((x) => ({ id: x.id, line: x.line }));
   out.ledger = voiceUsageThisMonth()['telephony:twilio'];
@@ -224,8 +231,8 @@ async function bridge(): Promise<void> {
   srv.on('upgrade', (req, socket, head) => { if (req.url === vp.TWILIO_STREAM_PATH) br.handleUpgrade(req, socket as any, head); else socket.destroy(); });
   await new Promise<void>((r) => srv.listen(0, '127.0.0.1', () => r()));
   const wsUrl = `ws://127.0.0.1:${(srv.address() as any).port}${vp.TWILIO_STREAM_PATH}`;
-  updateTelephonyConfig({ outbound: { ...vo.outboundSettings(), ownerName: 'מאור' } });
-  const p = vo.prepareCall({ to: '+972521112222', goal: 'לקבוע תור לטכנאי', brief: 'לבקש את התור הראשון בשבוע הבא, עדיף בבוקר.', language: 'he' }, { now: NOON });
+  updateTelephonyConfig({ outbound: { ...vo.outboundSettings(), ownerName: 'דני' } });
+  const p = vo.prepareCall({ to: '+972520000001', goal: 'לקבוע תור לטכנאי', brief: 'לבקש את התור הראשון בשבוע הבא, עדיף בבוקר.', language: 'he' }, { now: NOON });
   if (!p.ok) throw new Error(p.error);
   const placed = await vo.placeCall(p.args, 'sess_req', { base: BASE, fetchImpl: stubFetch, now: NOON });
   if (!placed.ok) throw new Error(placed.error);
@@ -242,7 +249,7 @@ async function bridge(): Promise<void> {
   const b = backends[0];
   out.backend = b.o;
   out.clerkCalls = rt.liveCallCount();
-  b.events.turn({ role: 'assistant', text: 'שלום, כאן העוזר הדיגיטלי של מאור. אני מתקשר לקבוע תור.', id: 'a1' });
+  b.events.turn({ role: 'assistant', text: 'שלום, כאן העוזר הדיגיטלי של דני. אני מתקשר לקבוע תור.', id: 'a1' });
   b.events.turn({ role: 'user', text: 'יש ביום שלישי בעשר.', id: 'u1' });
   b.events.tool({ callId: 't1', name: 'take_note', args: { note: 'Tuesday 10:00' } });
   b.events.tool({ callId: 't2', name: 'ask_owner', args: { question: 'Is Tuesday 10:00 OK?', options: ['Yes', 'No'] } });
@@ -285,20 +292,20 @@ async function webhook(): Promise<void> {
     const r = await fetch(base + pathQ, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', ...(sign ? { 'x-twilio-signature': vp.twilioSignature(TOKEN, BASE + pathQ, params) } : {}) }, body: new URLSearchParams(params).toString() });
     return { status: r.status, type: r.headers.get('content-type') || '', text: await r.text() };
   };
-  const sms = { MessageSid: 'SM' + 'a'.repeat(32), From: '+972521112222', To: AGENT, Body: 'Got it, thanks', AccountSid: SID };
+  const sms = { MessageSid: 'SM' + 'a'.repeat(32), From: '+972520000001', To: AGENT, Body: 'Got it, thanks', AccountSid: SID };
   out.smsUnsigned = await post(vo.TWILIO_SMS_PATH, sms, false);
   out.smsOk = await post(vo.TWILIO_SMS_PATH, sms);
   out.smsReplay = await post(vo.TWILIO_SMS_PATH, sms);
   out.stop = await post(vo.TWILIO_SMS_PATH, { ...sms, MessageSid: 'SM' + 'b'.repeat(32), Body: 'STOP' });
-  out.optedOut = vo.isOptedOut('+972521112222');
-  out.afterStopSms = vo.prepareSms({ to: '+972521112222', text: 'hello again' }, { now: NOON });
-  out.afterStopCall = vo.prepareCall({ to: '+972521112222', goal: 'g', brief: 'b' }, { now: NOON });
+  out.optedOut = vo.isOptedOut('+972520000001');
+  out.afterStopSms = vo.prepareSms({ to: '+972520000001', text: 'hello again' }, { now: NOON });
+  out.afterStopCall = vo.prepareCall({ to: '+972520000001', goal: 'g', brief: 'b' }, { now: NOON });
   out.start = await post(vo.TWILIO_SMS_PATH, { ...sms, MessageSid: 'SM' + 'c'.repeat(32), Body: 'START' });
-  out.optedOutAfterStart = vo.isOptedOut('+972521112222');
+  out.optedOutAfterStart = vo.isOptedOut('+972520000001');
   out.smsStore = smsStore;
   out.smsCards = cards.filter((x) => x.ev.voice?.channel === 'sms').map((x) => ({ id: x.id, title: x.ev.title, body: x.ev.body, event: x.ev.voice?.event }));
   // outbound TwiML + status through the real route (query is signed too)
-  const p = vo.prepareCall({ to: '+972521112222', goal: 'g', brief: 'b' }, { now: NOON });
+  const p = vo.prepareCall({ to: '+972520000001', goal: 'g', brief: 'b' }, { now: NOON });
   if (!p.ok) throw new Error(p.error);
   const placed = await vo.placeCall(p.args, 'sess_req', { base: BASE, fetchImpl: stubFetch, now: NOON });
   if (!placed.ok) throw new Error(placed.error);
@@ -312,12 +319,46 @@ async function webhook(): Promise<void> {
   srv.close();
 }
 
+// ---- the real Gemini backend against a fake Live server: the he-IL transcription hint, and the fallback if Gemini refuses it --------
+async function gemini(): Promise<void> {
+  const setups: any[] = [];
+  const kicks: any[] = [];
+  let refuseHint = false;
+  const fake = Bun.serve({
+    port: 0, hostname: '127.0.0.1',
+    fetch: (req, server) => (server.upgrade(req) ? undefined : new Response('no', { status: 400 })),
+    websocket: {
+      message(ws, data) {
+        const m = JSON.parse(String(data));
+        if (m.setup) { setups.push(m.setup); if (refuseHint && m.setup.inputAudioTranscription?.languageCodes) ws.close(1007, 'Invalid JSON payload: unknown field languageCodes'); else ws.send(JSON.stringify({ setupComplete: {} })); }
+        if (m.clientContent) kicks.push(m.clientContent);
+      },
+    },
+  });
+  process.env.ARIGAMI_GEMINI_API_BASE = `http://127.0.0.1:${fake.port}`;
+  let closed = 0;
+  const events: BackendEvents = { audio() {}, interrupted() {}, tool() {}, turn() {}, closed: () => { closed++; } };
+  const p = { language: 'he' as const, goal: 'g', brief: 'b', name: '' };
+  const b1 = await connectGeminiBackend({ token: 'AIza-test', instructions: vo.outboundInstructions(p), events, lang: 'he', tools: vo.OUTBOUND_TOOLS, kick: vo.outboundKick(p) });
+  await until(() => kicks.length === 1);
+  out.hinted = { transcription: setups[0].inputAudioTranscription, speech: setups[0].generationConfig.speechConfig.languageCode, tools: setups[0].tools[0].functionDeclarations.map((f: any) => f.name), kick: kicks[0].turns[0].parts[0].text };
+  b1.close();
+  await sleep(100);
+  closed = 0; // b1's own close above is a normal end
+  refuseHint = true;
+  const b2 = await connectGeminiBackend({ token: 'AIza-test', instructions: 'x', events, lang: 'he', tools: vo.OUTBOUND_TOOLS });
+  out.fallback = { setups: setups.slice(1).map((s) => s.inputAudioTranscription), closedEvents: closed };
+  b2.close();
+  fake.stop(true);
+}
+
 const scenario = process.argv[2];
 try {
   if (scenario === 'file') await file();
   else if (scenario === 'place') await place();
   else if (scenario === 'twiml') await twimlAndStatus();
   else if (scenario === 'bridge') await bridge();
+  else if (scenario === 'gemini') await gemini();
   else await webhook();
   process.stdout.write(JSON.stringify({ ok: true, out, logs: logs.slice(-40) }));
 } catch (e) {

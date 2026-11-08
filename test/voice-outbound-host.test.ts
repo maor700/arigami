@@ -118,19 +118,19 @@ const actionOf = async (id: string) => (await api('GET', `/__api/sessions/${id}`
 test('outbound settings → call card → Don\'t send / Send → fake Twilio → signed TwiML + status → outcome card; SMS both ways; caller-ID code', async () => {
   expect((await api('POST', '/__api/voice/phone', { ownerNumber: OWNER, publicUrl: PUB })).status).toBe(200);
   // quiet hours off so the test does not depend on the clock / Shabbat
-  const view = (await api('POST', '/__api/voice/outbound', { number: AGENT, settings: { ownerName: 'מאור', quiet: { start: '00:00', end: '00:00', shabbat: false } } })).json;
-  expect(view).toMatchObject({ smsUrl: PUB + TWILIO_SMS_PATH, number: AGENT, settings: { ownerName: 'מאור', callerId: 'agent', amd: 'voicemail', maxMinutes: 10 } });
+  const view = (await api('POST', '/__api/voice/outbound', { number: AGENT, settings: { ownerName: 'דני', quiet: { start: '00:00', end: '00:00', shabbat: false } } })).json;
+  expect(view).toMatchObject({ smsUrl: PUB + TWILIO_SMS_PATH, number: AGENT, settings: { ownerName: 'דני', callerId: 'agent', amd: 'voicemail', maxMinutes: 10 } });
   expect((await api('POST', '/__api/voice/outbound', { settings: { amd: 'nope' } })).status).toBe(400);
   const sid = (await api('POST', '/__api/sessions', { title: 'calls', cwd: path.join(dir, 'workspace') })).json.id;
 
   // call_contact → a card; nothing dials
-  const filed = await api('POST', '/__api/voice/call', { sessionId: sid, to: '052-111-2222', goal: 'לאשר את התור ביום שלישי', brief: 'לאשר שלישי ב-10:00; אם לא מתאים, לבקש רביעי.', why: 'the owner asked' });
+  const filed = await api('POST', '/__api/voice/call', { sessionId: sid, to: '052-000-0001', goal: 'לאשר את התור ביום שלישי', brief: 'לאשר שלישי ב-10:00; אם לא מתאים, לבקש רביעי.', why: 'the owner asked' });
   expect(filed.status).toBe(202);
   expect(filed.json).toMatchObject({ pending: true, sent: false });
   let act = await actionOf(sid);
   expect(act.kind).toBe('outbound');
-  expect(act.outbound).toMatchObject({ via: 'call', tool: 'call_contact', args: { to: '+972521112222', from: AGENT, callerKind: 'agent', goal: 'לאשר את התור ביום שלישי' } });
-  for (const x of ['+972521112222', 'לאשר שלישי ב-10:00', 'שלום, כאן העוזר הדיגיטלי של מאור.', `מספר הסוכן ${AGENT}`]) expect([x, String(act.prompt).includes(x)]).toEqual([x, true]);
+  expect(act.outbound).toMatchObject({ via: 'call', tool: 'call_contact', args: { to: '+972520000001', from: AGENT, callerKind: 'agent', goal: 'לאשר את התור ביום שלישי' } });
+  for (const x of ['+972520000001', 'לאשר שלישי ב-10:00', 'שלום, כאן העוזר הדיגיטלי של דני.', `מספר הסוכן ${AGENT}`]) expect([x, String(act.prompt).includes(x)]).toEqual([x, true]);
   expect(twilio.filter((r) => r.path === 'Calls.json').length).toBe(0);
   // a refusal comes back as {ok:false, error}, no card
   const refused = await api('POST', '/__api/voice/call', { sessionId: sid, to: '0521', goal: 'g', brief: 'b' });
@@ -141,13 +141,13 @@ test('outbound settings → call card → Don\'t send / Send → fake Twilio →
   expect(twilio.filter((r) => r.path === 'Calls.json').length).toBe(0);
 
   // Send → Calls.json with the card's own arguments
-  await api('POST', '/__api/voice/call', { sessionId: sid, to: '+972521112222', goal: 'לאשר את התור ביום שלישי', brief: 'לאשר שלישי ב-10:00.' });
+  await api('POST', '/__api/voice/call', { sessionId: sid, to: '+972520000001', goal: 'לאשר את התור ביום שלישי', brief: 'לאשר שלישי ב-10:00.' });
   act = await actionOf(sid);
   expect((await api('POST', `/__api/sessions/${sid}/action/answer`, { actionId: act.id, value: 'send' })).status).toBe(200);
   const calls = twilio.filter((r) => r.path === 'Calls.json');
   expect(calls.length).toBe(1);
   const c = calls[0].params;
-  expect(c).toMatchObject({ To: '+972521112222', From: AGENT, Method: 'POST', MachineDetection: 'DetectMessageEnd', TimeLimit: '600', Timeout: '30' });
+  expect(c).toMatchObject({ To: '+972520000001', From: AGENT, Method: 'POST', MachineDetection: 'DetectMessageEnd', TimeLimit: '600', Timeout: '30' });
   expect(c.Url.startsWith(PUB + TWILIO_OUTBOUND_PATH + '?ob=ob_')).toBe(true);
   const ob = c.Url.split('?')[1];
 
@@ -155,26 +155,26 @@ test('outbound settings → call card → Don\'t send / Send → fake Twilio →
   expect((await api('POST', `${TWILIO_OUTBOUND_PATH}?${ob}`, form({ CallSid: CALL, AnsweredBy: 'machine_end_beep' }), { 'content-type': 'application/x-www-form-urlencoded' })).status).toBe(401);
   const tw = await signed(`${TWILIO_OUTBOUND_PATH}?${ob}`, { CallSid: CALL, AnsweredBy: 'machine_end_beep' });
   expect(tw.type).toBe('text/xml; charset=utf-8');
-  expect(tw.text).toContain('<Say voice="Google.he-IL-Wavenet-A" language="he-IL">שלום, כאן העוזר הדיגיטלי של מאור.');
+  expect(tw.text).toContain('<Say voice="Google.he-IL-Wavenet-A" language="he-IL">שלום, כאן העוזר הדיגיטלי של דני.');
   expect((await signed(`${TWILIO_OUTBOUND_STATUS_PATH}?${ob}`, { CallSid: CALL, CallStatus: 'completed', CallDuration: '21', AnsweredBy: 'machine_end_beep' })).status).toBe(204);
   const chat = await until(async () => { const ch = await chatOf(sid); return ch.some((e) => e.voice?.channel === 'phone-out') ? ch : null; });
   const card = chat.find((e) => e.voice?.channel === 'phone-out');
-  expect(card.title).toBe('📞 שיחה ל-+972521112222 · משיבון · 0:21');
+  expect(card.title).toBe('📞 שיחה ל-+972520000001 · משיבון · 0:21');
   expect(card.voice).toMatchObject({ outcome: 'voicemail', seconds: 21 });
   const budget = (await api('GET', '/__api/voice/budget')).json;
   expect(budget.usage['telephony:twilio'].seconds).toBe(21);
 
   // SMS: card → Send → Messages.json
-  const sms = await api('POST', '/__api/voice/sms', { sessionId: sid, to: '+972521112222', text: 'התור אושר לשלישי.' });
+  const sms = await api('POST', '/__api/voice/sms', { sessionId: sid, to: '+972520000001', text: 'התור אושר לשלישי.' });
   expect(sms.status).toBe(202);
   act = await actionOf(sid);
-  expect(act.outbound).toMatchObject({ via: 'sms', args: { to: '+972521112222', from: AGENT, text: 'התור אושר לשלישי.' } });
+  expect(act.outbound).toMatchObject({ via: 'sms', args: { to: '+972520000001', from: AGENT, text: 'התור אושר לשלישי.' } });
   expect(twilio.filter((r) => r.path === 'Messages.json').length).toBe(0);
   await api('POST', `/__api/sessions/${sid}/action/answer`, { actionId: act.id, value: 'send' });
-  expect(twilio.filter((r) => r.path === 'Messages.json').map((r) => r.params)).toEqual([{ To: '+972521112222', From: AGENT, Body: 'התור אושר לשלישי.' }]);
+  expect(twilio.filter((r) => r.path === 'Messages.json').map((r) => r.params)).toEqual([{ To: '+972520000001', From: AGENT, Body: 'התור אושר לשלישי.' }]);
 
   // inbound SMS on the agent number → the voice home
-  const inSms = { MessageSid: 'SM' + '9'.repeat(32), From: '+972521112222', To: AGENT, Body: 'תודה, נתראה', AccountSid: SID };
+  const inSms = { MessageSid: 'SM' + '9'.repeat(32), From: '+972520000001', To: AGENT, Body: 'תודה, נתראה', AccountSid: SID };
   expect((await api('POST', TWILIO_SMS_PATH, form(inSms), { 'content-type': 'application/x-www-form-urlencoded' })).status).toBe(401);
   expect((await signed(TWILIO_SMS_PATH, inSms)).text).toBe('<?xml version="1.0" encoding="UTF-8"?><Response></Response>');
   const sessions = (await api('GET', '/__api/sessions')).json;
