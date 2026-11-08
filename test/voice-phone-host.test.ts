@@ -175,6 +175,7 @@ test('settings → signed webhook → PIN → stream WebSocket → Gemini Live f
   await until(() => gemini.toolResponses.length === 1, 10000);
   expect(gemini.setups[0].model).toBe('models/gemini-3.8-live');
   expect(gemini.setups[0].systemInstruction.parts[0].text).toContain('calling by phone');
+  expect(gemini.setups[0].inputAudioTranscription).toEqual({ languageCodes: ['he-IL'] }); // ASR pinned to the call language
   expect(gemini.setups[0].tools[0].functionDeclarations.map((f: any) => f.name)).toContain('list_sessions');
   expect(gemini.audioIn.slice(0, 3)).toEqual([{ mime: 'audio/pcm;rate=16000', bytes: 640 }, { mime: 'audio/pcm;rate=16000', bytes: 640 }, { mime: 'audio/pcm;rate=16000', bytes: 640 }]);
   expect(gemini.toolResponses[0].functionResponses[0]).toMatchObject({ id: 'fc-1', name: 'list_sessions', response: { result: { sessions: expect.any(Array) } } });

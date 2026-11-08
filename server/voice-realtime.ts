@@ -111,7 +111,7 @@ export const PHONE_INSTRUCTIONS = ' The owner is calling by phone: there is no s
 export const phoneInstructions = (team: readonly AgentLite[] | null = null, lang: string = voiceLang()): string => CLERK_INSTRUCTIONS + langInstructions(lang) + teamInstructions(team) + PHONE_INSTRUCTIONS;
 
 export type ToolDef = { type: 'function'; name: string; description: string; parameters: Record<string, unknown> };
-export function geminiSetup({ model = geminiModel(), voice = geminiVoice(), handle = '', context = null as ClerkContext | null, instructions = '', lang = voiceLang(), tools = CLERK_TOOLS as readonly ToolDef[] } = {}): Record<string, unknown> {
+export function geminiSetup({ model = geminiModel(), voice = geminiVoice(), handle = '', context = null as ClerkContext | null, instructions = '', lang = voiceLang(), tools = CLERK_TOOLS as readonly ToolDef[], transcriptionHint = false } = {}): Record<string, unknown> {
   const blocking = /^gemini-3\.8-live$/.test(model); // 3.8-live defaults to NON_BLOCKING; the clerk waits for its tools
   return {
     model: `models/${model}`,
@@ -119,7 +119,7 @@ export function geminiSetup({ model = geminiModel(), voice = geminiVoice(), hand
     systemInstruction: { parts: [{ text: instructions || clerkInstructions(context, null, lang) }] },
     tools: [{ functionDeclarations: tools.map((t) => ({ name: t.name, description: t.description, parameters: t.parameters, ...(blocking ? { behavior: 'BLOCKING' } : {}) })) }],
     realtimeInputConfig: { automaticActivityDetection: {}, activityHandling: 'START_OF_ACTIVITY_INTERRUPTS' },
-    inputAudioTranscription: {},
+    inputAudioTranscription: transcriptionHint ? { languageCodes: [speechLang(lang)] } : {}, // the host's phone bridge pins the ASR to the call's language ('na' for Hebrew otherwise)
     outputAudioTranscription: {},
     sessionResumption: handle ? { handle } : {},
     contextWindowCompression: { slidingWindow: {} }, // lifts the 15-minute audio-session cap

@@ -246,6 +246,7 @@ Call `requireVoiceProvider(kind)` first and return its non-ok shapes as the tool
   goal + brief + rules (never claims to be human, nothing beyond the brief); it speaks first; tools only `end_call({summary, outcome})`,
   `take_note`, `ask_owner` (a card in the requesting session with tap answers + "I'll get back to them", ≤60 s) and `transfer_to_owner`
   (REST `<Dial>` to the owner's number).
+- **Language**: the call's `language` (default he) drives the persona, the summary/notes the clerk writes, the card's labels, and the ASR — the host's phone bridge sends Gemini `inputAudioTranscription.languageCodes:[he-IL]` (inbound and outbound; retried once without it if refused).
 - **After**: on the final status (and the stream's end) one card in the requesting session — outcome (reached / voicemail / no-answer / busy
   / failed, transferred), the summary, notes, both sides of the transcript — plus a `[host]` line to its agent (the voice home gets a system
   line). Twilio's outbound minutes from `CallDuration`, the realtime minutes from the bridge. The transferred leg is billed by Twilio, not
