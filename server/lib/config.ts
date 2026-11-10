@@ -212,6 +212,9 @@ export interface MemoryLearningConfig {
 }
 export interface MemoryConfig {
   learning: MemoryLearningConfig;
+  // CONSOL1: optional token caps — shared USER.md/MEMORY.md and per agent
+  // namespace (agents.<slug> → that agent's MEMORY.md). Absent = memory.ts CAPS.
+  caps?: { user?: number; memory?: number; agents?: Record<string, number> };
 }
 
 // Voice & phone layer (docs/VOICE.md): one kill-switch + a monthly USD cap per provider id (absent = no cap).
