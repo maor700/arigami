@@ -24,12 +24,12 @@ import {
 const tmp = () => tmpDir('arigami-consol-');
 const est = (s) => Math.ceil((s || '').length / 4);
 
-const USER = '- Replies in Hebrew, short.\n- - Never merge PRs; the owner merges.\n';
+const USER = '- Replies are short.\n- - Never merge PRs; the owner merges.\n';
 const MEM = [
-  '- GitHub API rate limit is shared across all sessions; keep gh calls minimal.',
-  '- The GitHub API rate limit is shared by all sessions, so keep gh calls minimal and use GraphQL when REST runs out.',
-  '- Toast audit found 101 call sites across 35 files.',
-  '- Login ladder: MCP first, then request_login, then shared Chrome.',
+  '- The staging database is read-only on weekends; schedule migrations on weekdays.',
+  '- The staging database is read-only during weekends, so schedule migrations on weekdays and announce them first.',
+  '- The last sprint audit found 12 flaky tests in 3 suites.',
+  '- Deploys go through the old release script, then a manual tag.',
 ].join('\n') + '\n';
 
 // ---- pure ---------------------------------------------------------------------------
@@ -59,12 +59,12 @@ test('parseConsolidation refuses unknown ids, cross-file merges, single-line mer
   expect(r.ops.map((o) => `${o.kind}:${o.lines.join('+')}`)).toEqual(['DROP:M3']);
   expect(r.notes.length).toBe(5);
   expect(r.admit).toEqual(['c1']);
-  expect(r.ops[0].originals).toEqual(['Toast audit found 101 call sites across 35 files.']);
+  expect(r.ops[0].originals).toEqual(['The last sprint audit found 12 flaky tests in 3 suites.']);
 });
 
 test('verified = deterministic dedupe only: near-duplicate MERGE and a DROP whose twin survives; never REWRITE/MOVE or a low-value DROP', () => {
   const ls = numberLines(USER, MEM);
-  const merged = 'GitHub API rate limit is shared across all sessions; keep gh calls minimal and use GraphQL when REST runs out.';
+  const merged = 'The staging database is read-only on weekends; schedule migrations on weekdays and announce them first.';
   const a = parseConsolidation(JSON.stringify({ ops: [{ kind: 'MERGE', lines: ['M1', 'M2'], content: merged, reason: 'same fact' }] }), ls);
   expect(a.ops[0].verified).toBe(true);
   // DROP of M1 while its twin M2 stays → verified.
@@ -77,9 +77,9 @@ test('verified = deterministic dedupe only: near-duplicate MERGE and a DROP whos
   const d = parseConsolidation(
     JSON.stringify({
       ops: [
-        { kind: 'MERGE', lines: ['M3', 'M4'], content: 'Toast audit and login ladder.', reason: '' },
-        { kind: 'REWRITE', lines: ['U1'], content: 'Replies in Hebrew.', reason: '' },
-        { kind: 'MOVE_TO_SKILL', lines: ['U2'], skill: 'ship-it', reason: '' },
+        { kind: 'MERGE', lines: ['M3', 'M4'], content: 'Audit and deploy notes.', reason: '' },
+        { kind: 'REWRITE', lines: ['U1'], content: 'Replies stay short.', reason: '' },
+        { kind: 'MOVE_TO_SKILL', lines: ['U2'], skill: 'release', reason: '' },
       ],
     }),
     ls
@@ -90,7 +90,7 @@ test('verified = deterministic dedupe only: near-duplicate MERGE and a DROP whos
 });
 
 test('planConsolidation simulates the diff, reports tokens before/after and autoApplicable only for verified MERGE/DROP', () => {
-  const merged = 'GitHub API rate limit is shared across all sessions; keep gh calls minimal and use GraphQL when REST runs out.';
+  const merged = 'The staging database is read-only on weekends; schedule migrations on weekdays and announce them first.';
   const pure = planConsolidation({ text: JSON.stringify({ ops: [{ kind: 'MERGE', lines: ['M1', 'M2'], content: merged }] }), userMd: USER, memoryMd: MEM, estimateTokens: est });
   expect(pure.autoApplicable).toBe(true);
   expect(pure.tokens.after.memory).toBeLessThan(pure.tokens.before.memory);
@@ -103,7 +103,7 @@ test('planConsolidation simulates the diff, reports tokens before/after and auto
   expect(mixed.autoApplicable).toBe(false);
   const lines = numberLines(USER, MEM);
   const after = simulateConsolidation(mixed.ops, lines, { userMd: USER, memoryMd: MEM });
-  expect(after.memoryMd).toBe(`- ${merged}\n- Login ladder: MCP first, then request_login, then shared Chrome.\n`);
+  expect(after.memoryMd).toBe(`- ${merged}\n- Deploys go through the old release script, then a manual tag.\n`);
   expect(after.userMd).toBe(USER);
   expect(planConsolidation({ text: '{"ops":[]}', userMd: USER, memoryMd: MEM, estimateTokens: est }).autoApplicable).toBe(false);
 });
@@ -114,13 +114,13 @@ test('the consolidation prompt shows numbered existing lines, the cap pressure, 
     deferred: [{ key: 'c1', target: 'memory', content: 'The demo tenant has real users', count: 3 }],
     caps: { user: 600, memory: 900 },
     tokens: { user: 599, memory: 894 },
-    skills: ['ship-it', 'local-env'],
+    skills: ['release', 'dev-setup'],
   });
-  expect(p).toContain('M2: The GitHub API rate limit');
+  expect(p).toContain('M2: The staging database is read-only during weekends');
   expect(p).toContain('U2: Never merge PRs');
   expect(p).toContain('MEMORY.md 894/900');
   expect(p).toContain('c1 [target=memory, seen ×3]: The demo tenant has real users');
-  expect(p).toContain('ship-it, local-env');
+  expect(p).toContain('release, dev-setup');
 });
 
 test('learnSignature ignores pending order and changes with either file', () => {
@@ -196,7 +196,7 @@ test('caps: per-agent cap from config raises only that namespace; a shrinking re
       "const caps={shared:m.capFor('memory'),rec:m.capFor('memory','sales'),other:m.capFor('memory','ops'),user:m.capFor('user','sales')};" +
       "const big='x'.repeat(3900);" +
       "const rec=m.writeMemory({target:'memory',action:'add',content:big+' sales',agent:'sales'});" +
-      "const chief=m.writeMemory({target:'memory',action:'add',content:big+' chief',agent:'ops'});" +
+      "const other=m.writeMemory({target:'memory',action:'add',content:big+' other',agent:'ops'});" +
       // Lower the shared cap under the current file: a shrinking replace still works, a growing add does not.
       "m.writeMemory({target:'memory',action:'add',content:'y'.repeat(800)});" +
       "m.writeMemory({target:'memory',action:'add',content:'short line'});" +
@@ -204,11 +204,11 @@ test('caps: per-agent cap from config raises only that namespace; a shrinking re
       "const shrink=m.writeMemory({target:'memory',action:'replace',old_text:'y'.repeat(800),content:'y'.repeat(700)});" +
       "const grow=m.writeMemory({target:'memory',action:'add',content:'another'});" +
       "const forced=m.writeMemory({target:'memory',action:'add',content:'restored by undo',allowOverCap:true});" +
-      'emit({caps,rec:rec.ok,chief:chief.ok,shrink:shrink.ok,grow:grow.ok,forced:forced.ok});',
+      'emit({caps,rec:rec.ok,other:other.ok,shrink:shrink.ok,grow:grow.ok,forced:forced.ok});',
     { ARIGAMI_DIR: dir, ARIGAMI_PORT: '' }
   );
   if (!r.ok) throw new Error(r.error);
-  expect(r.out[0]).toEqual({ caps: { shared: 900, rec: 1400, other: 900, user: 600 }, rec: true, chief: false, shrink: true, grow: false, forced: true });
+  expect(r.out[0]).toEqual({ caps: { shared: 900, rec: 1400, other: 900, user: 600 }, rec: true, other: false, shrink: true, grow: false, forced: true });
 }, 30000);
 
 // ---- the learner: stuck guard, auto consolidation + brake, manual proposal, apply/undo ------
@@ -219,9 +219,9 @@ const filler = (n) =>
 function seedFullMemory(dir) {
   const mem = path.join(dir, 'memory');
   fs.mkdirSync(mem, { recursive: true });
-  const twinA = '- GitHub API rate limit is shared across all sessions; keep gh calls minimal.';
-  const twinB = '- The GitHub API rate limit is shared by all sessions, so keep gh calls minimal and use GraphQL when REST runs out.';
-  const stale = '- Login ladder: MCP first, then request_login, then shared Chrome.';
+  const twinA = '- The staging database is read-only on weekends; schedule migrations on weekdays.';
+  const twinB = '- The staging database is read-only during weekends, so schedule migrations on weekdays and announce them first.';
+  const stale = '- Deploys go through the old release script, then a manual tag.';
   let body = `${twinA}\n${twinB}\n${stale}\n`;
   let n = 1;
   while (est(body + filler(n + 1) + '\n') <= 890) n++;
@@ -241,7 +241,7 @@ const LEARNER = (mode) =>
   "const M=await import('./server/memory.ts');const L=await import('./server/memory-learning.ts');" +
   "M.proposeFacts(['The demo tenant has real users: never submit persisting changes there.'],{source:'test',sessionId:'s1'});" +
   "let now=Date.parse('2026-11-10T00:00:00Z');" +
-  `const l=L.createLearner({llm,now:()=>now,memAvailableMb:()=>1500,config:()=>({mode:'${mode}',minBatch:1,maxAgeHours:48,minFreeMb:600}),log:()=>{},emit:()=>{},notify:(n)=>notes.push(n),skills:()=>['ship-it']});` +
+  `const l=L.createLearner({llm,now:()=>now,memAvailableMb:()=>1500,config:()=>({mode:'${mode}',minBatch:1,maxAgeHours:48,minFreeMb:600}),log:()=>{},emit:()=>{},notify:(n)=>notes.push(n),skills:()=>['release']});` +
   'const tickAndSettle=async()=>{const t=await l.tick();await new Promise(r=>setTimeout(r,50));return t.ran;};';
 
 test('stuck guard: at cap with nothing to consolidate, the next tick does not re-ask the model', () => {
@@ -261,13 +261,13 @@ test('stuck guard: at cap with nothing to consolidate, the next tick does not re
 test('auto mode manages its own memory: at cap it consolidates (deletions included), archives removed lines, notifies, and the waiting fact enters', () => {
   const dir = tmp();
   const t = seedFullMemory(dir);
-  const merged = 'GitHub API rate limit is shared across all sessions; keep gh calls minimal and use GraphQL when REST runs out.';
+  const merged = 'The staging database is read-only on weekends; schedule migrations on weekdays and announce them first.';
   const consolidation = {
     ops: [
       { kind: 'MERGE', lines: ['M1', 'M2'], content: merged, reason: 'same fact' },
-      { kind: 'REWRITE', lines: ['M3'], content: 'Sign-ins go through the sign_in tool.', reason: 'stale' },
+      { kind: 'REWRITE', lines: ['M3'], content: 'Deploys go through the release workflow.', reason: 'stale' },
       { kind: 'DROP', lines: ['M4'], reason: 'one-off detail' },
-      { kind: 'MOVE_TO_SKILL', lines: ['M5'], skill: 'ship-it', reason: 'procedure' },
+      { kind: 'MOVE_TO_SKILL', lines: ['M5'], skill: 'release', reason: 'procedure' },
     ],
     admit: ['c1'],
   };
@@ -288,11 +288,11 @@ test('auto mode manages its own memory: at cap it consolidates (deletions includ
   expect(o.mem).toContain(merged);
   expect(o.mem).not.toContain(t.twinA);
   expect(o.mem).not.toContain(t.stale);
-  expect(o.mem).toContain('Sign-ins go through the sign_in tool.');
+  expect(o.mem).toContain('Deploys go through the release workflow.');
   // Nothing is lost: every removed/rewritten line is in the journal, searchable.
   expect(o.journal).toContain(t.twinA);
   expect(o.journal).toContain(t.stale);
-  expect(o.journal).toContain('belongs in skill ship-it');
+  expect(o.journal).toContain('belongs in skill release');
   expect(o.notes.map((n) => n.title)).toEqual(['Memory consolidated']);
   // The files changed → the stuck guard lets the next tick run, and the waiting fact now fits.
   expect(o.t2).toBe(true);
@@ -339,11 +339,11 @@ test('manual mode: the diff is only proposed and notified, never applied', () =>
 test('apply is hash-checked (409 after a concurrent edit); approved ops apply, learning resumes, per-op undo restores the lines', () => {
   const dir = tmp();
   const t = seedFullMemory(dir);
-  const merged = 'GitHub API rate limit is shared across all sessions; keep gh calls minimal and use GraphQL when REST runs out.';
+  const merged = 'The staging database is read-only on weekends; schedule migrations on weekdays and announce them first.';
   const consolidation = {
     ops: [
       { kind: 'MERGE', lines: ['M1', 'M2'], content: merged, reason: 'same fact' },
-      { kind: 'REWRITE', lines: ['M3'], content: 'Sign-ins go through the sign_in tool.', reason: 'stale' },
+      { kind: 'REWRITE', lines: ['M3'], content: 'Deploys go through the release workflow.', reason: 'stale' },
     ],
   };
   const r = runInChild(
@@ -352,13 +352,13 @@ test('apply is hash-checked (409 after a concurrent edit); approved ops apply, l
       "const l=L.createLearner({llm,memAvailableMb:()=>1500,config:()=>({mode:'manual',minBatch:1,maxAgeHours:48,minFreeMb:600}),log:()=>{},emit:()=>{},notify:()=>{},skills:()=>[]});" +
       // A proposal, then someone edits MEMORY.md → the proposal is stale.
       "const p1=await l.consolidate();" +
-      "M.writeMemory({target:'memory',action:'replace',old_text:" + JSON.stringify(t.stale) + ",content:'Login ladder: MCP first, then sign_in.'});" +
+      "M.writeMemory({target:'memory',action:'replace',old_text:" + JSON.stringify(t.stale) + ",content:'Deploys go through the old release script.'});" +
       "let stale=null;try{l.applyConsolidation(p1.id)}catch(e){stale=e.status}" +
-      "M.writeMemory({target:'memory',action:'replace',old_text:'Login ladder: MCP first, then sign_in.',content:" + JSON.stringify(t.stale) + "});" +
+      "M.writeMemory({target:'memory',action:'replace',old_text:'Deploys go through the old release script.',content:" + JSON.stringify(t.stale) + "});" +
       // Fresh proposal against the current files; approve both ops.
       "const p2=await l.consolidate();const applied=l.applyConsolidation(p2.id);" +
       "const afterApply=fs.readFileSync(M.MEMORY_MD,'utf8');" +
-      "const prov=M.lineProvenance('memory').find(x=>x.line.includes('GraphQL'));" +
+      "const prov=M.lineProvenance('memory').find(x=>x.line.includes('announce them first'));" +
       "const room=M.writeMemory({target:'memory',action:'add',content:'The demo tenant has real users: never submit persisting changes there.'});" +
       "const u1=l.undoConsolidation(p2.id,'k1');const u2=l.undoConsolidation(p2.id,'k1');" +
       "emit({stale,ops:applied.ops.map(o=>[o.key,o.applied,o.logSeqs.length]),afterApply,prov:prov.source,room:room.ok,u1,u2,afterUndo:fs.readFileSync(M.MEMORY_MD,'utf8')});",
@@ -370,7 +370,7 @@ test('apply is hash-checked (409 after a concurrent edit); approved ops apply, l
   expect(o.ops).toEqual([['k1', true, 2], ['k2', true, 1]]);
   expect(o.afterApply).toContain(merged);
   expect(o.afterApply).not.toContain(t.twinA);
-  expect(o.afterApply).toContain('Sign-ins go through the sign_in tool.');
+  expect(o.afterApply).toContain('Deploys go through the release workflow.');
   expect(o.prov).toMatch(/^consolidation:cr_/);
   expect(o.room).toBe(true); // the freed tokens let a waiting fact in
   expect(o.u1).toEqual({ ok: true });
@@ -378,5 +378,5 @@ test('apply is hash-checked (409 after a concurrent edit); approved ops apply, l
   expect(o.afterUndo).toContain(t.twinA);
   expect(o.afterUndo).toContain(t.twinB);
   expect(o.afterUndo).not.toContain(merged);
-  expect(o.afterUndo).toContain('Sign-ins go through the sign_in tool.'); // the other op is untouched
+  expect(o.afterUndo).toContain('Deploys go through the release workflow.'); // the other op is untouched
 }, 30000);
