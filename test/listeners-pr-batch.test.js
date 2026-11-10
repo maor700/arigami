@@ -30,6 +30,7 @@ test('buildPrBatchQuery: one alias per PR, values travel as variables not query 
   expect(query).toContain('p0: repository(owner: $o0, name: $r0)');
   expect(query).toContain('p1: repository(owner: $o1, name: $r1)');
   expect(query).toContain('rateLimit { cost remaining resetAt }');
+  expect(query).toContain('viewer { login }');
   expect(query).not.toContain('evil');
   expect(vars).toEqual({ o0: 'o', r0: 'r', n0: 1, o1: 'x"}) { evil', r1: 'y', n1: 2 });
 });
@@ -149,4 +150,26 @@ test('quotaPausedUntil: pauses below the floor until reset, otherwise goes ahead
   // window already reset since the last reading → stale low number must not block
   expect(quotaPausedUntil({ remaining: 5, resetAt: now - 1 }, now)).toBeNull();
   expect(quotaPausedUntil({ remaining: 50, resetAt }, now, 10)).toBeNull();
+});
+
+test('parsePrBatch: returns the viewer login (the self-filter) when GitHub sends it', () => {
+  expect(parsePrBatch({ viewer: { login: 'me' }, p0: { pullRequest: node() } }, [], 1).viewer).toBe('me');
+  expect(parsePrBatch({ p0: { pullRequest: node() } }, [], 1).viewer).toBe(null);
+});
+
+test("batch: a review session (viewer ≠ author) wakes on the author's replies", () => {
+  const data = {
+    viewer: { login: 'reviewer' },
+    p0: {
+      pullRequest: node({
+        author: { login: 'author' },
+        reviews: { nodes: [{ databaseId: 5842198764, state: 'COMMENTED', author: { login: 'author' } }] },
+        reviewThreads: { nodes: [{ comments: { nodes: [{ databaseId: 4525135619, author: { login: 'author' } }] } }] },
+      }),
+    },
+  };
+  const { results, viewer } = parsePrBatch(data, [], 1);
+  const d = diffPr(results[0].snap, { reviewId: 1, reviewCommentId: 1 }, { fireOn: FIRE, ignoreLogin: viewer });
+  expect(d.shouldFire).toBe(true);
+  expect(d.summary).toContain('@author');
 });
