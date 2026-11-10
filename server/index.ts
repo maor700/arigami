@@ -515,6 +515,24 @@ server.listen(cfg.port, cfg.bind, () => {
 // usable for the in-flight response.
 setDrainHandler(() => { try { server.close(); } catch {} });
 
+// MEM1: one `[mem]` line every 30 min (and one at boot) — rss/heap of THIS
+// process plus what the chat tails hold — so a slow leak is visible in the
+// journal before the OOM killer sees it. process.memoryUsage() only: the
+// heap census is a full walk and stays behind GET /__api/host/mem?heap=1.
+{
+  const MEM_LOG_MS = Number(process.env.ARIGAMI_MEM_LOG_MS) || 30 * 60_000;
+  const logMem = async () => {
+    try {
+      const mem = await import('./lib/mem.js');
+      const { tailStats } = await import('./claude.js');
+      const t = tailStats();
+      console.log(mem.formatSample(mem.sample(), { tails: t.sessions, tailBytes: t.bytes, ws: bus.clientCount() }));
+    } catch {}
+  };
+  setTimeout(logMem, 15_000).unref?.();
+  setInterval(logMem, MEM_LOG_MS).unref?.();
+}
+
 function shutdown(): void {
   flushState();
   try {

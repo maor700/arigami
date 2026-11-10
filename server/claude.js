@@ -19,7 +19,7 @@ import * as hostGrants from './lib/mcp-grants.js';
 import * as sessionMcp from './lib/session-mcp.js';
 import * as scratch from './lib/scratch.js';
 import { cfg, CHAT_DIR, getSession, patchSession, setClaude, setBg, listSessions, untildify, setChangesExplaining, setAutoReviewing, removePendingPrompt, setSummarizing, autoPlayHold, listInbox, patchInboxItem } from './state.js';
-import { broadcast } from './bus.js';
+import { broadcast, subscribe } from './bus.js';
 import { expirePendingPermissions, expirePendingScreenRequests, detachPendingSetupRequests } from './api.js';
 import { tokenForSession, quarantine, nextAvailable, getActiveId, getAccount, setActive, resolveRefreshToken } from './accounts.js';
 import { refreshOne } from './oauth-login.js';
@@ -355,22 +355,109 @@ export function bgKill(id, shellId) {
 
 // ---- chat log: normalized events, persisted to CHAT_DIR/<id>.jsonl --------
 
-const tails = new Map(); // sessionId → { seq, events[] } (in-memory tail for rehydration)
+// MEM1: the tail is a CACHE of the jsonl on disk, bounded three ways, because
+// the events it holds are the full rows — a tool result is routinely 100KB+ —
+// and the Map used to keep every session that ever appended for the life of
+// the process. On a long-lived host that was the memory leak: hundreds of
+// sessions × up to 500 full-size events, never evicted, archived or not.
+//   * per session: at most TAIL_MAX events AND TAIL_MAX_BYTES of serialized
+//     rows (the oldest go first; getChat/getChatPage/getChatEvent already fall
+//     back to disk when the tail does not reach far enough);
+//   * globally: at most TAILS_MAX_BYTES across all sessions — the Map is kept
+//     in least-recently-used order (tail() re-inserts on access) and the
+//     coldest sessions are dropped whole; a dropped tail is rebuilt from disk
+//     (seq = line count) on the next touch, so correctness never depends on it;
+//   * a deleted session's tail is forgotten outright (bus `session-deleted`).
+// `bytes` is the length of the JSON line we write anyway — close enough to the
+// heap cost to budget on, and free to compute.
+const tails = new Map(); // sessionId → { seq, events[], sizes[], bytes } (LRU: oldest first)
 const TAIL_MAX = 500;
+const TAIL_MAX_BYTES = envInt('ARIGAMI_TAIL_MAX_BYTES', 4 * 1024 * 1024);
+const TAILS_MAX_BYTES = envInt('ARIGAMI_TAILS_MAX_BYTES', 256 * 1024 * 1024);
+let tailsBytes = 0; // sum of t.bytes over the Map
 const chatFile = (id) => path.join(CHAT_DIR, `${id}.jsonl`);
+
+function envInt(name, dflt) {
+  const n = Number(process.env[name]);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : dflt;
+}
+
+// Lines in the chat file = the seq of the last persisted event. Counted in
+// 64KB chunks on the raw bytes: the old form read the whole file into one
+// string and walked it char by char, which on a 200MB transcript blocked the
+// event loop (and /__health) for seconds every time a cold session was touched.
+function countLines(file) {
+  let fd;
+  try { fd = fs.openSync(file, 'r'); } catch { return 0; }
+  try {
+    const buf = Buffer.allocUnsafe(64 * 1024);
+    let n = 0;
+    for (;;) {
+      const read = fs.readSync(fd, buf, 0, buf.length, null);
+      if (read <= 0) break;
+      let i = -1;
+      while ((i = buf.indexOf(0x0a, i + 1)) !== -1 && i < read) n++;
+    }
+    return n;
+  } catch {
+    return 0;
+  } finally {
+    try { fs.closeSync(fd); } catch {}
+  }
+}
 
 function tail(id) {
   let t = tails.get(id);
-  if (!t) {
-    let seq = 0;
-    try {
-      const txt = fs.readFileSync(chatFile(id), 'utf8');
-      for (let i = 0; i < txt.length; i++) if (txt[i] === '\n') seq++;
-    } catch {}
-    t = { seq, events: [] };
+  if (t) {
+    // LRU touch: Map iteration is insertion order, so re-inserting moves the
+    // entry to the end (newest); eviction walks from the start (coldest).
+    tails.delete(id);
     tails.set(id, t);
+    return t;
   }
+  t = { seq: countLines(chatFile(id)), events: [], sizes: [], bytes: 0 };
+  tails.set(id, t);
   return t;
+}
+
+function dropOldest(t) {
+  t.events.shift();
+  const n = t.sizes.shift() || 0;
+  t.bytes -= n;
+  tailsBytes -= n;
+}
+
+/** Drop a session's in-memory tail (its jsonl stays). Rebuilt from disk on the next touch. */
+export function forgetTail(id) {
+  const t = tails.get(id);
+  if (!t) return false;
+  tailsBytes -= t.bytes;
+  tails.delete(id);
+  return true;
+}
+
+// Evict the coldest tails until the global budget holds. `keep` is the tail
+// that was just appended to — it is never evicted here even when it alone is
+// over budget (its own per-session cap handles that).
+function enforceTailBudget(keep) {
+  if (tailsBytes <= TAILS_MAX_BYTES) return;
+  for (const [id, t] of tails) {
+    if (tailsBytes <= TAILS_MAX_BYTES) break;
+    if (t === keep) continue;
+    tailsBytes -= t.bytes;
+    tails.delete(id);
+  }
+}
+
+/** Diagnostics (GET /__api/host/mem): how much the chat tails hold. */
+export function tailStats() {
+  let events = 0;
+  let largest = null;
+  for (const [id, t] of tails) {
+    events += t.events.length;
+    if (!largest || t.bytes > largest.bytes) largest = { id, bytes: t.bytes, events: t.events.length };
+  }
+  return { sessions: tails.size, events, bytes: tailsBytes, largest, perSessionMaxBytes: TAIL_MAX_BYTES, totalMaxBytes: TAILS_MAX_BYTES };
 }
 
 let _evSeqGlobal = 0;
@@ -381,11 +468,16 @@ function shortId() {
 export function appendChat(id, ev) {
   const t = tail(id);
   ev = { id: ev.id || shortId(), seq: ++t.seq, ts: Date.now(), ...ev };
+  const line = JSON.stringify(ev) + '\n';
   t.events.push(ev);
-  if (t.events.length > TAIL_MAX) t.events.shift();
+  t.sizes.push(line.length);
+  t.bytes += line.length;
+  tailsBytes += line.length;
+  while (t.events.length > TAIL_MAX || (t.events.length > 1 && t.bytes > TAIL_MAX_BYTES)) dropOldest(t);
+  enforceTailBudget(t);
   try {
     fs.mkdirSync(CHAT_DIR, { recursive: true });
-    fs.appendFileSync(chatFile(id), JSON.stringify(ev) + '\n');
+    fs.appendFileSync(chatFile(id), line);
   } catch (e) {
     console.error('[chat] append failed:', e.message);
   }
@@ -2913,3 +3005,9 @@ const claudeDriver = {
   effortLevels: () => EFFORT_LEVELS,
 };
 registerEngine(claudeDriver);
+
+// MEM1: a deleted session's chat tail goes with it (state.deleteSession
+// broadcasts; state.ts cannot import this file back).
+subscribe((m) => {
+  if (m?.type === 'session-deleted' && typeof m.id === 'string') forgetTail(m.id);
+});

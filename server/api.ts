@@ -3688,6 +3688,14 @@ export async function handle(
       const top = Number(new URL(req.url || '/', 'http://localhost').searchParams.get('top'));
       return json(res, r.sample({ topProcesses: Number.isFinite(top) && top > 0 ? Math.min(top, 100) : 12 }));
     }
+    // MEM1: this process's own memory. `?heap=1` adds the bun:jsc object-type
+    // census (a full heap walk — seconds on a big heap, so opt-in).
+    if (p === '/__api/host/mem' && m === 'GET') {
+      const mem = await import('./lib/mem.js');
+      const out: Record<string, unknown> = { ...mem.sample(), chatTails: claude.tailStats(), wsClients: (await import('./bus.js')).clientCount() };
+      if (u.searchParams.get('heap') === '1') out.heap = mem.heap(Number(u.searchParams.get('top')) || 15);
+      return json(res, out);
+    }
     if (p === '/__api/host/status' && m === 'GET') {
       const hc = await import('./host-control.js');
       return json(res, await hc.hostStatus());
@@ -3764,6 +3772,13 @@ export async function handle(
         }
         if (sub === 'restart' && m === 'DELETE') {
           return json(res, { ok: true, cancelled: hc.restarts.cancel(), status: await hc.hostStatus() });
+        }
+        // MEM1: write a JSC heap snapshot to $ARIGAMI_DIR/diag for offline
+        // analysis. Admin only — it can double the process's memory while it runs.
+        if (sub === 'heap-snapshot' && m === 'POST') {
+          if (!auth.isAdmin((req as any).auth)) return json(res, { error: 'admin only' }, 403);
+          const mem = await import('./lib/mem.js');
+          return json(res, { ok: true, ...mem.snapshot(), after: mem.sample() });
         }
         if (sub === 'upgrade' && m === 'POST') {
           // dispatch/update-backend: the plan comes from the active channel's
