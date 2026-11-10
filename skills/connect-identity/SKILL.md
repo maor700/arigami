@@ -19,7 +19,7 @@ a profile without a Chrome account is told apart by its name ("Work", "Personal"
 | apple | `apple` (opens account.apple.com) | `account.apple.com` |
 
 Follow `skills/machine-work/SKILL.md` (narration, the screenshot moments). The sign-in itself is `sign_in`
-(`docs/LOGIN.md`): it runs in the owner's everyday Chrome on the shared desktop, where Google treats it as a person, and
+(`$ARIGAMI_DOCS/LOGIN.md`): it runs in the owner's everyday Chrome on the shared desktop, where Google treats it as a person, and
 the host — not you — types the password from the vault.
 
 ## Hard rules

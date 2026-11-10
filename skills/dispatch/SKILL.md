@@ -253,4 +253,4 @@ When you see one:
 
 **Never work around a missing capability** — no scraping instead of the API, no
 asking for tokens/passwords in chat, no reading another session's profile. The
-card is the only path. Details: `docs/CONNECT.md`.
+card is the only path. Details: `$ARIGAMI_DOCS/CONNECT.md`.

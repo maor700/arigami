@@ -22,6 +22,7 @@
 //   server/assets/        — card.jsx (pages.js)
 //   server/lib/pty-bridge.py — the pty relay for `gh auth login` etc.
 //                          (mcp-auth.js, git-login.ts, accounts-auth.js)
+//   docs/                 — $ARIGAMI_DOCS: host docs skills name (LOGIN.md, …)
 //   package.json          — version fallback (version.ts, backup.ts)
 //   VERSION                — version.ts currentVersion()
 //
@@ -50,6 +51,7 @@ const ENTRIES: { src: string; required: boolean }[] = [
   { src: 'web/dist', required: true },
   { src: 'sdk', required: true },
   { src: 'skills', required: true },
+  { src: 'docs', required: true }, // $ARIGAMI_DOCS — skills and the first-turn prompt point sessions here (lib/resource-root.ts docsDir)
   { src: '.claude-plugin', required: true },
   { src: 'mcp', required: true },
   { src: 'mods', required: true }, // arigami-bridge: a Claude Code mod loaded into sessions that run extension mods
