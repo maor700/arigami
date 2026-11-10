@@ -1285,6 +1285,7 @@ export async function createArigamiServer(env = process.env) {
           content: { type: 'string', description: 'New/replacement text (required for add/replace; usable as the remove needle if old_text is omitted)' },
           old_text: { type: 'string', description: 'Existing line to match, for replace/remove' },
           agent: { type: 'string', description: 'Agent namespace for target "memory"/"journal" (default: the agent this session was born from, if any; "" = the shared MEMORY.md). "user" is always the shared USER.md.' },
+          expected_hash: { type: 'string', description: 'Optional: the `hash` memory_get returned for this file. If the file changed since, the write is refused (conflict) instead of overwriting another writer — re-read and retry.' },
           ...SID_PROP,
         },
         ['target', 'action']
@@ -1298,6 +1299,7 @@ export async function createArigamiServer(env = process.env) {
           source: 'agent',
           sessionId: a.session_id || env.ARIGAMI_SESSION_ID,
           agent: agentNs(a),
+          expectedHash: a.expected_hash || undefined,
         }),
     },
     {
