@@ -712,7 +712,7 @@ export async function createArigamiServer(env = process.env) {
         'Arm a deterministic poller for an external event this session is waiting on, so you can stop working and be woken when something happens — instead of polling yourself. ' +
         'type "github-pr" — watches a pull request and wakes this session (with a thin pointer; you then re-fetch and decide) on new reviews/comments/approval, CI failures, merge conflicts, and once when it is merged/closed. ' +
         'PR target: pass a github PR url, or owner+repo+number; if you omit both, it infers the PR for the current branch in the session worktree. ' +
-        'PR fire_on (default ["new_review","new_comment","ci_failed","conflicts"]): any of new_review | approved | changes_requested | new_comment | ci_failed (a check-run/status turned red — fires once per check per push) | ci_passed (ALL checks green — once per push) | conflicts (PR became unmergeable — once until resolved). ' +
+        'PR fire_on (default ["new_review","new_comment","ci_failed","conflicts"]): any of new_review | approved | changes_requested | new_comment | ci_failed (a check-run/status turned red — fires once per check per push) | ci_passed (ALL checks green — once per push) | conflicts (PR became unmergeable — once until resolved) | new_push (new commits on the PR head — once per head; for review sessions). Reviews/comments by the GitHub user this host is signed in as are ignored — on a PR you review, the author\'s replies still wake you. ' +
         'type "linear-issue" — watches a Linear ticket and wakes this session when someone comments on it (or, opted-in, when its status/assignee changes), and once when it is completed/canceled. ' +
         'Issue target: pass issue_id (the ENG-XXXX identifier or the UUID). ' +
         'Linear fire_on (default ["new_comment"]): any of new_comment | status_changed | assignee_changed. Comments authored by this session\'s own Linear user are ignored. ' +
@@ -746,7 +746,7 @@ export async function createArigamiServer(env = process.env) {
         channel_id: { type: 'string', description: 'Slack channel/DM id (C…/D…/G…) — for type slack' },
         thread_ts: { type: 'string', description: 'Slack thread ts to watch a single thread — for type slack' },
         ignore_user_id: { type: 'string', description: 'Slack user id to self-filter instead of the connected token\'s own user — for type slack. Use when a different identity (e.g. a bot token) does the actual posting.' },
-        fire_on: { type: 'array', items: { type: 'string', enum: ['new_review', 'approved', 'changes_requested', 'new_comment', 'ci_failed', 'ci_passed', 'conflicts', 'status_changed', 'assignee_changed', 'new_message', 'mention', 'reply', 'new_sms', 'host_clear'] } },
+        fire_on: { type: 'array', items: { type: 'string', enum: ['new_review', 'approved', 'changes_requested', 'new_comment', 'ci_failed', 'ci_passed', 'conflicts', 'new_push', 'status_changed', 'assignee_changed', 'new_message', 'mention', 'reply', 'new_sms', 'host_clear'] } },
         until: { type: 'string', enum: ['ok', 'not-critical'], description: 'host-load: how calm is calm enough (default "ok")' },
         for_sec: { type: 'number', description: 'host-load: how long the bar must hold before waking you (default 60)' },
         group_jid: { type: 'string', description: 'WhatsApp group JID to track (e.g. "120363000000000000@g.us") — for type whatsapp. Omit for personal messages only.' },

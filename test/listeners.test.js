@@ -60,7 +60,7 @@ test('diffPr: a review at-or-below the watermark does not re-fire', () => {
   expect(d.shouldFire).toBe(false);
 });
 
-test("diffPr: the author's own comment advances the watermark but never fires", () => {
+test("diffPr: the host's own comment advances the watermark but never fires", () => {
   const d = diffPr(
     snap({ issueComments: [{ id: 7, user: { login: 'me' } }] }),
     {},
@@ -202,4 +202,74 @@ test('diffPr: CI/conflict events are gated by fire_on', () => {
   // watermark still tracks state so opting in later doesn't replay history
   expect(d.nextWatermark.firedChecks).toEqual(['x']);
   expect(d.nextWatermark.conflictFired).toBe(true);
+});
+
+// The self-filter is the host's GitHub login. On its own PR (ship-it) that is the
+// author; on a review session the author is someone else and must wake it.
+const reviewedSnap = () =>
+  snap({
+    meta: { user: { login: 'author' }, head: { sha: 'def456' } },
+    reviews: [{ id: 30, state: 'COMMENTED', user: { login: 'author' } }],
+    issueComments: [{ id: 40, user: { login: 'me' } }],
+    reviewComments: [
+      { id: 50, user: { login: 'author' } },
+      { id: 51, user: { login: 'author' } },
+      { id: 52, user: { login: 'me' } },
+    ],
+  });
+
+test('diffPr: own PR — the host (= author) replying never self-wakes, a reviewer does', () => {
+  const own = snap({
+    meta: { user: { login: 'me' } },
+    reviews: [{ id: 30, state: 'COMMENTED', user: { login: 'me' } }],
+    reviewComments: [{ id: 50, user: { login: 'me' } }],
+  });
+  const quiet = diffPr(own, {}, { fireOn: FIRE, ignoreLogin: 'me' });
+  expect(quiet.shouldFire).toBe(false);
+  expect(quiet.nextWatermark).toMatchObject({ reviewId: 30, reviewCommentId: 50 });
+
+  const reviewed = { ...own, reviewComments: [...own.reviewComments, { id: 60, user: { login: 'reviewer' } }] };
+  const d = diffPr(reviewed, quiet.nextWatermark, { fireOn: FIRE, ignoreLogin: 'me' });
+  expect(d.shouldFire).toBe(true);
+  expect(d.summary).toContain('1 new comment(s)');
+});
+
+test("diffPr: reviewing someone else's PR — the author's review and replies wake the session", () => {
+  const d = diffPr(reviewedSnap(), {}, { fireOn: FIRE, ignoreLogin: 'me' });
+  expect(d.shouldFire).toBe(true);
+  expect(d.summary).toContain('left a review by @author');
+  expect(d.summary).toContain('2 new comment(s)'); // the reviewer's own two are not counted
+  expect(d.nextWatermark).toMatchObject({ reviewId: 30, issueCommentId: 40, reviewCommentId: 52 });
+});
+
+test("diffPr: reviewing someone else's PR — the reviewer's own comments alone never fire", () => {
+  const s = snap({
+    meta: { user: { login: 'author' } },
+    issueComments: [{ id: 40, user: { login: 'me' } }],
+    reviewComments: [{ id: 52, user: { login: 'me' } }],
+  });
+  const d = diffPr(s, {}, { fireOn: FIRE, ignoreLogin: 'me' });
+  expect(d.shouldFire).toBe(false);
+  expect(d.nextWatermark).toMatchObject({ issueCommentId: 40, reviewCommentId: 52 });
+});
+
+test('diffPr: the self-filter compares logins case-insensitively', () => {
+  const s = snap({ issueComments: [{ id: 7, user: { login: 'Maor-Dev' } }] });
+  expect(diffPr(s, {}, { fireOn: FIRE, ignoreLogin: 'maor-dev' }).shouldFire).toBe(false);
+});
+
+test('diffPr: new_push fires once when the head moves, never on the baseline or the same head', () => {
+  const at = (sha) => snap({ meta: { user: { login: 'author' }, head: { sha } } });
+  const PUSH = ['new_push'];
+  const base = diffPr(at('abc123'), {}, { fireOn: PUSH, ignoreLogin: 'me' });
+  expect(base.shouldFire).toBe(false); // no previous head — the baseline is not a push
+  const same = diffPr(at('abc123'), base.nextWatermark, { fireOn: PUSH, ignoreLogin: 'me' });
+  expect(same.shouldFire).toBe(false);
+  const pushed = diffPr(at('def4567'), same.nextWatermark, { fireOn: PUSH, ignoreLogin: 'me' });
+  expect(pushed.shouldFire).toBe(true);
+  expect(pushed.summary).toContain('new commits pushed (head def4567)');
+  expect(pushed.nextWatermark.headSha).toBe('def4567');
+  expect(diffPr(at('def4567'), pushed.nextWatermark, { fireOn: PUSH }).shouldFire).toBe(false);
+  // not opted in → a push alone stays quiet (ship-it sessions push themselves)
+  expect(diffPr(at('fff0000'), pushed.nextWatermark, { fireOn: FIRE }).shouldFire).toBe(false);
 });
