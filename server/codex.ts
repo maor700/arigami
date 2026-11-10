@@ -69,6 +69,7 @@ import { registerEngine } from './lib/engine-driver.js';
 import type { EngineDriver } from './lib/engine-driver.js';
 import type { Session } from './state.js';
 import { SKILLS_DIR, USER_SKILLS_DIR } from './skills.js';
+import { docsDir } from './lib/resource-root.js';
 import * as extensions from './extensions.js';
 import { hostMcpServers } from './lib/mcp-servers.js';
 import { codexServersFor, codexCredentialsFile, codexMcpHome, GLOBAL } from './mcp-connections.js';
@@ -527,6 +528,7 @@ function codexBuildSpawn(s: Session, { resume, sessionId }: { resume: boolean; s
     ARIGAMI_TOKEN: auth.tokenForSession(s.id),
     ...(typeof s.metadata?.agent === 'string' && s.metadata.agent ? { ARIGAMI_AGENT: s.metadata.agent } : {}),
     ARIGAMI_SKILLS: SKILLS_DIR,
+    ARIGAMI_DOCS: docsDir(), // host docs, absolute (server/lib/resource-root.ts)
     ARIGAMI_USER_SKILLS: USER_SKILLS_DIR,
     ...(s.metadata?.port ? { PORT: String(s.metadata.port) } : {}),
     ...(screenHandle?.display ? { DISPLAY: String(screenHandle.display) } : {}),

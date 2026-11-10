@@ -130,6 +130,7 @@ COPY server/ ./server/
 COPY mcp/ ./mcp/
 COPY mods/ ./mods/
 COPY skills/ ./skills/
+COPY docs/ ./docs/
 COPY profiles/ ./profiles/
 COPY bin/ ./bin/
 COPY .claude-plugin/ ./.claude-plugin/

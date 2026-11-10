@@ -59,3 +59,12 @@ export function resourceRoot(): string {
   }
   return cached;
 }
+
+/**
+ * The host's own docs (LOGIN.md, CONNECT.md, …) as an ABSOLUTE path. Sessions get it as $ARIGAMI_DOCS and in the
+ * first-turn `host-rules` block: a session's cwd is usually some other repo's worktree, where a relative
+ * "docs/LOGIN.md" resolves against the wrong repo and is never found.
+ */
+export function docsDir(): string {
+  return path.join(resourceRoot(), 'docs');
+}

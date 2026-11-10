@@ -12,6 +12,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { ARIGAMI_DIR } from './lib/instance.js';
+import { docsDir } from './lib/resource-root.js';
 
 export type When = 'first-turn' | 'every-turn';
 export type Engine = 'claude' | 'codex';
@@ -34,6 +35,7 @@ export interface RenderCtx {
   extensions?: string;
   docker?: boolean;
   simpleMode?: boolean;
+  docsDir?: string; // absolute; defaults to the host's own (lib/resource-root.ts)
 }
 
 export const PROMPTS_DIR = (): string => path.join(ARIGAMI_DIR, 'user', 'prompts');
@@ -70,9 +72,10 @@ export const BUILTIN: BuiltinBlock[] = [
   {
     id: 'host-rules',
     title: 'Host rules',
-    description: 'Scratch files, outbound messages as cards (you initiate, the owner presses Send), and teardown.',
+    description: 'Scratch files, outbound messages as cards (you initiate, the owner presses Send), teardown, and where the host docs are.',
     when: 'first-turn',
     guardrail: true,
+    vars: ['docsDir'],
     text:
       "Temporary files go under $TMPDIR — it is this session's own scratch directory and the host deletes it with the session. " +
       'Do not write to /tmp directly: nothing owns files there, so they outlive you.\n' +
@@ -83,7 +86,9 @@ export const BUILTIN: BuiltinBlock[] = [
       'you initiate: draft the final text and send it through this path. The card is how a message leaves, not a reason to decline; ' +
       'never answer "I can\'t send" or "I have no access" while the tool exists.\n' +
       "Teardown is the host's job. delete_session stops every process this session started (detached ones included) and removes " +
-      'the worktree it owns unless it holds unpushed work. Do not rm -rf, git worktree remove, or kill things yourself as "cleanup".',
+      'the worktree it owns unless it holds unpushed work. Do not rm -rf, git worktree remove, or kill things yourself as "cleanup".\n' +
+      // Absolute on purpose: the cwd is usually another repo, where a relative docs/… path finds nothing.
+      'Arigami docs: {{docsDir}} ($ARIGAMI_DOCS) — a doc named in a skill or tool answer is there.',
   },
   {
     id: 'container',
@@ -213,6 +218,7 @@ export function fill(text: string, ctx: RenderCtx): string {
     capabilities: ctx.capabilities || '',
     extensions: ctx.extensions || '',
     engine: ctx.engine || '',
+    docsDir: ctx.docsDir || docsDir(),
   };
   return text
     .replace(/\{\{\s*(\w+)\s*\}\}/g, (_, k) => (k in vals ? vals[k] : ''))

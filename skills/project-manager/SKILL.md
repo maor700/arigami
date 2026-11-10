@@ -18,7 +18,7 @@ over those sessions, never a replacement for the human:
 
 This skill is the *methodology*. The platform capabilities it drives (folders,
 `create_session kind:"full"`, `task_session`, `report_to_master`) are documented
-in `docs/SIDEBAR-FOLDERS.md` and `docs/DISPATCHER.md`.
+in `$ARIGAMI_DOCS/SIDEBAR-FOLDERS.md` and `$ARIGAMI_DOCS/DISPATCHER.md`.
 
 ## Your team
 
@@ -187,4 +187,4 @@ When you see one:
 
 **Never work around a missing capability** — no scraping instead of the API, no
 asking for tokens/passwords in chat, no reading another session's profile. The
-card is the only path. Details: `docs/CONNECT.md`.
+card is the only path. Details: `$ARIGAMI_DOCS/CONNECT.md`.
