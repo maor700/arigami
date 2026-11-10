@@ -211,7 +211,7 @@ test('caps: per-agent cap from config raises only that namespace; a shrinking re
   expect(r.out[0]).toEqual({ caps: { shared: 900, rec: 1400, other: 900, user: 600 }, rec: true, chief: false, shrink: true, grow: false, forced: true });
 }, 30000);
 
-// ---- the learner: stuck guard, consolidation proposal, apply/undo, auto dedupe ------
+// ---- the learner: stuck guard, auto consolidation + brake, manual proposal, apply/undo ------
 
 const filler = (n) =>
   Array.from({ length: n }, (_, i) => `- Standing note ${i} ${'abcdefghijklmnopqrstuvwxyz'.slice(i % 20, (i % 20) + 6)}${i * 7919} keeps zone ${i * 31} quiet for ${i} reasons.`).join('\n');
@@ -237,45 +237,103 @@ const STUB = (consolidation) =>
   ');}calls.learn++;const keys=[...p.matchAll(/^(c\\d+) \\[/gm)].map(x=>x[1]);' +
   "return JSON.stringify({decisions:keys.map(k=>({key:k,action:'ENTER',target:'memory',content:'The demo tenant has real users: never submit persisting changes there.',reason:'safety'}))});};";
 
-test('at cap: the run defers, a consolidation proposal is stored + notified (not applied), the next tick does not re-ask the model', () => {
+const LEARNER = (mode) =>
+  "const M=await import('./server/memory.ts');const L=await import('./server/memory-learning.ts');" +
+  "M.proposeFacts(['The demo tenant has real users: never submit persisting changes there.'],{source:'test',sessionId:'s1'});" +
+  "let now=Date.parse('2026-11-10T00:00:00Z');" +
+  `const l=L.createLearner({llm,now:()=>now,memAvailableMb:()=>1500,config:()=>({mode:'${mode}',minBatch:1,maxAgeHours:48,minFreeMb:600}),log:()=>{},emit:()=>{},notify:(n)=>notes.push(n),skills:()=>['ship-it']});` +
+  'const tickAndSettle=async()=>{const t=await l.tick();await new Promise(r=>setTimeout(r,50));return t.ran;};';
+
+test('stuck guard: at cap with nothing to consolidate, the next tick does not re-ask the model', () => {
+  const dir = tmp();
+  seedFullMemory(dir);
+  const r = runInChild(
+    STUB({ ops: [] }) +
+      LEARNER('auto') +
+      'const t1=await tickAndSettle();now+=15*60*1000;const t2=await tickAndSettle();now+=15*60*1000;const t3=await tickAndSettle();' +
+      'emit({t1,t2,t3,calls,notes:notes.length});',
+    { ARIGAMI_DIR: dir, ARIGAMI_PORT: '' }
+  );
+  if (!r.ok) throw new Error(r.error);
+  expect(r.out[0]).toEqual({ t1: true, t2: false, t3: false, calls: { learn: 1, consol: 1 }, notes: 0 });
+}, 30000);
+
+test('auto mode manages its own memory: at cap it consolidates (deletions included), archives removed lines, notifies, and the waiting fact enters', () => {
   const dir = tmp();
   const t = seedFullMemory(dir);
+  const merged = 'GitHub API rate limit is shared across all sessions; keep gh calls minimal and use GraphQL when REST runs out.';
   const consolidation = {
     ops: [
-      { kind: 'MERGE', lines: ['M1', 'M2'], content: 'GitHub API rate limit is shared across all sessions; keep gh calls minimal and use GraphQL when REST runs out.', reason: 'same fact' },
+      { kind: 'MERGE', lines: ['M1', 'M2'], content: merged, reason: 'same fact' },
       { kind: 'REWRITE', lines: ['M3'], content: 'Sign-ins go through the sign_in tool.', reason: 'stale' },
+      { kind: 'DROP', lines: ['M4'], reason: 'one-off detail' },
+      { kind: 'MOVE_TO_SKILL', lines: ['M5'], skill: 'ship-it', reason: 'procedure' },
     ],
     admit: ['c1'],
   };
   const r = runInChild(
     STUB(consolidation) +
-      "const M=await import('./server/memory.ts');const L=await import('./server/memory-learning.ts');" +
-      "M.proposeFacts(['The demo tenant has real users: never submit persisting changes there.'],{source:'test',sessionId:'s1'});" +
-      "let now=Date.parse('2026-11-10T00:00:00Z');" +
-      "const l=L.createLearner({llm,now:()=>now,memAvailableMb:()=>1500,config:()=>({mode:'auto',minBatch:1,maxAgeHours:48,minFreeMb:600}),log:()=>{},emit:()=>{},notify:(n)=>notes.push(n),skills:()=>['ship-it']});" +
-      'const t1=await l.tick();await new Promise(r=>setTimeout(r,50));' +
-      'const props=l.readConsolidations();' +
-      'now+=15*60*1000;const t2=await l.tick();' +
-      'emit({t1:t1.ran,t2:t2.ran,calls,notes,props,status:l.status({preview:false}).consolidation?.id});',
+      LEARNER('auto') +
+      'const t1=await tickAndSettle();const props=l.readConsolidations();' +
+      'now+=15*60*1000;const t2=await tickAndSettle();' +
+      "const journal=fs.readdirSync(M.JOURNAL_DIR).map(f=>fs.readFileSync(M.JOURNAL_DIR+'/'+f,'utf8')).join('');" +
+      "emit({t1,t2,calls,notes,p:props[0],mem:fs.readFileSync(M.MEMORY_MD,'utf8'),journal,pending:M.listPending().length});",
     { ARIGAMI_DIR: dir, ARIGAMI_PORT: '' }
   );
   if (!r.ok) throw new Error(r.error);
   const o = r.out[0];
-  expect(o.t1).toBe(true);
-  expect(o.t2).toBe(false); // stuck guard: same queue, same files → no second LLM call
-  expect(o.calls).toEqual({ learn: 1, consol: 1 });
-  expect(o.props.length).toBe(1);
-  const p = o.props[0];
-  expect(p.applied).toBe(false); // contains a REWRITE → needs the human
-  expect(p.ops.map((x) => [x.kind, x.verified])).toEqual([['MERGE', true], ['REWRITE', false]]);
-  expect(p.admit).toEqual(['c1']);
-  expect(p.tokens.after.memory).toBeLessThan(p.tokens.before.memory);
-  expect(o.status).toBe(p.id);
+  expect(o.p.applied).toBe(true);
+  expect(o.p.auto).toBe(true);
+  expect(o.p.ops.map((x) => [x.kind, x.applied])).toEqual([['MERGE', true], ['REWRITE', true], ['DROP', true], ['MOVE_TO_SKILL', true]]);
+  expect(o.mem).toContain(merged);
+  expect(o.mem).not.toContain(t.twinA);
+  expect(o.mem).not.toContain(t.stale);
+  expect(o.mem).toContain('Sign-ins go through the sign_in tool.');
+  // Nothing is lost: every removed/rewritten line is in the journal, searchable.
+  expect(o.journal).toContain(t.twinA);
+  expect(o.journal).toContain(t.stale);
+  expect(o.journal).toContain('belongs in skill ship-it');
+  expect(o.notes.map((n) => n.title)).toEqual(['Memory consolidated']);
+  // The files changed → the stuck guard lets the next tick run, and the waiting fact now fits.
+  expect(o.t2).toBe(true);
+  expect(o.calls).toEqual({ learn: 2, consol: 1 });
+  expect(o.mem).toContain('The demo tenant has real users');
+  expect(o.pending).toBe(0);
+}, 30000);
+
+test('auto mode brake: a diff that would remove more than half of a file is never applied unattended — it waits for review', () => {
+  const dir = tmp();
+  const t = seedFullMemory(dir);
+  const total = fs.readFileSync(path.join(dir, 'memory', 'MEMORY.md'), 'utf8').split('\n').filter(Boolean).length;
+  const ops = Array.from({ length: Math.floor(total / 2) + 1 }, (_, i) => ({ kind: 'DROP', lines: [`M${i + 1}`], reason: 'low value' }));
+  const r = runInChild(
+    STUB({ ops }) + LEARNER('auto') + "const p=await l.consolidate();emit({p,notes,mem:fs.readFileSync(M.MEMORY_MD,'utf8')});",
+    { ARIGAMI_DIR: dir, ARIGAMI_PORT: '' }
+  );
+  if (!r.ok) throw new Error(r.error);
+  const o = r.out[0];
+  expect(o.p.applied).toBe(false);
+  expect(o.p.notes.join(' ')).toContain('more than half');
+  expect(o.notes.map((n) => n.title)).toEqual(['Memory consolidation ready for review']);
+  expect(o.mem).toContain(t.twinA);
+}, 30000);
+
+test('manual mode: the diff is only proposed and notified, never applied', () => {
+  const dir = tmp();
+  const t = seedFullMemory(dir);
+  const r = runInChild(
+    STUB({ ops: [{ kind: 'DROP', lines: ['M1'], reason: 'restated by M2' }] }) +
+      LEARNER('manual') +
+      "const p=await l.consolidate();emit({p,notes,status:l.status({preview:false}).consolidation?.id,mem:fs.readFileSync(M.MEMORY_MD,'utf8')});",
+    { ARIGAMI_DIR: dir, ARIGAMI_PORT: '' }
+  );
+  if (!r.ok) throw new Error(r.error);
+  const o = r.out[0];
+  expect(o.p.applied).toBe(false);
+  expect(o.p.ops[0].verified).toBe(true);
+  expect(o.status).toBe(o.p.id);
   expect(o.notes.length).toBe(1);
-  expect(o.notes[0].title).toContain('consolidation');
-  const memNow = fs.readFileSync(path.join(dir, 'memory', 'MEMORY.md'), 'utf8');
-  expect(memNow).toContain(t.twinA); // nothing written without approval
-  expect(memNow).toContain(t.stale);
+  expect(o.mem).toContain(t.twinA);
 }, 30000);
 
 test('apply is hash-checked (409 after a concurrent edit); approved ops apply, learning resumes, per-op undo restores the lines', () => {
@@ -321,24 +379,4 @@ test('apply is hash-checked (409 after a concurrent edit); approved ops apply, l
   expect(o.afterUndo).toContain(t.twinB);
   expect(o.afterUndo).not.toContain(merged);
   expect(o.afterUndo).toContain('Sign-ins go through the sign_in tool.'); // the other op is untouched
-}, 30000);
-
-test('auto mode applies a consolidation by itself ONLY when every op is a verified duplicate MERGE/DROP', () => {
-  const dir = tmp();
-  const t = seedFullMemory(dir);
-  const consolidation = { ops: [{ kind: 'DROP', lines: ['M1'], reason: 'restated by M2' }] };
-  const r = runInChild(
-    STUB(consolidation) +
-      "const M=await import('./server/memory.ts');const L=await import('./server/memory-learning.ts');" +
-      "const l=L.createLearner({llm,memAvailableMb:()=>1500,config:()=>({mode:'auto',minBatch:1,maxAgeHours:48,minFreeMb:600}),log:()=>{},emit:()=>{},notify:(n)=>notes.push(n),skills:()=>[]});" +
-      "const p=await l.consolidate();emit({applied:p.applied,auto:p.auto,notes:notes.length,mem:fs.readFileSync(M.MEMORY_MD,'utf8')});",
-    { ARIGAMI_DIR: dir, ARIGAMI_PORT: '' }
-  );
-  if (!r.ok) throw new Error(r.error);
-  const o = r.out[0];
-  expect(o.applied).toBe(true);
-  expect(o.auto).toBe(true);
-  expect(o.notes).toBe(0);
-  expect(o.mem).not.toContain(`- ${t.twinA}\n`);
-  expect(o.mem).toContain(t.twinB);
 }, 30000);

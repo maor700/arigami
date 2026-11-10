@@ -159,6 +159,7 @@ interface ConsolidationPatch {
   id: string;
   ts: string;
   applied?: boolean;
+  auto?: boolean;
   ops?: Record<string, { applied?: boolean; logSeqs?: number[]; undone?: boolean; error?: string }>;
   notes?: string[];
 }
@@ -261,6 +262,7 @@ export function readConsolidations(limit = 20): ConsolidationRecord[] {
       const r = recs.get(o.id);
       if (!r) continue;
       if (typeof o.applied === 'boolean') r.applied = o.applied;
+      if (o.auto) r.auto = true;
       if (o.notes) r.notes = [...r.notes, ...o.notes];
       if (o.ops) for (const op of r.ops) if (o.ops[op.key]) Object.assign(op, o.ops[op.key]);
     }
@@ -624,12 +626,22 @@ export function createLearner(deps: Partial<LearnerDeps> = {}) {
       rec.durationMs = d.now() - started;
       appendConsolidationLine(rec);
       if (!rec.ops.length) { d.log(`consolidation ${id}: nothing to change`); return rec; }
-      if (d.config().mode === 'auto' && plan.autoApplicable) {
+      const freed = rec.tokens.before.user + rec.tokens.before.memory - rec.tokens.after.user - rec.tokens.after.memory;
+      if (d.config().mode === 'auto' && plan.withinAutoLimits) {
+        // Auto mode manages its own memory, deletions included — archived to the
+        // journal first, undo per op, and the human is told what changed.
         const applied = applyConsolidation(id, undefined, { auto: true });
-        d.log(`consolidation ${id}: auto-applied ${applied.ops.filter((o) => o.applied).length} verified duplicate op(s)`);
+        const n = applied.ops.filter((o) => o.applied).length;
+        d.log(`consolidation ${id}: auto-applied ${n}/${applied.ops.length} op(s), ~${freed} tokens freed`);
+        d.notify({
+          title: 'Memory consolidated',
+          body: `${n} change(s) to USER.md/MEMORY.md, ~${freed} tokens freed; removed lines archived to the journal. Undo per change in Settings.`,
+          url: '/__host/#/settings/appearance/memory',
+        });
+        d.emit({ kind: 'consolidation', phase: 'auto-applied', id, ops: n, freed });
         return applied;
       }
-      const freed = rec.tokens.before.user + rec.tokens.before.memory - rec.tokens.after.user - rec.tokens.after.memory;
+      if (d.config().mode === 'auto') rec.notes.push('not auto-applied: the diff removes more than half of a file — waiting for review');
       d.notify({
         title: 'Memory consolidation ready for review',
         body: `${rec.ops.length} change(s) to USER.md/MEMORY.md, ~${freed} tokens freed, ${rec.admit.length} waiting fact(s) can enter after.`,
@@ -668,7 +680,6 @@ export function createLearner(deps: Partial<LearnerDeps> = {}) {
     let aborted = false;
     for (const op of rec.ops) {
       if (only && !only.has(op.key)) continue;
-      if (opts.auto && !(op.verified && (op.kind === 'MERGE' || op.kind === 'DROP'))) continue;
       if (aborted) { patch.ops![op.key] = { applied: false, error: 'not applied: an earlier write conflicted' }; continue; }
       const seqs: number[] = [];
       let error: string | undefined;
@@ -676,6 +687,12 @@ export function createLearner(deps: Partial<LearnerDeps> = {}) {
         op.kind === 'MERGE' || op.kind === 'REWRITE'
           ? [{ action: 'replace', old: op.originals[0], content: op.content }, ...op.originals.slice(1).map((o) => ({ action: 'remove' as const, old: o }))]
           : [{ action: 'remove', old: op.originals[0] }];
+      // Archive what is about to disappear (journal: append-only, searchable) —
+      // a deletion by the learner never loses the text, it only stops being injected.
+      const file = op.target === 'user' ? 'USER.md' : 'MEMORY.md';
+      const why = op.kind === 'MOVE_TO_SKILL' ? `belongs in skill ${op.skill || '?'}` : op.reason || op.kind.toLowerCase();
+      for (const o of op.originals)
+        writeMemory({ target: 'journal', action: 'add', content: `[memory ${op.kind} ${id}/${op.key}] removed from ${file} (${why}): ${o}`, source });
       for (const st of steps) {
         const r = writeMemory({ target: op.target, action: st.action, old_text: st.old, content: st.content, source, expectedHash: expect[op.target] });
         if (!r.ok) { error = r.error; if (r.conflict) aborted = true; break; }
@@ -684,16 +701,14 @@ export function createLearner(deps: Partial<LearnerDeps> = {}) {
       }
       patch.ops![op.key] = { applied: !error && seqs.length === steps.length, logSeqs: seqs, error };
     }
-    appendConsolidationLine({ ...patch, ...(opts.auto ? { notes: ['auto-applied: every op a verified duplicate'] } : {}) });
+    appendConsolidationLine({ ...patch, ...(opts.auto ? { auto: true, notes: ['auto-applied (auto mode)'] } : {}) });
     // The files changed → the stuck signature no longer matches; the next tick
     // re-runs learning and the facts waiting for room can now enter.
     const st = readState();
     st.stuckSig = null;
     writeState(st);
     d.emit({ kind: 'consolidation', phase: 'applied', id });
-    const out = readConsolidations(1e6).find((r) => r.id === id)!;
-    if (opts.auto) out.auto = true;
-    return out;
+    return readConsolidations(1e6).find((r) => r.id === id)!;
   }
 
   /** Revert ONE applied op: put its original line(s) back, remove the merged/rewritten line. */
