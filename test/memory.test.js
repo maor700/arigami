@@ -352,8 +352,10 @@ test('getMemoryFile on a fresh instance: USER.md/MEMORY.md → empty content (no
   );
   if (!r.ok) throw new Error(r.error);
   const o = r.out[0];
-  expect(o.user).toEqual({ path: 'USER.md', content: '' });
-  expect(o.mem).toEqual({ path: 'MEMORY.md', content: '' });
+  // CONSOL1: memory_get also returns the file's hash (for memory_write's expected_hash).
+  expect(o.user).toEqual({ path: 'USER.md', content: '', hash: o.user.hash });
+  expect(o.mem).toEqual({ path: 'MEMORY.md', content: '', hash: o.user.hash });
+  expect(o.user.hash).toMatch(/^[0-9a-f]{16}$/);
   expect(o.other).toEqual({ error: 'no such file' });
   expect(o.esc).toEqual({ error: 'invalid path' });
 });
