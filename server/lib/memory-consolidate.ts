@@ -7,11 +7,12 @@
 // reviews. server/memory-learning.ts wraps it with the LLM one-shot, the
 // consolidation run log, optimistic-concurrency apply and per-op undo.
 //
-// Only one class of change is ever applied without a human: a MERGE or DROP of
-// lines this module itself verifies are restatements of each other (the same
-// near-duplicate test the pre-pass uses). Everything else — a rewrite of a stale
-// line, dropping a line that is merely "low value", moving a procedure to a
-// skill — is a judgement call and waits for approval.
+// In auto mode the learner manages its own memory, deletions included: the
+// whole diff is applied, every removed/rewritten line is first archived to the
+// journal (searchable, nothing is lost) and each op keeps its own Undo. The one
+// brake is withinAutoLimits(): a diff that would remove more than half of a
+// file's lines is never applied unattended — it waits for the human. In manual
+// mode every diff waits. `verified` (pure dedupe) is informational.
 import {
   type Target,
   isNearDuplicate,
@@ -56,8 +57,30 @@ export interface ConsolidationPlan {
   admit: string[];
   notes: string[];
   tokens: { before: Record<Target, number>; after: Record<Target, number> };
-  /** true only when every op is a verified MERGE/DROP of duplicates. */
+  /** true only when every op is a verified MERGE/DROP of duplicates (informational). */
   autoApplicable: boolean;
+  /** auto mode may apply it unattended (see withinAutoLimits). */
+  withinAutoLimits: boolean;
+}
+
+/** The share of a file's lines one unattended consolidation may remove (net). */
+export const AUTO_MAX_REMOVED_SHARE = 0.5;
+
+/**
+ * The brake on unattended consolidation: per file, the lines the diff removes
+ * (net — a MERGE of 3 lines into 1 removes 2) must stay ≤ AUTO_MAX_REMOVED_SHARE
+ * of that file's lines. A model that suddenly wants to wipe a file is a bug or an
+ * injection, not housekeeping.
+ */
+export function withinAutoLimits(ops: ConsolidationOp[], lines: ExistingLine[]): boolean {
+  for (const t of ['user', 'memory'] as Target[]) {
+    const total = lines.filter((l) => l.target === t).length;
+    if (!total) continue;
+    let removed = 0;
+    for (const o of ops) if (o.target === t) removed += o.kind === 'MERGE' || o.kind === 'REWRITE' ? o.lines.length - 1 : 1;
+    if (removed > total * AUTO_MAX_REMOVED_SHARE) return false;
+  }
+  return true;
 }
 
 /** A deferred learning cluster, as the consolidation prompt sees it. */
@@ -247,6 +270,7 @@ export function planConsolidation(input: {
       after: { user: input.estimateTokens(after.userMd), memory: input.estimateTokens(after.memoryMd) },
     },
     autoApplicable: ops.length > 0 && ops.every((o) => o.verified && (o.kind === 'MERGE' || o.kind === 'DROP')),
+    withinAutoLimits: ops.length > 0 && withinAutoLimits(ops, lines),
   };
 }
 
