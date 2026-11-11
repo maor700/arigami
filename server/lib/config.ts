@@ -65,6 +65,8 @@ export interface ScreenConfig {
   snapshotChangeThreshold: number;
   screenshotRetentionDays: number;
   screenshotMaxMb: number;
+  // A session Chrome unused this long is closed (lib/chrome.ts idle closer); unset = 10 min. ARIGAMI_BROWSER_IDLE_MS wins.
+  browserIdleMs?: number;
   // Per-session desktops (T8): pool of VNC ports handed to `server/lib/desktops.ts`
   // when it lazily spawns an `Xvfb`+`x11vnc` pair for a session. The X display
   // number is derived from the port's offset into this range (port 5901 → :100,

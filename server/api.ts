@@ -2018,7 +2018,7 @@ async function handleAgents(req: IncomingMessage, res: ServerResponse, u: URL, p
       const hid = a.homeSessionId;
       claude.kill(hid);
       expirePendingSetupRequests(hid, 'agent deleted');
-      chrome.closeChrome(hid);
+      chrome.closeChrome(hid, 'its agent was deleted');
       await chrome.syncProfileToBase(hid).catch(() => {});
       if (!cfg.screen?.keepProfiles) chrome.removeSessionProfile(hid);
       pickDriver().release(hid);
@@ -3270,7 +3270,7 @@ export async function destroySession(id: string): Promise<reap.ReapReport | null
   if (!s) return null;
   claude.kill(id);
   expirePendingSetupRequests(id, 'session deleted');
-  chrome.closeChrome(id);
+  chrome.closeChrome(id, 'session deleted');
   // Fold this session's logins back into chrome-base on every close
   // (T8 §4) — independent of whether the profile copy itself survives.
   // Only an agent session writes back — into the agent's own profile.
@@ -6949,7 +6949,7 @@ export async function handle(
           // Desktop dies with the session's activity (T8) — the Chrome profile
           // copy is kept (only removed on DELETE) so unarchiving picks up where
           // it left off.
-          chrome.closeChrome(id);
+          chrome.closeChrome(id, 'session archived');
           pickDriver().release(id);
           import('./lib/desktop-control.js').then((m) => m.desktopRelease(id)).catch(() => {});
           sharedDesktop.get().forget(id);

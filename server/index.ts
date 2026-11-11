@@ -430,13 +430,13 @@ try {
 // config (it stops the host's entry from connecting) — clear any left over.
 setTimeout(() => void import('./api.js').then((a: any) => a.sweepCliTwins()).catch(() => {}), 5_000).unref?.();
 
-// A session's idle Chrome closes after ARIGAMI_BROWSER_IDLE_MS (10 min) and
-// reopens on its next browser step — unless a human may be looking at it.
+// A session's idle Chrome closes after screen.browserIdleMs / ARIGAMI_BROWSER_IDLE_MS (10 min) and
+// reopens on its next browser step — unless a human may be looking at it or a DevTools client drives it.
 {
   const chromeMod = await import('./lib/chrome.js');
   const cdpMod = await import('./lib/chrome-cdp.js');
   const apiMod = await import('./api.js');
-  chromeMod.startIdleCloser((id) => apiMod.hasOpenScreenRequest(id), (id) => cdpMod.cdpPort(id), (m) => console.log(m));
+  chromeMod.startIdleCloser((id) => apiMod.hasOpenScreenRequest(id), (id) => cdpMod.cdpPort(id));
 }
 
 // A bind failure is the single most confusing way for the host to die — say what

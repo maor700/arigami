@@ -221,7 +221,7 @@ export async function scroll(sessionId: string, opts: { x?: number; y?: number; 
 
 /** Graceful (Browser.close over CDP) so the last cookies/storage reach disk — a SIGTERM loses a fresh login. */
 export async function close(sessionId: string): Promise<{ ok: true }> {
-  await closeChromeGracefully(sessionId, cdpPort(sessionId));
+  await closeChromeGracefully(sessionId, cdpPort(sessionId), 'browser_close');
   return { ok: true };
 }
 
