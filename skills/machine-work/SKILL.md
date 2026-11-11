@@ -30,7 +30,7 @@ over**, complete it, click **Done**, and you continue.
 
 `capture_screen` and `browser_*` are provided by the host MCP (`arigami`) under the `desktop` and
 `browser` tool families respectively (an agent's allowlist may grant one without the other — see
-`docs/AGENTS.md` "Tool allowlist"). If a tool you need is missing in this session, say so once and
+`$ARIGAMI_DOCS/AGENTS.md` "Tool allowlist"). If a tool you need is missing in this session, say so once and
 continue without it — do not improvise a Bash/xdotool workaround, and do not claim you have no way
 to look at a page just because `open_tab`/`WebFetch` alone can't drive a real browser: `browser_*` is
 the tool-only way to do that, with no `Bash`/`git` required.
@@ -149,7 +149,7 @@ submitted yet", "Error: card declined".
 
 ### 3. Signing in: `sign_in`; what only a human can do → its `human` step
 
-One call: `sign_in({site, reason})` (`docs/LOGIN.md`). The host tries, in order, a connection it has, a saved login
+One call: `sign_in({site, reason})` (`$ARIGAMI_DOCS/LOGIN.md`). The host tries, in order, a connection it has, a saved login
 that is really signed in, and a new sign-in in the owner's own Chrome on the shared desktop. Its answer:
 
 - `signed_in` → do what `next` says (use the connection's tools, or `browser_open` the site — the login is in your
@@ -314,4 +314,4 @@ When you see one:
 
 **Never work around a missing capability** — no scraping instead of the API, no
 asking for tokens/passwords in chat, no reading another session's profile. The
-card is the only path. Details: `docs/CONNECT.md`.
+card is the only path. Details: `$ARIGAMI_DOCS/CONNECT.md`.

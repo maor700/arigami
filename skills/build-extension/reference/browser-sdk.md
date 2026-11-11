@@ -1,7 +1,7 @@
 # The tab contract — `window.arigami`
 
 Read this before writing an extension tab. It is the browser half of
-`sdk/README.md` (Arigami repo), condensed to what a generated page must get right.
+`$ARIGAMI_DOCS/../sdk/README.md`, condensed to what a generated page must get right.
 The implementation is `sdk/browser/ext-sdk.js`; the protocol is **frozen for
 apiVersion 1**.
 

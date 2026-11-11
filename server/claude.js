@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
 import { isWin, pidAlive, HOME } from './lib/platform.js';
-import { resourceRoot } from './lib/resource-root.js';
+import { resourceRoot, docsDir } from './lib/resource-root.js';
 import { bunExec, bunExecShell } from './lib/bun-exec.js';
 import { claudeBin, EXTRA_BINS } from './lib/claude-bin.js';
 import { supervise, killTree, killByTag } from './lib/children.js';
@@ -666,6 +666,7 @@ function buildClaudeSpawn(s, { resume, sessionId }) {
     // memory_write/memory_search to its namespace.
     ...(typeof s.metadata?.agent === 'string' && s.metadata.agent ? { ARIGAMI_AGENT: s.metadata.agent } : {}),
     ARIGAMI_SKILLS: path.join(ROOT, 'skills'), // host skill pack for the session
+    ARIGAMI_DOCS: docsDir(), // host docs, absolute — skills say $ARIGAMI_DOCS/LOGIN.md, never a cwd-relative docs/…
     ARIGAMI_USER_SKILLS: USER_SKILLS_DIR, // user/bundle skills (override shipped by name)
     // Dispatcher: a needsServer worker gets a host-allocated port as $PORT so
     // its dev server binds the slot the host reserved (metadata.port).
@@ -2469,6 +2470,7 @@ function runHeadless(s, prompt, onExit, { effort } = {}) {
     ARIGAMI_PUBLIC_PATH: '/__host/',
     ARIGAMI_TOKEN: auth.tokenForSession(s.id),
     ARIGAMI_SKILLS: path.join(ROOT, 'skills'),
+    ARIGAMI_DOCS: docsDir(),
     ARIGAMI_USER_SKILLS: USER_SKILLS_DIR,
   };
   runOneShot(prompt, {
