@@ -214,7 +214,7 @@ export function effortOptionsFor(engine, model) {
   const levels = m ? m.efforts : codexCommonEfforts();
   return [
     { value: 'default', label: t('rail.effortDefault') },
-    ...levels.map((e) => ({ value: e, label: t(EFFORT_KEY[e]) || e })),
+    ...levels.map((e) => ({ value: e, label: EFFORT_KEY[e] ? t(EFFORT_KEY[e]) : e })), // a rung with no label yet shows as-is
   ];
 }
 

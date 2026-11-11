@@ -63,6 +63,8 @@ export async function codexUpdater() {
     run: () => (isUserInstall(findCodex()) ? runNpm(codexNpmArgs(), APPLY_TIMEOUT_MS) : run(['update'], APPLY_TIMEOUT_MS)),
     minFreeMb: Number(cfg.host?.claudeUpdateMinFreeMb) > 0 ? Number(cfg.host.claudeUpdateMinFreeMb) : DEFAULT_MIN_FREE_MB,
     auto: () => false,
+    // The picker's codex rows and version come from the binary: re-ask the new one.
+    onUpdated: async () => { const cx = await import('../codex.js'); await Promise.all([cx.codexVersion(true), cx.refreshCodexModels({ force: true })]); },
     emit: (event) => bus.broadcast({ type: 'host', event }),
     log: (line) => {
       console.log(`[codex-update] ${line}`);

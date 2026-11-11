@@ -98,9 +98,9 @@ function codexBin(): string {
 }
 
 let versionCache: { at: number; value: string | null } | null = null;
-/** `codex --version` → "0.153.4", cached per host process (a failed probe retries after a minute). */
-export async function codexVersion(): Promise<string | null> {
-  if (versionCache && (versionCache.value || Date.now() - versionCache.at < 60_000)) return versionCache.value;
+/** `codex --version` → "0.153.4", cached per host process (a failed probe retries after a minute); `force` re-probes (after an update). */
+export async function codexVersion(force = false): Promise<string | null> {
+  if (!force && versionCache && (versionCache.value || Date.now() - versionCache.at < 60_000)) return versionCache.value;
   const value = await new Promise<string | null>((resolve) =>
     execFile(codexBin(), ['--version'], { timeout: 5000 }, (err, stdout) => resolve(err ? null : String(stdout).match(/\d+\.\d+\.\d+\S*/)?.[0] || null))
   );
@@ -141,17 +141,23 @@ const STARTUP_TIMEOUT_SEC = 20;
 // from a session's modelChoice would look like it worked. Only pass through
 // names that plausibly belong to codex.
 const CODEX_MODEL_RE = /^(?:gpt|codex|o[0-9])[a-zA-Z0-9._-]*$/;
-// Must stay a SUPERSET of every rung the cockpit's picker can offer
-// (web/src/lib/engines.js CODEX_MODELS[].efforts) — an effort that reaches
-// here and is not in this set is dropped, and the turn then runs at the
-// model's own default while the UI still shows the rung the human picked.
-// `ultra` is gpt-5.6-terra's top rung; claude has no equivalent.
+// The rungs codex is known to take when no catalog is at hand; a rung the
+// engine's own catalog lists passes too (isCodexEffort), so a newer CLI's
+// ladder needs no edit here. Anything else is dropped and the turn runs at the
+// model's default. `ultra` is gpt-5.6-terra's top rung; claude has no equivalent.
 const EFFORTS = new Set(['minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']);
+const EFFORT_RE = /^[a-z][a-z0-9_-]{0,31}$/;
+
+/** A reasoning level codex takes: one of the known rungs, or any rung the engine's own catalog lists (a newer CLI's). */
+function isCodexEffort(effort: string | null | undefined, catalog: Array<{ efforts: string[] }> = knownCatalog(catalogHome())): boolean {
+  if (!effort || !EFFORT_RE.test(effort)) return false;
+  return EFFORTS.has(effort) || catalog.some((m) => m.efforts.includes(effort));
+}
 
 /** Pure: the levels a codex model accepts — its catalog ladder, else every level codex knows. */
 export function codexEffortLevels(model: string | null | undefined, catalog: Array<{ id: string; efforts: string[] }>): string[] {
   const row = model ? catalog.find((m) => m.id === model) : null;
-  return row?.efforts.length ? row.efforts.filter((e) => EFFORTS.has(e)) : [...EFFORTS];
+  return row?.efforts.length ? row.efforts.filter((e) => EFFORT_RE.test(e)) : [...EFFORTS];
 }
 
 // ---- TOML -----------------------------------------------------------------
@@ -475,7 +481,7 @@ function codexModelArgs({ model, effort }: { model?: string | null; effort?: str
   const out: string[] = [];
   if (model && CODEX_MODEL_RE.test(model)) out.push('-m', model);
   else if (model) console.warn(`[codex] ignoring model "${model}" — not a codex model name`);
-  if (effort && EFFORTS.has(effort)) out.push('-c', `model_reasoning_effort=${JSON.stringify(effort)}`);
+  if (isCodexEffort(effort)) out.push('-c', `model_reasoning_effort=${JSON.stringify(effort)}`);
   else if (effort && effort !== 'default') console.warn(`[codex] ignoring effort "${effort}" — not a codex reasoning level`);
   return out;
 }
@@ -979,7 +985,7 @@ setCodexWindowSource(() => codexModels().map((m) => ({ id: m.id, contextWindow: 
 // fixtures in test/fixtures/codex-stream/ without spawning anything.
 export { codexDriver, codexPrepare, codexBuildSpawn, codexHandleEvent, codexModelArgs, flatToolName, mcpTables, TOOL_TIMEOUT_SEC };
 // Shared with the app-server driver (server/codex-app.ts).
-export { CODEX_MODEL_RE, EFFORTS, textOfContent, restrictedAgentOf, reapGivenUpHostTool, onLimitText, onTurnEnd };
+export { CODEX_MODEL_RE, EFFORTS, isCodexEffort, textOfContent, restrictedAgentOf, reapGivenUpHostTool, onLimitText, onTurnEnd };
 
 /** One picker row for a Codex model — the catalog fields the cockpit needs. */
 export type CodexModelRow = { id: string; name: string; desc: string; efforts: string[]; defaultEffort: string | null; contextWindow: number | null };

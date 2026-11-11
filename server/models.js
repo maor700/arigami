@@ -16,21 +16,28 @@
 // the host found at boot: a CLI reinstalled to a different path (npm -g next to
 // a native install) would otherwise keep answering with the old binary's list —
 // even on manual refresh — until the host was restarted.
+//
+// The list is also per ACCOUNT: the handshake runs signed in as the account a
+// new session would get. Signed out, the CLI answers a baked-in fallback list.
 import { spawn, execFile } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { cfg } from './state.js';
 import { supervise } from './lib/children.js';
 import { claudeBin, RECHECK_MS } from './lib/claude-bin.js';
+import { pickSessionAccount, claudeBaseEnv, claudeAuthEnv } from './accounts.js';
 
 const STORE = path.join(cfg.configDir, 'models.json');
 const TTL_MS = 24 * 60 * 60 * 1000; // once/day
 const HANDSHAKE_TIMEOUT_MS = 15_000;
 const VERSION_TIMEOUT_MS = 5_000;
 const VERSION_TTL_MS = RECHECK_MS; // re-probe at most once a minute (same cadence as the bin re-resolve)
+const RETRY_MS = 10 * 60 * 1000; // a signed-out or failed answer is retried after this, not after a day
 
-let cache = { models: [], fetchedAt: 0, cliVersion: null, cliBin: null };
+// accountId: the account the handshake ran as; authed: false = the CLI answered signed out (degraded list).
+let cache = { models: [], fetchedAt: 0, cliVersion: null, cliBin: null, accountId: null, authed: null };
 let inflight = null;
+let lastMiss = { key: '', at: 0 }; // last attempt that did not replace the cache
 let verCache = { bin: null, value: null, at: 0 };
 
 // `claude --version` → "2.1.241 (Claude Code)" → "2.1.241". ~120ms, memoised for
@@ -70,15 +77,25 @@ function persist() {
   }
 }
 
-// One-shot: spawn `claude`, send the `initialize` control_request, resolve with
-// its `response.models` list, then kill the process. Mirrors the control_request
-// shape server/claude.js writes on every session spawn (see mergeCaps there).
-function fetchFromCli() {
+// The account a NEW claude session would run on (null = none: the CLI's own login).
+function sessionAccount() {
+  try {
+    return pickSessionAccount('claude') || null;
+  } catch {
+    return null;
+  }
+}
+
+// One-shot: spawn `claude` with the same auth env a session of `accountId` gets,
+// send the `initialize` control_request, resolve with its `response.models` list
+// (+ `account`, which says whether the CLI was signed in), then kill the process.
+// Mirrors the control_request server/claude.js writes on every session spawn.
+function fetchFromCli(accountId) {
   return new Promise((resolve, reject) => {
     const child = spawn(
       claudeBin(),
       ['--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--strict-mcp-config', '--print', ''],
-      { stdio: ['pipe', 'pipe', 'pipe'] }
+      { stdio: ['pipe', 'pipe', 'pipe'], env: { ...claudeBaseEnv(), ...claudeAuthEnv(accountId) } }
     );
     supervise(child, 'models-handshake');
     let settled = false;
@@ -104,7 +121,7 @@ function fetchFromCli() {
           settled = true;
           clearTimeout(timer);
           try { child.kill(); } catch {}
-          resolve(models);
+          resolve({ models, account: j.response.response.account || null });
         }
       }
     });
@@ -146,28 +163,41 @@ export function withBest(list) {
 }
 
 // Cached model list. Refetched when `force`, when the 24h TTL lapses, or when
-// the `claude` CLI version no longer matches the one the cache was built from
-// (including a pre-versioning cache, which has no `cliVersion` at all). Never
-// throws — falls back to the last known-good cache on fetch failure.
+// the `claude` CLI version or the session account no longer matches what the
+// cache was built from. A signed-out answer never replaces a signed-in list.
+// Never throws — falls back to the last known-good cache on fetch failure.
 export async function getModels(force = false) {
-  if (!force && cache.models.length && Date.now() - cache.fetchedAt < TTL_MS) {
-    const ver = await cliVersion();
-    // ver === null → probe failed, so we can't prove staleness; serve the cache.
-    if (!ver || ver === cache.cliVersion) return cache;
-    console.log(`[models] claude ${cache.cliVersion || '(unknown)'} → ${ver}, refetching model list`);
-  }
-  if (inflight) return inflight;
+  const accountId = sessionAccount();
   // A manual refresh is the human saying "I know it changed": re-resolve the
   // binary and re-probe its version instead of trusting the minute-old memo.
-  const ver = cliVersion(force);
-  inflight = fetchFromCli()
-    .then(async (models) => {
-      cache = { models, fetchedAt: Date.now(), cliVersion: await ver, cliBin: claudeBin() };
+  const ver = await cliVersion(force);
+  const key = `${accountId || ''}@${ver || ''}`;
+  if (!force && cache.models.length) {
+    // ver === null → probe failed, so we can't prove staleness on that axis.
+    const same = (!ver || ver === cache.cliVersion) && (cache.accountId ?? null) === accountId;
+    // Signed out although an account was expected: worth asking again soon.
+    const ttl = cache.authed === false && accountId ? RETRY_MS : TTL_MS;
+    if (same && Date.now() - cache.fetchedAt < ttl) return cache;
+    if (lastMiss.key === key && Date.now() - lastMiss.at < RETRY_MS) return cache;
+    if (ver && ver !== cache.cliVersion) console.log(`[models] claude ${cache.cliVersion || '(unknown)'} → ${ver}, refetching model list`);
+  }
+  if (inflight) return inflight;
+  inflight = fetchFromCli(accountId)
+    .then(({ models, account }) => {
+      const authed = account ? account.tokenSource !== 'none' : null; // null: this CLI doesn't say
+      if (authed === false && cache.authed === true && cache.models.length) {
+        lastMiss = { key, at: Date.now() };
+        console.warn('[models] claude answered signed out — keeping the last signed-in list');
+        cache = { ...cache, error: 'claude answered signed out — showing the last signed-in list' };
+        return cache;
+      }
+      cache = { models, fetchedAt: Date.now(), cliVersion: ver, cliBin: claudeBin(), accountId, authed };
       persist();
       return cache;
     })
     .catch((e) => {
       console.error('[models] fetch failed:', e.message);
+      lastMiss = { key, at: Date.now() };
       cache = { ...cache, error: e.message };
       return cache;
     })

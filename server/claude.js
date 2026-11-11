@@ -21,7 +21,7 @@ import * as scratch from './lib/scratch.js';
 import { cfg, CHAT_DIR, getSession, patchSession, setClaude, setBg, listSessions, untildify, setChangesExplaining, setAutoReviewing, removePendingPrompt, setSummarizing, autoPlayHold, listInbox, patchInboxItem } from './state.js';
 import { broadcast } from './bus.js';
 import { expirePendingPermissions, expirePendingScreenRequests, detachPendingSetupRequests } from './api.js';
-import { tokenForSession, quarantine, nextAvailable, getActiveId, getAccount, setActive, resolveRefreshToken } from './accounts.js';
+import { tokenForSession, quarantine, nextAvailable, getActiveId, getAccount, setActive, resolveRefreshToken, claudeBaseEnv, claudeAuthEnv } from './accounts.js';
 import { refreshOne } from './oauth-login.js';
 import { getMemoryBootstrap } from './memory.js';
 import { personaBlock, getAgent } from './agents.js';
@@ -87,10 +87,7 @@ export function pluginDirArgs() {
 // stray token in the environment (e.g. the old .env one) must not leak in and
 // silently pin every session to one account. Sessions with no resolvable
 // account fall back to Claude Code's own keychain login (token simply absent).
-function baseEnv() {
-  const { CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_API_KEY, ...rest } = process.env;
-  return rest;
-}
+const baseEnv = claudeBaseEnv;
 
 // The host is often launched from a thin-PATH context (launchd, a GUI app, a
 // non-login shell) where the npm/bun global bin that holds `claude` isn't on
@@ -116,14 +113,7 @@ export const CLAUDE_BIN = claudeBin(); // boot-time answer; spawns call claudeBi
 
 // The auth env for a specific session: the token of its assigned account (or the
 // active account). Returns {} when none resolves → keychain fallback.
-function accountEnv(s) {
-  try {
-    const r = tokenForSession(s.claude?.accountId);
-    return r ? { CLAUDE_CODE_OAUTH_TOKEN: r.token } : {};
-  } catch {
-    return {};
-  }
-}
+const accountEnv = (s) => claudeAuthEnv(s.claude?.accountId);
 
 const ROOT = resourceRoot();
 // The host's own servers. With the MCP gateway on (the default), `arigami` and
