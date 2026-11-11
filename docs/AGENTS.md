@@ -23,6 +23,12 @@ the agent surface instead of a rail row — see the last section.)
 that CLI and "Claude" below means whichever engine the session runs. A3 allowlists, budgets and the ledger
 hold on both; differences (no `--disallowedTools` on codex, cost `null`) are in §Engine and docs/ENGINES.md.
 
+**Outbound (system principle, 2026-11-04).** When the owner asks, the agent initiates and operates the communication
+modules — email, WhatsApp, Slack, messages, and the sessions it creates/tasks for that — and never deflects with
+"I can't send / I have no access" while the capability exists. Delivery is unchanged: a third party gets a Send card the
+owner presses, the owner's own notify target is direct, cron `deliver.whatsapp` / extension `notify()` send directly.
+The wording the agent reads is the `host-rules` and `identity` blocks in `server/prompt-blocks.ts`.
+
 ## Storage — `$ARIGAMI_DIR/agents/<slug>/`
 
 ```
@@ -138,7 +144,7 @@ fold). Gates: `bun run typecheck` (2 pre-existing errors), `bun test test/`,
 
 A2 connected identity — shipped, see below.
 A3 control — shipped, see below.
-A4 experience — shipped, see below (slash-commands, @mentions, bundles ship `agents/`, `marketing-team`).
+A4 experience — shipped, see below (slash-commands, @mentions, bundles ship `agents/`).
 
 ---
 
@@ -215,13 +221,13 @@ the first `openChrome`, logins synced back) and only changes **the seed**:
 
 - `profileSeedFor(sessionId)` → `agents/<slug>/browser` for a session born from an agent. A
   plain session's profile now starts **empty**: the owner's own logins (`chrome-base`, "my
-  browser") reach a session one site at a time through `request_login`, on the owner's
-  approval (`server/lib/login-vault.ts`). The agent's first profile starts empty too; later
+  browser" and their everyday Chrome) reach a session one site at a time through `sign_in`, on
+  the owner's approval (`server/lib/login-vault.ts`, `docs/LOGIN.md`). The agent's first profile starts empty too; later
   sessions of the agent inherit the agent's.
 - `syncProfileToBase(sessionId)` copies `Default/Cookies`, `Login Data`, `Local Storage` back
   into the AGENT's profile under a per-target lock (take-over resolve, session delete,
   `save_browser_logins`). It never writes `chrome-base` any more — `shared:true` is refused;
-  a login reaches the owner's browser only via `save_login`, one site, with their approval.
+  a login reaches the owner's browser only one site at a time, with their approval (`save_login`, internal now).
 - `googleAccountEmail(sessionId)` reads the session copy, then the **agent's** profile — never
   `chrome-base` for an agent session (the shared account must not leak in).
 - `save_browser_logins()` / `POST /__api/sessions/:id/browser/sync-logins` (agent sessions only).
@@ -474,9 +480,9 @@ honoured: a spent agent gets no new child/home/session (429); an unknown agent i
   `agent.json` minus `homeSessionId`, `persona.md`, `assets/` — never `memory/`, `browser/`,
   `identity.json`; `cron.json[].agent` travels too. Re-importing is idempotent.
 
-### Showcase — `profiles/bundles/marketing-team/`
+### Example bundle shape (test fixture `test/fixtures/bundles/marketing-team/`)
 
-Six agents (English personas ≤ 20 lines, a placeholder product `<your-product>`, no accounts or
+Not shipped with the product (profiles come from the org profile repo); kept as a test fixture. Six agents (English personas ≤ 20 lines, a placeholder product `<your-product>`, no accounts or
 brands): **awesome** 🧭 manager (`sessions`, `triggers`; `campaign-brief`, `project-manager`),
 **Mila** ✍️ copywriter (`web`), **Jord** 🎨 image maker (`desktop`, `web`; domains
 `unsplash.com`, `pexels.com`; one placeholder asset), **Reachard** 🔍 researcher (`web`, `*`),
@@ -491,12 +497,12 @@ modest daily token budget that A3 enforces.
 `test/agents-a4-web.test.js` (composer parsing: slash / `agent new` / skill slashes / mentions /
 mention query & completion / `resolveSubmission`; palette merge; `SlashPalette` skill chip,
 `MentionPalette`, `DelegatedLine`, `teamRows` + `TeamPanel`), `test/agents-a4.test.ts` (the
-showcase bundle loads + validates, agent validation errors/warnings, apply → created / unchanged /
+fixture bundle loads + validates, agent validation errors/warnings, apply → created / unchanged /
 force-updated, skipped skills on an external bundle, cron born from the agent, `exportBundle`
 round-trip), `test/agents-a4-host.test.ts` (isolated host: `skills[].slash`, mention → home,
 mention from a PM → child in the folder, `/as` → session, 404/400/429, agent-card 201/409 + cancel,
-profiles REST apply with agents + force). `test/profile-bundles.test.ts` now covers
-`marketing-team` too.
+profiles REST apply with agents + force). `test/profile-bundles.test.ts` validates the
+fixture bundles.
 
 ## Known limits (A4)
 
@@ -548,8 +554,7 @@ agent's word:
 
 **Defaults:** agent records written before A5 (`toolsV` < 2) are migrated once — `publish` is added
 to their allowlist, so an existing agent keeps exactly the publishing it had, and unticking the new
-checkbox afterwards sticks. A **new** agent with an allowlist must ask for `publish` explicitly (the
-bundled `marketing-team` agents do). `share` always needs the human unless it is auto-approved.
+checkbox afterwards sticks. A **new** agent with an allowlist must ask for `publish` explicitly (a bundle's agents must do so). `share` always needs the human unless it is auto-approved.
 
 ## #3 — the injected policy line
 

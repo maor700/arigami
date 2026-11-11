@@ -15,6 +15,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { ARIGAMI_DIR } from './instance.js';
+import { cfg } from './config.js';
 import { supervise, killTree } from './children.js';
 import * as state from '../state.js';
 import { pickDriver } from './screen-driver.js';
@@ -70,8 +71,7 @@ export function ensureSessionProfile(sessionId: string): string {
     const seed = profileSeedFor(sessionId);
     if (seed.owner !== 'global') {
       ensureBase(seed.dir); // an agent's first-ever profile starts empty and is created here
-      // Caches are what makes a profile hundreds of MB; they are not identity.
-      fs.cpSync(seed.dir, dir, { recursive: true, filter: (src) => !CACHE_DIRS.has(path.basename(src)) });
+      cloneProfile(seed.dir, dir);
     } else {
       fs.mkdirSync(dir, { recursive: true });
     }
@@ -79,7 +79,44 @@ export function ensureSessionProfile(sessionId: string): string {
   return dir;
 }
 
-const CACHE_DIRS = new Set(['Cache', 'Code Cache', 'GPUCache', 'DawnCache', 'GrShaderCache', 'ShaderCache', 'Service Worker', 'blob_storage', 'Crashpad']);
+/**
+ * VAULT1: a session's Chrome never offers to save a password. A password the sign-in card filled would otherwise land
+ * in the profile's `Login Data`, which `--password-store=basic` barely protects — and the profile is copied around
+ * (agent seeds, My browser). Written before every launch (Chrome rewrites Preferences while it runs).
+ */
+export function disablePasswordSaving(profileDir: string): void {
+  const file = path.join(profileDir, 'Default', 'Preferences');
+  let prefs: Record<string, any> = {};
+  try { prefs = JSON.parse(fs.readFileSync(file, 'utf8')) || {}; } catch { /* a new profile */ }
+  if (prefs.credentials_enable_service === false && prefs.profile?.password_manager_enabled === false) return;
+  prefs.credentials_enable_service = false;
+  prefs.credentials_enable_autosignin = false;
+  prefs.profile = { ...(prefs.profile || {}), password_manager_enabled: false };
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify(prefs));
+  } catch { /* best-effort: a read-only profile still launches */ }
+}
+
+// Caches and Chrome's own downloads are what make a profile hundreds of MB;
+// none of them is identity, and Chrome rebuilds each on demand. What a login
+// lives in — Cookies, Local Storage, Session Storage, IndexedDB, Login Data,
+// Web Data, Preferences — is always copied.
+export const CLONE_EXCLUDE = new Set([
+  // HTTP / JS / GPU caches (per profile, under Default/)
+  'Cache', 'Code Cache', 'GPUCache', 'DawnCache', 'DawnGraphiteCache', 'DawnWebGPUCache', 'GrShaderCache', 'GraphiteDawnCache', 'ShaderCache',
+  // service-worker scripts and their CacheStorage; sites re-register them
+  'Service Worker', 'CacheStorage', 'blob_storage',
+  // component-updater downloads and on-device models (user-data-dir level)
+  'optimization_guide_model_store', 'component_crx_cache', 'extensions_crx_cache', 'WasmTtsEngine', 'OnDeviceHeadSuggestModel', 'Safe Browsing',
+  // crash dumps, metrics spill files, the profile lock of a running Chrome
+  'Crashpad', 'BrowserMetrics', 'BrowserMetrics-spare.pma', 'SingletonLock', 'SingletonSocket', 'SingletonCookie',
+]);
+
+/** Copy a Chrome profile without what Chrome can rebuild (CLONE_EXCLUDE). Never writes `src`. */
+export function cloneProfile(src: string, dest: string): void {
+  fs.cpSync(src, dest, { recursive: true, filter: (p) => !CLONE_EXCLUDE.has(path.basename(p)) });
+}
 
 const running = new Map<string, ChildProcess>();
 
@@ -101,11 +138,26 @@ export function chromeBin(): string {
 // Inside a container the host runs as an unprivileged user without user
 // namespaces, so Chrome's sandbox cannot start; `--no-sandbox` is the
 // documented answer (compose gives it a 1g /dev/shm instead of SYS_ADMIN).
-// Detected via /.dockerenv (or an explicit CHROME_NO_SANDBOX=1) — never on a
-// native host.
-export function chromeExtraFlags(env: NodeJS.ProcessEnv = process.env): string[] {
-  const inDocker = env.CHROME_NO_SANDBOX === '1' || fs.existsSync('/.dockerenv');
-  return inDocker ? ['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu'] : [];
+// Detected via /.dockerenv, a Kubernetes pod (KUBERNETES_SERVICE_HOST — containerd pods have no /.dockerenv, which
+// is how every browser launch in a tenant pod used to die in Chrome's zygote), or an explicit CHROME_NO_SANDBOX=1 —
+// never on a native host. CHROME_NO_SANDBOX=0 forces the sandbox on.
+export function chromeExtraFlags(env: NodeJS.ProcessEnv = process.env, dockerenv: boolean = fs.existsSync('/.dockerenv')): string[] {
+  if (env.CHROME_NO_SANDBOX === '0') return [];
+  const inContainer = env.CHROME_NO_SANDBOX === '1' || dockerenv || !!env.KUBERNETES_SERVICE_HOST;
+  return inContainer ? ['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu'] : [];
+}
+
+// Chrome makes its singleton socket at $TMPDIR/.com.google.Chrome.XXXXXX/SingletonSocket, and a unix socket path is
+// limited to 108 bytes. Measured with Chrome 153: a TMPDIR of 66 bytes starts, 67 aborts at once ("FATAL … Socket
+// path too long") — and whoever waits for its DevTools port waits out the whole timeout. An Arigami session's own
+// scratch TMPDIR is already ~62 bytes, so a host or a test started from a session lost every Chrome it launched.
+export const CHROME_TMPDIR_MAX = 66;
+
+/** The environment to start Chrome with: the same, with a short TMPDIR when the one given is too long for it. Pure. */
+export function chromeEnv(env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): NodeJS.ProcessEnv {
+  const t = env.TMPDIR || '';
+  if (platform === 'win32' || t.length <= CHROME_TMPDIR_MAX) return env;
+  return { ...env, TMPDIR: '/tmp' };
 }
 
 export function isChromeRunning(sessionId: string): boolean {
@@ -113,18 +165,25 @@ export function isChromeRunning(sessionId: string): boolean {
   return !!(p && p.exitCode === null && !p.killed);
 }
 
-/** Open (or report already-open) this session's Chrome, on its own desktop and profile copy. */
-export async function openChrome(sessionId: string, url?: string): Promise<{ display: string; pid: number; alreadyRunning: boolean }> {
-  const s = state.getSession(sessionId);
-  if (!s) throw new Error(`unknown session: ${sessionId}`);
-  const driver = pickDriver();
-  const handle = await driver.ensure(sessionId);
-  const display = String(handle.display);
-  const existing = running.get(sessionId);
-  if (existing && isChromeRunning(sessionId)) return { display, pid: existing.pid!, alreadyRunning: true };
+// Chrome downloads ~130 MB of on-device models and components into EVERY new
+// profile within minutes of first launch — optimization_guide_model_store
+// (history-embedding and page-hint models, ~46 MB), component_crx_cache,
+// WasmTtsEngine, OnDeviceHeadSuggestModel — measured on a fresh temp profile.
+// An agent's browser uses none of these features. Chrome reads only the LAST
+// --disable-features switch, so this must stay the only one passed.
+export const LEAN_PROFILE_FEATURES_OFF = [
+  'OptimizationTargetPrediction',
+  'OptimizationHintsFetching',
+  'OptimizationHints',
+  'OptimizationGuideOnDeviceModel',
+  'HistoryEmbeddings',
+  'PassageEmbeddings',
+  'SegmentationPlatform',
+];
 
-  const profileDir = ensureSessionProfile(sessionId);
-  const args = [
+/** Command line of a session's Chrome (before driver / sandbox flags). */
+export function sessionChromeArgs(profileDir: string, url?: string): string[] {
+  return [
     `--user-data-dir=${profileDir}`,
     '--password-store=basic',
     '--no-first-run',
@@ -139,18 +198,85 @@ export async function openChrome(sessionId: string, url?: string): Promise<{ dis
     '--restore-last-session',
     // A long-lived session profile otherwise grows its cache without bound.
     '--disk-cache-size=52428800',
+    `--disable-features=${LEAN_PROFILE_FEATURES_OFF.join(',')}`,
     ...(url ? [url] : []),
   ];
+}
+
+/** Open (or report already-open) this session's Chrome, on its own desktop and profile copy. */
+export async function openChrome(sessionId: string, url?: string): Promise<{ display: string; pid: number; alreadyRunning: boolean }> {
+  const s = state.getSession(sessionId);
+  if (!s) throw new Error(`unknown session: ${sessionId}`);
+  const driver = pickDriver();
+  const handle = await driver.ensure(sessionId);
+  const display = String(handle.display);
+  const existing = running.get(sessionId);
+  if (existing && isChromeRunning(sessionId)) return { display, pid: existing.pid!, alreadyRunning: true };
+
+  const profileDir = ensureSessionProfile(sessionId);
+  // A Chrome that died a moment ago may not have had its exit event yet: settle it first, so the log and the
+  // reopen reason stay in order and its port file is gone before the new one is written.
+  if (existing) onChromeExit(sessionId, existing, profileDir, existing.exitCode, existing.signalCode);
+  try { fs.rmSync(path.join(profileDir, 'DevToolsActivePort'), { force: true }); } catch {}
+  disablePasswordSaving(profileDir);
+  const args = sessionChromeArgs(profileDir, url);
   const { env, extraArgs } = await driver.browserLaunch(sessionId);
   const child = spawn(chromeBin(), chromeExtraFlags().concat(extraArgs, args), {
-    env,
+    env: chromeEnv(env),
     stdio: ['ignore', 'ignore', 'pipe'],
   });
   supervise(child, `browser:${sessionId}`);
-  child.on('exit', () => { if (running.get(sessionId) === child) running.delete(sessionId); });
+  child.on('exit', (code, signal) => onChromeExit(sessionId, child, profileDir, code, signal));
   running.set(sessionId, child);
   touch(sessionId);
+  const prev = lastStop.get(sessionId);
+  chromeLog(`[chrome] started the browser of ${sessionId} (pid ${child.pid}) — ${prev ? `reopened after: ${prev}` : 'first open'}`);
   return { display, pid: child.pid!, alreadyRunning: false };
+}
+
+// ---- stop/restart log -------------------------------------------------------------
+//
+// Every start, stop and unexpected exit of a session Chrome is logged with its
+// reason, to the host's stdout and to <ARIGAMI_DIR>/logs/chrome.log (readable
+// without access to the service journal).
+
+const CHROME_LOG = path.join(ARIGAMI_DIR, 'logs', 'chrome.log');
+const CHROME_LOG_MAX = 1024 * 1024;
+const stopReason = new Map<ChildProcess, string>();
+const lastStop = new Map<string, string>();
+
+export function chromeLog(line: string): void {
+  console.log(line);
+  try {
+    fs.mkdirSync(path.dirname(CHROME_LOG), { recursive: true });
+    if ((fs.statSync(CHROME_LOG, { throwIfNoEntry: false })?.size ?? 0) > CHROME_LOG_MAX) fs.renameSync(CHROME_LOG, `${CHROME_LOG}.1`);
+    fs.appendFileSync(CHROME_LOG, `${new Date().toISOString()} ${line}\n`);
+  } catch {}
+}
+
+/** Mark the stop as the host's own, with why, before signalling the process. */
+function markStop(sessionId: string, child: ChildProcess, reason: string): void {
+  stopReason.set(child, reason);
+  lastStop.set(sessionId, reason);
+  chromeLog(`[chrome] stopping the browser of ${sessionId} (pid ${child.pid}) — ${reason}`);
+}
+
+const settled = new WeakSet<ChildProcess>();
+
+function onChromeExit(sessionId: string, child: ChildProcess, profileDir: string, code: number | null, signal: NodeJS.Signals | null): void {
+  if (settled.has(child)) return;
+  settled.add(child);
+  const asked = stopReason.get(child);
+  stopReason.delete(child);
+  if (!asked) {
+    const why = `exited on its own (code ${code}, signal ${signal})`;
+    lastStop.set(sessionId, why);
+    chromeLog(`[chrome] the browser of ${sessionId} (pid ${child.pid}) ${why}`);
+  }
+  if (running.get(sessionId) !== child && running.has(sessionId)) return; // a newer Chrome already owns the profile
+  running.delete(sessionId);
+  // A dead port in DevToolsActivePort reads as ECONNREFUSED; no file reads as "call browser_open".
+  try { fs.rmSync(path.join(profileDir, 'DevToolsActivePort'), { force: true }); } catch {}
 }
 
 // ---- idle close -----------------------------------------------------------------
@@ -160,9 +286,14 @@ export async function openChrome(sessionId: string, url?: string): Promise<{ dis
 // step reopens it (browser-actions.ts) with the same profile and its tabs, so
 // logins and open pages survive. Never while a human may be looking at it: an
 // open take-over request, or a take-over that ended recently, keeps it up.
+// "Use" is not only the host's browser_* steps: an agent script driving the
+// browser straight over CDP (Playwright connectOverCDP on DevToolsActivePort)
+// never passes through the host, so before closing, the closer asks Chrome
+// itself — a page with a DevTools client attached, or tabs that changed since
+// the last look, counts as use.
 
 const lastUse = new Map<string, number>();
-export const IDLE_MS = Number(process.env.ARIGAMI_BROWSER_IDLE_MS) || 10 * 60_000;
+export const IDLE_MS = Number(process.env.ARIGAMI_BROWSER_IDLE_MS) || Number(cfg.screen?.browserIdleMs) || 10 * 60_000;
 
 /** Record that this session's browser was just used (every browser_* step calls it). */
 export function touch(sessionId: string): void {
@@ -174,9 +305,10 @@ export function touch(sessionId: string): void {
  * storage and write its session (for --restore-last-session); SIGTERM/SIGKILL
  * only if it does not go.
  */
-export async function closeChromeGracefully(sessionId: string, port: number | null): Promise<void> {
+export async function closeChromeGracefully(sessionId: string, port: number | null, reason: string): Promise<void> {
   const child = running.get(sessionId);
   if (!child) return;
+  markStop(sessionId, child, reason);
   if (port) {
     try {
       const v = (await (await fetch(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(1500) })).json()) as any;
@@ -195,7 +327,7 @@ export async function closeChromeGracefully(sessionId: string, port: number | nu
     }
   }
   if (child.exitCode === null) killTree(child.pid);
-  running.delete(sessionId);
+  if (running.get(sessionId) === child) running.delete(sessionId); // never a Chrome started while this one was closing
 }
 
 /** Sessions whose browser should close now. Pure — the caller supplies what a human is doing. */
@@ -211,24 +343,80 @@ export function idleCandidates(now: number, humanBusy: (sessionId: string) => bo
   return out;
 }
 
-export function startIdleCloser(humanBusy: (sessionId: string) => boolean, portOf: (sessionId: string) => number | null, log: (m: string) => void = console.log): () => void {
+/** What Chrome itself says about its use: pages with a DevTools client attached, and a fingerprint of its tabs. */
+export type CdpActivity = { attached: number; tabs: string };
+
+/** Ask a Chrome over its browser endpoint (which attaches to no page itself); null when it does not answer. */
+export async function cdpActivity(port: number, timeoutMs = 2000): Promise<CdpActivity | null> {
+  try {
+    const v = (await (await fetch(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(timeoutMs) })).json()) as any;
+    const infos = await new Promise<any[]>((resolve, reject) => {
+      const ws = new WebSocket(v.webSocketDebuggerUrl);
+      const t = setTimeout(() => { try { ws.close(); } catch {} reject(new Error('timeout')); }, timeoutMs);
+      ws.onopen = () => ws.send(JSON.stringify({ id: 1, method: 'Target.getTargets' }));
+      ws.onerror = () => { clearTimeout(t); reject(new Error('socket error')); };
+      ws.onmessage = (ev) => {
+        const m = JSON.parse(String(ev.data));
+        if (m.id !== 1) return;
+        clearTimeout(t);
+        ws.close();
+        resolve(m.result?.targetInfos || []);
+      };
+    });
+    const pages = infos.filter((t) => t.type === 'page');
+    return { attached: pages.filter((t) => t.attached).length, tabs: pages.map((t) => `${t.targetId} ${t.url} ${t.title}`).sort().join('\n') };
+  } catch {
+    return null;
+  }
+}
+
+/** Why an idle candidate must stay up after all, or null to close it. Pure. */
+export function keepForActivity(now: CdpActivity | null, before: CdpActivity | undefined): string | null {
+  if (!now) return null;
+  if (now.attached > 0) return `${now.attached} page(s) have a DevTools client attached`;
+  if (before && before.tabs !== now.tabs) return 'its tabs changed since the last check';
+  return null;
+}
+
+export function startIdleCloser(
+  humanBusy: (sessionId: string) => boolean,
+  portOf: (sessionId: string) => number | null,
+  probe: (port: number) => Promise<CdpActivity | null> = cdpActivity,
+  intervalMs = 60_000,
+): () => void {
+  const seen = new Map<string, CdpActivity>();
+  let busy = false; // a graceful close can outlast the interval; a second tick would close the same Chrome again
   const tick = async () => {
-    for (const id of idleCandidates(Date.now(), humanBusy)) {
-      await closeChromeGracefully(id, portOf(id)).catch(() => {});
-      log(`[chrome] closed the idle browser of ${id} (unused for ${Math.round(IDLE_MS / 60000)} min; it reopens on the next browser step)`);
+    if (busy) return;
+    busy = true;
+    try {
+      for (const id of seen.keys()) if (!running.has(id)) seen.delete(id);
+      for (const id of [...running.keys()]) {
+        const port = portOf(id);
+        const now = port ? await probe(port) : null;
+        if (keepForActivity(now, seen.get(id))) touch(id);
+        if (now) seen.set(id, now);
+      }
+      for (const id of idleCandidates(Date.now(), humanBusy)) {
+        await closeChromeGracefully(id, portOf(id), `idle close: no browser step, DevTools client or tab change for ${IDLE_MS >= 60_000 ? `${Math.round(IDLE_MS / 60_000)} min` : `${Math.round(IDLE_MS / 1000)} s`}; it reopens on the next browser step`).catch(() => {});
+        seen.delete(id);
+      }
+    } finally {
+      busy = false;
     }
   };
-  const t = setInterval(() => void tick(), 60_000);
+  const t = setInterval(() => void tick(), intervalMs);
   t.unref?.();
   return () => clearInterval(t);
 }
 
 /** Kill THIS session's Chrome, if running — never touches any other process. */
-export function closeChrome(sessionId: string): void {
+export function closeChrome(sessionId: string, reason: string): void {
   const child = running.get(sessionId);
   if (!child) return;
+  markStop(sessionId, child, reason);
   killTree(child.pid);
-  running.delete(sessionId);
+  if (running.get(sessionId) === child) running.delete(sessionId);
 }
 
 // ---- Sync back to chrome-base (T8 §4) ---------------------------------------

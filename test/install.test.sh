@@ -8,6 +8,8 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SH="$ROOT/install.sh"
+# the product ships no example bundles — use the fixtures as the "shipped" dir
+export ARIGAMI_SHIPPED_BUNDLES_DIR="${ARIGAMI_SHIPPED_BUNDLES_DIR:-$ROOT/test/fixtures/bundles}"
 fail() { echo "FAIL: $*" >&2; exit 1; }
 pass() { echo "ok - $*"; }
 
@@ -68,6 +70,8 @@ if command -v bun >/dev/null 2>&1; then
   grep -q 'solo-dev' "$scratch/data/pending-profile" || fail "pending-profile content"
   ARIGAMI_DIR="$scratch/data" bun server/profiles.ts current | grep -q '"pending"' || fail "current shows pending"
   pass "profiles.ts list/validate/pending/current"
+  [ "$(ARIGAMI_DIR="$scratch/data2" ARIGAMI_SHIPPED_BUNDLES_DIR="$scratch/none" bun server/profiles.ts list | tr -d '[:space:]')" = "[]" ] || fail "profiles list with no shipped dir is []"
+  pass "profiles.ts list tolerates an absent shipped dir"
 else
   echo "skip - bun not installed"
 fi

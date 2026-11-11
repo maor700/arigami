@@ -9,6 +9,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { runInChild } from './_child.js';
+import { tmpDir } from './_tmp.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const RESOURCE_ROOT_TS = path.join(ROOT, 'server', 'lib', 'resource-root.ts');
@@ -34,7 +35,7 @@ test('dev fallback resolves to the repo root — identical to the pre-refactor p
 });
 
 test('inside a bun build --compile binary, resourceRoot() is <execDir>/resources', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-resource-root-'));
+  const tmp = tmpDir('arigami-resource-root-');
   try {
     const entry = path.join(tmp, 'entry.ts');
     fs.writeFileSync(

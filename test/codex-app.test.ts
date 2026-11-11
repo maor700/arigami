@@ -4,13 +4,14 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { runInChild } from './_child.js';
+import { tmpDir } from './_tmp.js';
 
 const FIX = path.resolve(import.meta.dir, 'fixtures/codex-app');
 
 let dir: string;
 let codexHome: string;
 beforeAll(() => {
-  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cxapp-drv-'));
+  dir = tmpDir('cxapp-drv-');
   codexHome = path.join(dir, 'real-codex-home');
   fs.mkdirSync(codexHome, { recursive: true });
   fs.writeFileSync(path.join(codexHome, 'auth.json'), '{"auth_mode":"chatgpt"}');

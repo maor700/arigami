@@ -1,0 +1,73 @@
+# deploy/helm/arigami-control-plane on a local cluster. Every value here has a cloud counterpart in README.md
+# ("What the cloud must provide"); the local stand-ins are: plain http on *.localtest.me (resolves to 127.0.0.1),
+# an in-cluster mock IdP, ingress-nginx on a NodePort, k3s's local-path volumes.
+#
+# Images are pinned by DIGEST. Both digests are the `sha-411bd83` tags (= master 411bd836, the merge of the tenant
+# gate), which is also what `latest` pointed at when this was written. Look up newer ones with the anonymous GHCR
+# token endpoint — README.md "Images".
+image:
+  repository: ghcr.io/maor700/arigami-control-plane
+  tag: sha256:3c8955b0591efcc4a281a987c26e541242ac974e44594f9e3ed2334f726e7764 # sha-411bd83
+
+config:
+  orgDomain: arigami.localtest.me # tenants: u-<id>.arigami.localtest.me
+  orgName: Example Org
+  urlScheme: http # no TLS locally — the cloud sets https (and ingress.tls below)
+  # Share the session cookie with u-<id>.arigami.localtest.me so the tenant Ingress can ask /auth/verify (the gate).
+  cookieParentDomain: "1"
+
+  # The mock IdP (manifests/mock-idp.yaml). The issuer string must be byte-identical for the browser and for this
+  # pod: idp.localtest.me is 127.0.0.1 on the host and is rewritten to the ingress controller inside the cluster
+  # (manifests/coredns-custom.yaml), so both reach the same Ingress.
+  oidcIssuer: http://idp.localtest.me
+  oidcClientId: arigami-local
+  allowedEmailDomains: example.com
+
+  tenantImageRepository: ghcr.io/maor700/arigami
+  tenantImageTag: sha256:0080a389cd9e4220c010a63b21cc21763b60cfef1c281bd846f3355077d71271 # sha-411bd83
+
+  tenantIngressClass: nginx
+  tenantIngressNamespaces: ingress-nginx
+  # The first tenant on a fresh node pulls the ~3 GB tenant image inside `helm --wait`.
+  helmTimeoutSec: "900"
+
+ingress:
+  className: nginx
+  host: arigami.localtest.me # => CP_PUBLIC_URL http://arigami.localtest.me, redirect_uri …/auth/callback
+
+# up.sh creates this Secret (CP_OIDC_CLIENT_SECRET) out of band — the pattern a real install should keep
+# (external-secrets / sealed-secrets / SOPS), so the client secret is never in a Helm release.
+existingSecret: arigami-control-plane-oidc
+
+persistence:
+  size: 2Gi # sqlite + backups; local-path does not enforce sizes anyway
+
+# Layered on every tenant release the control plane installs.
+tenantValues:
+  persistence:
+    size: 5Gi # chart default is 30Gi (measured for real use); this VM's disk is the limit locally
+  ingress:
+    annotations:
+      # The tenant gate (docs/CONTROL-PLANE.md "Org SSO in front of every cockpit"), nginx flavour: every request
+      # to u-<id>.<orgDomain> is first sent to the control plane's /auth/verify — 2xx passes, 401 goes to
+      # auth-signin, anything else is refused. `?redirect=0` makes the control plane answer 401 where it would
+      # redirect (nginx turns any 3xx from the auth endpoint into a 500); control-plane images up to sha-411bd83
+      # ignore it — with those, a request without a session gets that 500 instead of the sign-in page.
+      nginx.ingress.kubernetes.io/auth-url: http://arigami-control-plane.arigami.svc.cluster.local:8090/auth/verify?redirect=0
+      # No `?rd=` here: ingress-nginx then appends rd=<scheme>://<host><escaped URI> itself — complete, query included.
+      # (A hand-written rd=$scheme://$host$request_uri is not escaped: an `&` in the original URL cuts it short.)
+      nginx.ingress.kubernetes.io/auth-signin: http://arigami.localtest.me/auth/login
+      # nginx's auth subrequest carries the CONTROL PLANE's Host header, not the tenant's — without these two headers
+      # /auth/verify cannot tell which workspace is asked for and refuses everything ("not a workspace address").
+      # (Not `auth-proxy-set-headers`: its ConfigMap would have to live in every tenant namespace — a ConfigMap in
+      # another namespace is rejected as a cross-namespace reference and the whole Ingress then answers 503.)
+      nginx.ingress.kubernetes.io/auth-snippet: |
+        proxy_set_header X-Forwarded-Host $http_host;
+        proxy_set_header X-Forwarded-Uri $request_uri;
+      # The control plane's session cookie is for the gate only; nothing inside a cockpit may see (and replay) it.
+      nginx.ingress.kubernetes.io/configuration-snippet: |
+        set $arigami_cookie $http_cookie;
+        if ($arigami_cookie ~ "^(.*?)(?:^|;\s*)arigami_cp_sid=[^;]*(.*)$") {
+          set $arigami_cookie "$1$2";
+        }
+        proxy_set_header Cookie $arigami_cookie;

@@ -9,10 +9,15 @@
 #   xinput.py move X Y
 #   xinput.py click X Y [button]      # button 1=left (default) 2=middle 3=right
 #   xinput.py dblclick X Y
+#   xinput.py drag X1 Y1 X2 Y2        # press at 1, move in steps, release at 2
+#   xinput.py scroll X Y DY           # wheel at X,Y: DY>0 scrolls down, DY<0 up (|DY| ticks)
 #   xinput.py key  NAME[+NAME...]     # e.g. Return, Tab, Escape, ctrl+l, ctrl+a, alt+F4
 #   xinput.py type TEXT               # printable ASCII only (URLs, one-time device
 #                                     # codes). NEVER passwords / 2FA / OTP — those are
 #                                     # the human's (request_screen). Non-ASCII → error 3.
+#   xinput.py type-secret             # HOST ONLY (sign_in's vault fill): the value comes on stdin, never argv
+#                                     # (argv shows in `ps`), is checked whole before a key goes out, and no error
+#                                     # ever names a character of it.
 #   xinput.py size                    # prints "W H" of the root window
 #
 # Exit codes: 0 ok · 2 usage · 3 unsupported text · 4 cannot open DISPLAY.
@@ -98,6 +103,27 @@ class Driver:
             self.X.XFlush(self.d)
             time.sleep(0.08)
 
+    def drag(self, x1, y1, x2, y2, steps=12):
+        self.move(x1, y1)
+        time.sleep(0.05)
+        self.T.XTestFakeButtonEvent(self.d, 1, 1, 0)
+        self.X.XFlush(self.d)
+        for i in range(1, steps + 1):
+            self.move(int(x1) + (int(x2) - int(x1)) * i / steps, int(y1) + (int(y2) - int(y1)) * i / steps)
+            time.sleep(0.02)
+        self.T.XTestFakeButtonEvent(self.d, 1, 0, 0)
+        self.X.XFlush(self.d)
+
+    def scroll(self, x, y, dy):
+        self.move(x, y)
+        time.sleep(0.05)
+        button = 5 if int(dy) > 0 else 4
+        for _ in range(min(abs(int(dy)), 50)):
+            self.T.XTestFakeButtonEvent(self.d, button, 1, 0)
+            self.T.XTestFakeButtonEvent(self.d, button, 0, 0)
+            self.X.XFlush(self.d)
+            time.sleep(0.02)
+
     def _keycode(self, keysym):
         kc = self.X.XKeysymToKeycode(self.d, keysym)
         if not kc:
@@ -161,9 +187,30 @@ class Driver:
             time.sleep(0.015)
 
 
+    def type_secret(self, value):
+        # every character first: nothing is typed when one of them cannot be, and the error names none
+        if not value or any(not (0x20 <= ord(ch) <= 0x7e) for ch in value):
+            die('the value has a character that cannot be typed here (printable ASCII only)', 3)
+        codes = []
+        for ch in value:
+            kc, need_shift = self._keycode(ord(ch))
+            if not kc:
+                die('the value has a character that is not on the keymap', 3)
+            codes.append((kc, need_shift))
+        skc = self.X.XKeysymToKeycode(self.d, self.X.XStringToKeysym(b'Shift_L'))
+        for kc, need_shift in codes:
+            if need_shift:
+                self._press(skc, True)
+            self._press(kc, True)
+            self._press(kc, False)
+            if need_shift:
+                self._press(skc, False)
+            time.sleep(0.015)
+
+
 def main(argv):
     if len(argv) < 2:
-        die(__doc__ or 'usage: xinput.py <move|click|dblclick|key|type|size> ...')
+        die(__doc__ or 'usage: xinput.py <move|click|dblclick|drag|scroll|key|type|size> ...')
     cmd, args = argv[1], argv[2:]
     drv = Driver()
     try:
@@ -175,10 +222,16 @@ def main(argv):
             drv.click(args[0], args[1], int(args[2]) if len(args) == 3 else 1)
         elif cmd == 'dblclick' and len(args) == 2:
             drv.click(args[0], args[1], 1, times=2)
+        elif cmd == 'drag' and len(args) == 4:
+            drv.drag(*args)
+        elif cmd == 'scroll' and len(args) == 3:
+            drv.scroll(*args)
         elif cmd == 'key' and len(args) == 1:
             drv.key(args[0])
         elif cmd == 'type' and len(args) == 1:
             drv.type(args[0])
+        elif cmd == 'type-secret' and not args:
+            drv.type_secret(sys.stdin.read())
         else:
             die(f'bad usage: {cmd} {args}')
     finally:

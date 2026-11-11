@@ -6,9 +6,9 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { isWin, pidAlive, HOME } from './lib/platform.js';
-import { resourceRoot } from './lib/resource-root.js';
+import { resourceRoot, docsDir } from './lib/resource-root.js';
 import { bunExec, bunExecShell } from './lib/bun-exec.js';
 import { claudeBin, EXTRA_BINS } from './lib/claude-bin.js';
 import { supervise, killTree, killByTag } from './lib/children.js';
@@ -21,7 +21,7 @@ import * as scratch from './lib/scratch.js';
 import { cfg, CHAT_DIR, getSession, patchSession, setClaude, setBg, listSessions, untildify, setChangesExplaining, setAutoReviewing, removePendingPrompt, setSummarizing, autoPlayHold, listInbox, patchInboxItem } from './state.js';
 import { broadcast, subscribe } from './bus.js';
 import { expirePendingPermissions, expirePendingScreenRequests, detachPendingSetupRequests } from './api.js';
-import { tokenForSession, quarantine, nextAvailable, getActiveId, getAccount, setActive, resolveRefreshToken } from './accounts.js';
+import { tokenForSession, quarantine, nextAvailable, getActiveId, getAccount, setActive, resolveRefreshToken, claudeBaseEnv, claudeAuthEnv } from './accounts.js';
 import { refreshOne } from './oauth-login.js';
 import { getMemoryBootstrap } from './memory.js';
 import { personaBlock, getAgent } from './agents.js';
@@ -48,6 +48,7 @@ import {
 import { runClaudeOneShot, runOneShot, sessionEngine } from './lib/oneshot.js';
 import { appendIncident } from './incidents.js';
 import * as extensions from './extensions.js';
+import * as promptBlocks from './prompt-blocks.js';
 import { detectArchiveKind, extractArchive, formatTree } from './archive.js';
 
 // $ARIGAMI_DIR/user-plugin — generated on demand so a fresh instance (or a
@@ -73,7 +74,12 @@ function extPluginDir() {
  */
 export function pluginDirArgs() {
   const ext = extPluginDir();
-  return ['--plugin-dir', ROOT, '--plugin-dir', userPluginDir(), ...(ext ? ['--plugin-dir', ext] : [])];
+  // MODS: Claude Code runs the extensions' mods natively (server/mods.ts is the runtime for engines that cannot).
+  // arigami-bridge goes first: it echoes the mods' $.ui.log/toast/notice into the chat (mods/arigami-bridge).
+  let mods = [];
+  try { mods = extensions.extensionMods().map((m) => m.dir); } catch {}
+  if (mods.length) mods.unshift(path.join(ROOT, 'mods', 'arigami-bridge'));
+  return ['--plugin-dir', ROOT, '--plugin-dir', userPluginDir(), ...(ext ? ['--plugin-dir', ext] : []), ...mods.flatMap((d) => ['--plugin-dir', d])];
 }
 
 // Base env for every spawned `claude`, with the inherited CLAUDE_CODE_OAUTH_TOKEN
@@ -81,10 +87,7 @@ export function pluginDirArgs() {
 // stray token in the environment (e.g. the old .env one) must not leak in and
 // silently pin every session to one account. Sessions with no resolvable
 // account fall back to Claude Code's own keychain login (token simply absent).
-function baseEnv() {
-  const { CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_API_KEY, ...rest } = process.env;
-  return rest;
-}
+const baseEnv = claudeBaseEnv;
 
 // The host is often launched from a thin-PATH context (launchd, a GUI app, a
 // non-login shell) where the npm/bun global bin that holds `claude` isn't on
@@ -110,14 +113,7 @@ export const CLAUDE_BIN = claudeBin(); // boot-time answer; spawns call claudeBi
 
 // The auth env for a specific session: the token of its assigned account (or the
 // active account). Returns {} when none resolves → keychain fallback.
-function accountEnv(s) {
-  try {
-    const r = tokenForSession(s.claude?.accountId);
-    return r ? { CLAUDE_CODE_OAUTH_TOKEN: r.token } : {};
-  } catch {
-    return {};
-  }
-}
+const accountEnv = (s) => claudeAuthEnv(s.claude?.accountId);
 
 const ROOT = resourceRoot();
 // The host's own servers. With the MCP gateway on (the default), `arigami` and
@@ -485,6 +481,9 @@ export function appendChat(id, ev) {
   return ev;
 }
 
+// The latest seq of a session's chat (stage 1c: "events after now" without reading the log).
+export const chatSeq = (id) => tail(id).seq;
+
 export function getChat(id, since = 0) {
   const t = tail(id);
   const firstInMem = t.events[0]?.seq ?? Infinity;
@@ -612,16 +611,25 @@ export function getChatPage(id, { limit = 100, beforeSeq = Infinity, clip = 0 } 
     const page = t.events.slice(-limit);
     return { events: clipEvents(page, clip), hasMore: t.events.length > limit || t.seq > t.events.length, oldestSeq: page[0]?.seq ?? 0 };
   }
-  // Read only what we need from disk (from the end)
-  const needed = beforeSeq < Infinity ? limit + 500 : limit + 1; // overshoot for filtering
-  const raw = readTailLines(chatFile(id), needed);
-  const filtered = beforeSeq < Infinity ? raw.filter((e) => e.seq < beforeSeq) : raw;
-  const page = filtered.slice(-limit);
-  return {
-    events: clipEvents(page, clip),
-    hasMore: filtered.length > limit || (raw.length >= needed),
-    oldestSeq: page[0]?.seq ?? 0,
-  };
+  // Read only what we need from disk (from the end). Older cursors used to read
+  // a fixed limit+500 lines, which cannot reach past the last ~700 events; keep
+  // widening the window until `limit + 1` events sit before the cursor (the +1
+  // is how we know there is another page) or the file start is reached.
+  let needed = beforeSeq < Infinity ? limit + 500 : limit + 1;
+  for (;;) {
+    const raw = readTailLines(chatFile(id), needed);
+    const filtered = beforeSeq < Infinity ? raw.filter((e) => e.seq < beforeSeq) : raw;
+    const atStart = raw.length < needed;
+    if (atStart || filtered.length > limit) {
+      const page = filtered.slice(-limit);
+      return {
+        events: clipEvents(page, clip),
+        hasMore: filtered.length > limit,
+        oldestSeq: page[0]?.seq ?? 0,
+      };
+    }
+    needed *= 2;
+  }
 }
 
 // ---- process lifecycle -----------------------------------------------------
@@ -750,6 +758,7 @@ function buildClaudeSpawn(s, { resume, sessionId }) {
     // memory_write/memory_search to its namespace.
     ...(typeof s.metadata?.agent === 'string' && s.metadata.agent ? { ARIGAMI_AGENT: s.metadata.agent } : {}),
     ARIGAMI_SKILLS: path.join(ROOT, 'skills'), // host skill pack for the session
+    ARIGAMI_DOCS: docsDir(), // host docs, absolute — skills say $ARIGAMI_DOCS/LOGIN.md, never a cwd-relative docs/…
     ARIGAMI_USER_SKILLS: USER_SKILLS_DIR, // user/bundle skills (override shipped by name)
     // Dispatcher: a needsServer worker gets a host-allocated port as $PORT so
     // its dev server binds the slot the host reserved (metadata.port).
@@ -804,7 +813,9 @@ function spawnProc(s, resume) {
   if (agentSlug) refreshCapabilitiesHint(`agent:${agentSlug}`).catch(() => {}); // A2: keep the agent's line fresh for its next spawn
   const p = {
     id: s.id, // SIMPLE1: writeUserMessage reads the session's live metadata (chat mode) per turn
+    engine: s.engine || 'claude', // PROMPT1: blocks of the owner's can be for one engine only
     capabilitiesHint: capabilitiesHint(agentSlug ? `agent:${agentSlug}` : 'global', s.engine || 'claude'), // F8: the connectable-capabilities line for the first turn (A2: per agent)
+    tokenSig: tokenSig(built.env.CLAUDE_CODE_OAUTH_TOKEN), // which access token this child holds (see tryAuthRecover)
     hadToken: !!built.env.CLAUDE_CODE_OAUTH_TOKEN, // F8: spawned with an account token? (a session started BEFORE Connect Claude has none)
     agent: typeof s.metadata?.agent === 'string' ? s.metadata.agent : null, // A1: born from an agent → persona + agent memory in the first turn
     child,
@@ -1707,8 +1718,19 @@ function tryAutoSwitch(id, text) {
 // subscription-limit hit: from the structured `result` event's error text.
 // F8: also the CLI's own "Not logged in · Please run /login" — the human cannot
 // run /login in the cockpit; the answer is a `claude` Setup card.
+// The CLI's own "no credentials at all" notice: the Connect card says it, in the human's language — the raw
+// English line (it used to land three times: assistant bubble, error row, card title) is not shown.
+export const NOT_LOGGED_RE = /^\s*(?:not logged in|please run \/login)/i;
 export const AUTH_RE = /unauthorized|revoked|invalid[_ ](?:api key|token|grant)|token.{0,20}expired|authentication_error|please (?:log ?in|authenticate) again|not logged in|please run \/login/i;
 const authRecovering = new Set(); // guards against re-entrant recovery per session
+/** A short fingerprint of an access token — enough to tell two tokens apart, useless as a secret. */
+const tokenSig = (t) => (t ? createHash('sha256').update(String(t)).digest('hex').slice(0, 12) : null);
+/** True when a failing child only needs a restart: the stored token is newer than the one it holds and has life left. */
+export function storedTokenIsNewer({ childSig, storedToken, expiresAt, now = Date.now() }) {
+  if (!childSig || !storedToken) return false;
+  const stillGood = !expiresAt || Date.parse(expiresAt) - now > 5 * 60_000;
+  return stillGood && tokenSig(storedToken) !== childSig;
+}
 
 async function openClaudeSetupCard(id, why) {
   const [api, caps] = await Promise.all([import('./api.js'), import('./capabilities.js')]);
@@ -1751,12 +1773,27 @@ async function tryAuthRecover(id, text) {
   if (!resolveRefreshToken(accountId)) {
     // Nothing to refresh: open the Connect-Claude card right here in the chat
     // (paste the code / a token) instead of a dead-end error.
-    openClaudeSetupCard(id, 'this session\'s Claude account is not signed in — connect one to continue').catch(() => {});
+    openClaudeSetupCard(id, '').catch(() => {}); // no reason line: the card itself says what to do, in the UI language
     return;
   }
   authRecovering.add(id);
   const lastMsg = [...(record(id)?.sent || [])].pop();
   try {
+    // A refresh ROTATES the token: it revokes the one every other running child
+    // still holds. So refreshing once per failing session is a storm — each
+    // refresh knocks over the sessions that had just picked up the previous
+    // token (19 refreshes in one hour in the logs). When the stored token is
+    // already newer than the one THIS child holds and still has life in it, the
+    // child just needs a restart; refresh only when it already holds the current one.
+    const cur = tokenForSession(accountId);
+    if (storedTokenIsNewer({ childSig: p?.tokenSig, storedToken: cur?.token, expiresAt: cur?.account?.expiresAt })) {
+      appendChat(id, { kind: 'system', text: '⟳ authentication expired — restarted the session with the current token' });
+      recordIncident(id, 'refresh-auth', { accountId }, 'ok', 'newer token already stored — no refresh');
+      restart(id, { silent: true });
+      const t0 = setTimeout(() => { try { if (lastMsg) sendMessage(id, lastMsg); } catch {} }, 900);
+      if (t0.unref) t0.unref();
+      return;
+    }
     const ok = await refreshOne(accountId);
     if (!ok) {
       appendChat(id, { kind: 'error', text: 'Authentication error — token refresh failed. Please re-authenticate this account.' });
@@ -1829,6 +1866,7 @@ function handleEvent(id, j) {
       noteTurnUsage(id, j.message?.usage);
       for (const block of j.message?.content || []) {
         if (block.type === 'text' && block.text) {
+          if (NOT_LOGGED_RE.test(block.text) && block.text.length < 160 && !isCodexSession(id)) continue; // the Connect card covers it
           appendChat(id, { kind: 'assistant-text', text: block.text });
         } else if (block.type === 'thinking' && block.thinking) {
           appendChat(id, { kind: 'thinking', text: block.thinking });
@@ -1933,7 +1971,8 @@ function handleEvent(id, j) {
             break;
           }
         }
-        appendChat(id, {
+        const notLoggedIn = !!j.is_error && NOT_LOGGED_RE.test(text) && !isCodexSession(id);
+        if (!notLoggedIn) appendChat(id, {
           kind: j.is_error ? 'error' : 'result',
           text,
           isError: !!j.is_error,
@@ -2155,41 +2194,29 @@ export function removeStreamedAttachment(id, filePath) {
 // A3: how to SHOW things to the human. Sessions are reached from laptops,
 // phones and tailnets alike — a `http://localhost:…` link only works on the
 // host box. Goes in the first turn only (same prompt-cache reasoning as memory).
-export const URL_GUIDANCE =
-  '<system-reminder>\n' +
-  'Arigami links: to show the human anything, call publish_artifact (static file/dir → /__artifacts/<id>/) or ' +
-  'open_tab (a LIVE dev server — pass http://localhost:$PORT, the host proxies it into a cockpit tab). ' +
-  'Never write http://localhost:… URLs in replies, reports, pushes or messages: the human may be on a phone or ' +
-  'another machine. The host returns host-RELATIVE paths (/__host/?session=…, /__artifacts/…) — pass them on as-is. ' +
-  '$ARIGAMI_URL is an internal base for your own API calls only, not a link for people. ' +
-  'Need a port for a dev server? call allocate_port (or set_metadata({patch:{needs_server:true}})) and use $PORT / the returned port.\n' +
-  '</system-reminder>\n\n';
+// PROMPT1: the texts the host puts in front of a session's messages live in server/prompt-blocks.ts — one registry
+// the owner can edit (Settings › Customization). This file only gathers what they are rendered with.
+function blockCtx(p, extra = {}) {
+  return {
+    engine: p?.engine || 'claude',
+    sharedDisplay: cfg.screen?.display || ':99',
+    capabilities: p?.capabilitiesHint || '',
+    extensions: extSummary(),
+    docker: process.env.ARIGAMI_SUPERVISOR === 'docker',
+    ...extra,
+  };
+}
 
-// F8: who the agent is and what it can do — so the first answer introduces
-// Arigami (browser, WhatsApp, mail, sessions, triggers…) in the human's
-// language instead of "I am Claude, I write code". The connectable list is
-// probed at spawn (capabilitiesHint) and names the capabilities that are NOT
-// connected yet, so the agent knows they exist and asks (request_setup)
-// rather than answering "I have no access to WhatsApp".
+// PROMPT1 phase 2: what this agent and this session inherit — their layers over the owner's blocks.
+function layeredBlocks(agentSlug, metadata) {
+  const agent = agentSlug ? getAgent(agentSlug) : null;
+  return promptBlocks.applyLayers(promptBlocks.listBlocks(), { agent: agent?.prompts || null, session: metadata?.prompts || null });
+}
+
+// F8: who the agent is and what it can do — the `identity` block, with the connectable capabilities (probed at spawn,
+// capabilitiesHint) and the installed extensions filled in. Kept as a function for its callers.
 export function identityReminder(hint) {
-  return (
-    '<system-reminder>\n' +
-    'You are the agent inside Arigami — the human\'s self-hosted cockpit (this session is one of its sessions). ' +
-    'Introduce yourself as Arigami\'s agent, not by the name of the CLI/model behind you ("Claude", "Codex"); ' +
-    'answer in the language the human writes in. ' +
-    'What you can do here: browse and screenshot websites on this session\'s own desktop (open the browser, capture_screen, publish_artifact); ' +
-    'read and send WhatsApp (the `whatsapp` tool); read mail/calendar/drive and other providers through Composio once connected; ' +
-    'work on git repos (clone into the workspace, worktrees, review, merge); spawn child sessions for parallel work; ' +
-    'react to triggers (WhatsApp/Slack/Linear/webhooks/cron) via register_listener; keep a memory across sessions; ' +
-    'and hand the desktop over to the human (request_screen) for logins. ' +
-    'When the human greets you or asks what you can do, give a short, concrete menu of these (3 suggested actions), in their language.\n' +
-    (hint ? `\n${hint}\n` : '') +
-    // EXT: the third channel by which a session learns an extension exists
-    // ("that there is") — the skill description says WHEN, the tool schemas say
-    // HOW. Empty string when nothing is installed, so nothing changes.
-    (extSummary() ? `\n${extSummary()}\n` : '') +
-    '</system-reminder>\n\n'
-  );
+  return promptBlocks.renderOne('identity', blockCtx(null, { capabilities: hint || '' }));
 }
 
 function extSummary() {
@@ -2245,18 +2272,19 @@ refreshCapabilitiesHint().catch(() => {});
 }
 
 function memoryBootstrapPrefix(p) {
-  const identity = identityReminder(p?.capabilitiesHint || '');
+  // links, login, host rules, …, the owner's own, identity — after the agent's and the session's layers
+  const blocks = promptBlocks.render('first-turn', blockCtx(p), layeredBlocks(p?.agent, p?.id ? getSession(p.id)?.metadata : p?.metadata));
   // A1: a session born from an agent gets the agent's persona block and boots
   // with USER.md + the AGENT's MEMORY.md (its namespace), not the shared one.
   const persona = p?.agent ? personaBlock(p.agent) : '';
   const { userMd, memoryMd, agentMd } = getMemoryBootstrap(p?.agent || null);
-  if (!userMd.trim() && !memoryMd.trim() && !(agentMd || '').trim()) return URL_GUIDANCE + identity + persona;
+  if (!userMd.trim() && !memoryMd.trim() && !(agentMd || '').trim()) return blocks + persona;
   let block = "<system-reminder>\nArigami memory snapshot (owned by the host — this instance's own memory, not your agent CLI's own per-project memory). Frozen at session start; call memory_search for anything not shown here.\n";
   if (userMd.trim()) block += `\n## USER.md\n${userMd.trim()}\n`;
   if (memoryMd.trim()) block += `\n## MEMORY.md\n${memoryMd.trim()}\n`;
   if ((agentMd || '').trim()) block += `\n## MEMORY.md (agent ${p.agent})\n${agentMd.trim()}\n`;
   block += '</system-reminder>\n\n';
-  return URL_GUIDANCE + identity + persona + block;
+  return blocks + persona + block;
 }
 
 // SIMPLE1: the "Simple" chat view. While a session is in Simple mode the human
@@ -2265,31 +2293,46 @@ function memoryBootstrapPrefix(p) {
 // carries the same preference globally; this is the hard per-session rule.
 // Re-read from session metadata on EVERY turn (not the spawn-time snapshot) so
 // flipping the toggle takes effect on the next message without a restart.
-export const SIMPLE_MODE_REMINDER =
-  '<system-reminder>\n' +
-  'Simple chat mode is ON for this session: the human switched the cockpit to the "Simple" view, where only ' +
-  'your prose reaches them — tool calls, edits, bash output and thinking are folded away behind a counter. ' +
-  'Hard rule for what you write to the human in this chat: at most two sentences by default — the outcome and the one ' +
-  'thing that matters. Details only when asked. No headers, tables, bullet lists, code dumps or step-by-step narration ' +
-  'of what you did. Bad news is said first and plainly. This is a per-session rule and overrides longer-form formatting ' +
-  'guidance from anywhere else. It limits only what you write to the human — not your tool use or the work itself.\n' +
-  '</system-reminder>\n\n';
+export const SIMPLE_MODE_REMINDER = promptBlocks.wrap(promptBlocks.BUILTIN.find((b) => b.id === 'simple-mode').text); // the default
 
-export function chatModePrefix(metadata) {
-  return metadata && metadata.chatMode === 'simple' ? SIMPLE_MODE_REMINDER : '';
+/** The every-turn blocks: Simple mode while it is on, plus the owner's own every-turn blocks. */
+export function chatModePrefix(metadata, engine) {
+  const agent = typeof metadata?.agent === 'string' ? metadata.agent : null;
+  return promptBlocks.render('every-turn', blockCtx({ engine }, { simpleMode: !!metadata && metadata.chatMode === 'simple' }), layeredBlocks(agent, metadata));
+}
+
+/**
+ * What a fresh session would get in front of its first message — Settings' "as a session sees it". With `session`,
+ * that session's own layer (and its agent's) applies, and the engine is the session's.
+ * @param {{ engine?: string, agent?: string | null, session?: string | null }} [o]
+ */
+export function firstTurnPreview({ engine = 'claude', agent = null, session = null } = {}) {
+  const s = session ? getSession(session) : null;
+  const slug = agent || (typeof s?.metadata?.agent === 'string' ? s.metadata.agent : null);
+  const eng = s?.engine || engine;
+  const p = { id: s?.id, engine: eng, agent: slug, capabilitiesHint: capabilitiesHint(slug ? `agent:${slug}` : 'global', eng) };
+  const meta = { ...(s?.metadata || {}), agent: slug, chatMode: 'simple' };
+  return {
+    firstTurn: memoryBootstrapPrefix(p),
+    everyTurn: chatModePrefix(meta, eng),
+    blocks: layeredBlocks(slug, s?.metadata).map(({ id, title, enabled, source, when }) => ({ id, title, enabled, source, when })),
+  };
 }
 
 // Engine-agnostic turn-text assembly (persona/memory bootstrap, LADDER1 preamble, Simple-mode reminder), run once before the engine's own writeMessage().
 // Exported: server/codex.ts calls it too — the text is composed once, engine-agnostically, and only then encoded into each CLI's wire format.
 export function composeTurnText(p, text) {
   let txt = text || '';
+  // A slash command (/compact, /context…) only runs when it is the very first thing in the message: any prefix turns it into plain text the model answers.
+  // The one-shot preamble/bootstrap stay queued for the next real message.
+  if (/^\/[a-z][\w:-]*(\s|$)/i.test(txt)) return txt;
   if (!p.resume && !p.sent.length) txt = memoryBootstrapPrefix(p) + txt;
   // LADDER1: one-shot preamble in front of the next message only, never persisted in the chat log.
   if (p.preamble) {
     txt = p.preamble + txt;
     p.preamble = '';
   }
-  txt = chatModePrefix(getSession(p.id)?.metadata) + txt;
+  txt = chatModePrefix(getSession(p.id)?.metadata, p.engine) + txt;
   return txt;
 }
 
@@ -2519,6 +2562,7 @@ function runHeadless(s, prompt, onExit, { effort } = {}) {
     ARIGAMI_PUBLIC_PATH: '/__host/',
     ARIGAMI_TOKEN: auth.tokenForSession(s.id),
     ARIGAMI_SKILLS: path.join(ROOT, 'skills'),
+    ARIGAMI_DOCS: docsDir(),
     ARIGAMI_USER_SKILLS: USER_SKILLS_DIR,
   };
   runOneShot(prompt, {

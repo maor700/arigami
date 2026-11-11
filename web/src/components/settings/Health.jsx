@@ -15,8 +15,10 @@ import { relTime, untilTime } from '../../lib/time.js';
 import { toastError } from '../../lib/toast.js';
 import { PROVIDERS, normalizeProvider } from '../../lib/providers.js';
 import { Section, SettingCard, StatusPill, BTN_SM, ROW, LIST } from './shared.jsx';
+import { StatusDot } from '../ui/badge.jsx';
+import { Checkbox } from '../ui/checkbox.jsx';
 
-const DOT = { grey: '#9a9a9a', blue: '#2C6BD6', amber: '#CE8324', red: '#E0594F' };
+const DOT = { grey: 'idle', blue: 'info', amber: 'warn', red: 'err' };
 // Incident classes that only say "we pinged you" — filtered out by default.
 export const REMINDER_ACTIONS = new Set(['notify-human']);
 export const filterIncidents = (list, showReminders) => (showReminders ? list : list.filter((i) => !REMINDER_ACTIONS.has(i.action)));
@@ -83,16 +85,16 @@ export default function Health() {
         }
       >
         {!rows.length ? (
-          <div className="mt-1 text-[11px] text-fgdim italic">{t('health.noSessions')}</div>
+          <div className="mt-1 text-xs text-fgdim">{t('health.noSessions')}</div>
         ) : (
           <div className={LIST}>
             {rows.map((r) => (
               <div key={r.sessionId} className={ROW}>
                 <span className="flex min-w-0 items-center gap-2">
-                  <span className="h-[7px] w-[7px] shrink-0 rounded-full" style={{ background: DOT[r.dot] || DOT.grey }} />
+                  <StatusDot status={DOT[r.dot] || DOT.grey} />
                   <span className="min-w-0 truncate">{r.title || titleOf(r.sessionId)}</span>
                 </span>
-                <span className="flex shrink-0 items-center gap-2 font-mono text-[11.5px] md:text-[10px] text-fgdim">
+                <span className="flex shrink-0 items-center gap-2 text-xs text-fgdim">
                   {r.model && <span>{r.modelRung ? `↓ ${r.model}` : r.model}</span>}
                   {/* An escalated session is NOT one the host is still working
                       on — say so, or the row reads as "wait, it's handled". */}
@@ -111,10 +113,10 @@ export default function Health() {
             <div key={a.id} className={ROW}>
               <span className="min-w-0 truncate">
                 {a.label}
-                <span className="ms-1.5 text-[11.5px] md:text-[10px] text-fgdim">{PROVIDERS[normalizeProvider(a.provider)].label}</span>
-                {a.active && <span className="ms-1.5 text-[11.5px] md:text-[10px] text-fgdim">{t('health.active')}</span>}
+                <span className="ms-1.5 text-xs text-fgdim">{PROVIDERS[normalizeProvider(a.provider)].label}</span>
+                {a.active && <span className="ms-1.5 text-xs text-fgdim">{t('health.active')}</span>}
               </span>
-              <span className="shrink-0 font-mono text-[11.5px] md:text-[10px] text-fgdim">
+              <span className="shrink-0 text-xs text-fgdim">
                 {usageLine(a.usage) && <span className="me-2">{usageLine(a.usage)}</span>}
                 {a.available
                   ? t('health.accountOk')
@@ -123,7 +125,7 @@ export default function Health() {
             </div>
           ))}
           {!(snap?.accounts || []).length && (
-            <div className="py-1.5 text-[11px] text-fgdim italic">{t('health.noAccounts')}</div>
+            <div className="py-1.5 text-xs text-fgdim">{t('health.noAccounts')}</div>
           )}
         </div>
         {downgraded.length > 0 && (
@@ -132,7 +134,7 @@ export default function Health() {
               <div key={s.id} className={ROW}>
                 <span className="min-w-0 truncate">
                   {s.title}
-                  <span className="ms-1.5 font-mono text-[11.5px] md:text-[10px] text-fgdim">
+                  <span className="ms-1.5 text-xs text-fgdim">
                     {t('health.downgraded', {
                       from: s.claude?.modelDowngradedFrom || '—',
                       to: s.claude?.modelChoice || '—',
@@ -155,13 +157,13 @@ export default function Health() {
         pill={<StatusPill status={shown.length ? 'pending' : 'ok'} label={t('health.incidentCount', { n: shown.length })} />}
       >
         {reminders > 0 && (
-          <label className="mt-1 flex cursor-pointer items-center gap-1.5 font-mono text-[11.5px] md:text-[10.5px] text-fgdim">
-            <input type="checkbox" data-health-reminders checked={showReminders} onChange={(e) => setShowReminders(e.target.checked)} />
+          <label className="mt-2 flex cursor-pointer items-center gap-2 text-xs text-fgdim">
+            <Checkbox data-health-reminders checked={showReminders} onCheckedChange={(v) => setShowReminders(v === true)} />
             {t('health.showReminders', { n: reminders })}
           </label>
         )}
         {!shown.length ? (
-          <div className="mt-1 text-[11px] text-fgdim italic">{t('health.noIncidents')}</div>
+          <div className="mt-1 text-xs text-fgdim">{t('health.noIncidents')}</div>
         ) : (
           <div className={LIST}>
             {visible.map((i, n) => (
@@ -169,18 +171,18 @@ export default function Health() {
                 <span className="flex min-w-0 flex-col">
                   <span className="min-w-0 truncate">
                     {t(`health.action.${i.action}`)}
-                    <span className="ms-1.5 text-[11.5px] md:text-[10.5px] text-fgdim">{titleOf(i.sessionId)}</span>
+                    <span className="ms-1.5 text-xs text-fgdim">{titleOf(i.sessionId)}</span>
                   </span>
-                  {i.reason && <span className="font-mono text-[11px] md:text-[9.5px] text-fgdim">{i.reason}</span>}
+                  {i.reason && <span className="text-xs text-fgdim">{i.reason}</span>}
                 </span>
                 <span className="flex shrink-0 items-center gap-2">
                   <StatusPill status={OUTCOME_PILL[i.outcome] || 'pending'} label={t(`health.outcome.${i.outcome || 'ok'}`)} />
-                  <span className="font-mono text-[11.5px] md:text-[10px] text-fgdim">{relTime(i.ts)}</span>
+                  <span className="text-xs text-fgdim">{relTime(i.ts)}</span>
                 </span>
               </div>
             ))}
             {shown.length > visible.length && (
-              <button type="button" onClick={() => setShowAll(true)} className="cursor-pointer py-1.5 font-mono text-[11.5px] md:text-[10.5px] text-fgdim underline hover:text-fg">
+              <button type="button" onClick={() => setShowAll(true)} className="cursor-pointer py-1.5 text-xs text-fgdim underline hover:text-fg coarse:min-h-11">
                 {t('health.showMore', { n: shown.length - visible.length })}
               </button>
             )}

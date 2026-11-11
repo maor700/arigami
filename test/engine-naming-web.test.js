@@ -61,6 +61,7 @@ beforeAll(async () => {
   React = (await import(path.join(ROOT, 'web/node_modules/react/index.js'))).default;
   ({ renderToStaticMarkup: render } = await import(path.join(ROOT, 'web/node_modules/react-dom/server.js')));
   prefs = await import(web('lib/prefs.js'));
+  prefs.setPrefs({ language: 'en' }); // these assertions are English; an earlier file may have left Hebrew in the shared prefs
   engines = await import(web('lib/engines.js'));
   store = await import(web('lib/store.js'));
   ({ default: SessionView } = await import(web('components/SessionView.jsx')));
@@ -91,10 +92,11 @@ test('engineLabel/engineTermName: unknown, empty and missing all mean claude', (
 /* ---------- the terminal header ------------------------------------------- */
 
 test('the terminal header wears the session\'s OWN engine, and a legacy session still says claude-code', () => {
-  expect(viewOf(SESSIONS[1])).toContain('>codex<');
+  // redesign (D11): the engine name left the header row for the "…" menu; the header carries it as data-engine.
+  expect(viewOf(SESSIONS[1])).toContain('data-engine="codex"');
   const claude = viewOf(SESSIONS[0]);
-  expect(claude).toContain('claude-code');
-  expect(viewOf(SESSIONS[1])).not.toContain('claude-code');
+  expect(claude).toContain('data-engine="claude-code"');
+  expect(viewOf(SESSIONS[1])).not.toContain('data-engine="claude-code"');
 });
 
 /* ---------- the composer -------------------------------------------------- */

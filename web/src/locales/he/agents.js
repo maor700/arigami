@@ -132,11 +132,12 @@ export const strings = {
   'agent.routine.deleteConfirm': 'למחוק את המשימה "{name}"?',
 
   // A3 — שליטה: יומן פעילות, תקציבים, מדיניות, אישור אוטומטי
-  'agents.budget.refused': '{name} ניצל את תקציב הטוקנים היומי ({used} / {cap} טוקנים היום). אין סשנים או תורות חדשים עד חצות ({at}) — אפשר להעלות את התקרה בהגדרות → מארח → תקציבים.',
+  'agents.budget.refused': '{name} ניצל את תקציב הטוקנים היומי ({used} / {cap} טוקנים היום). אין סשנים או תורות חדשים עד חצות ({at}) — אפשר להעלות את התקרה בהגדרות ← מארח ← תקציבים.',
   'chat.commandFailed': 'הפקודה נכשלה ולא נשלחה: {msg}',
   'chat.commandRestore': 'החזר את הטקסט',
   'agent.tool.web': 'גלישה / חיפוש ברשת',
   'agent.tool.publish': 'פרסום תוצרים',
+  'agent.tool.phone': 'שיחות טלפון ו-SMS (כל אחת בכרטיס שליחה)',
   'agent.card.domains': 'דומיינים מותרים',
   'agent.card.domainsHint': 'מופרד בפסיקים (example.com כולל תתי-דומיינים). נאכף על open_tab ו-WebFetch; ריק = הכול.',
   'agent.card.toolsHint': 'נאכף על ידי המארח: כלים אחרים מוסתרים או נדחים. ריק = הכול.',
@@ -212,12 +213,7 @@ export const strings = {
   'agent.surface.homeTitle': 'צ׳אט הבית',
   'agent.surface.homeOpening': 'פותח את צ׳אט הבית…',
   'agent.surface.homeFailed': 'לא הצלחתי לפתוח את צ׳אט הבית: {err}',
-  'agent.surface.homeHint': 'רוצה שיבצע משימה? כתוב /as או גרור לתיקייה',
   // מובייל: אין גרירה באצבע — הרמז נשאר רק על מה שאפשר לעשות במגע
-  'agent.surface.homeHintTouch': 'רוצה שיבצע משימה? כתוב /as',
-  'agent.surface.homeHintAction': 'הפוך את ההודעה האחרונה לסשן עבודה',
-  'agent.surface.homeHintEmpty': 'קודם כתוב משהו — סשן העבודה מתחיל מההודעה האחרונה שלך.',
-  'agent.surface.homeHintDone': 'נוצר סשן עבודה',
   'agent.runs.title': 'סשנים שנולדו מהסוכן הזה',
   'agent.runs.empty': 'עוד אין סשני עבודה. {oneLiner}',
   'agent.runs.turns': '{n} תורות',

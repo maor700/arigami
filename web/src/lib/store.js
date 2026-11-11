@@ -9,6 +9,8 @@ import { setDefaultEngine, setCodexTransport, engineLabel } from './engines.js';
 import { toast, toastError } from './toast.js';
 import { t } from './i18n.js';
 import { sessionLabel } from '../components/ui.jsx';
+import { applyState, explanationsKey, inflateFrame, nextCursor, planGapFill, stateChatGap, wsQuery, lastSeq, WIRE } from './resume.js';
+import { needsHuman, subscribeGrants } from './vault-grants.js';
 
 let state = {
   sessions: [], // includes archived (REST snapshot merges them in)
@@ -21,10 +23,17 @@ let state = {
   chats: {}, // sessionId -> [normalized chat events]
   chatLoaded: {}, // sessionId -> true once rehydrated over REST
   capsFull: {}, // sessionId -> {rev, caps}: full claude.capabilities (list payloads carry a slim form)
+  explanations: {}, // RESUME: sessionId -> {key, data}: changesExplanations fetched for the open session (wire v2 carries stamps)
+  chatStale: {}, // RESUME: sessionId -> seq: a loaded chat a reconnect has not gap-filled yet (filled from that seq on open)
+  openSessionId: null, // RESUME: the session on screen — a reconnect refills its chat first
   drafts: {}, // sessionId -> unsent composer draft {text, attachments}
   lastSent: {}, // sessionId -> the draft most recently sent (for Esc-restore)
   conn: 'connecting', // 'open' | 'connecting' | 'down'
   reconnecting: false, // CHATWS: 'connecting' after a link that was once up (→ "reconnecting…" pill)
+  // RESUME: the socket is open again but what is on screen is not caught up yet
+  // (state replay + the open chat's gap), or a wake probe is taking long — the
+  // pill keeps saying "reconnecting…" until it is honest to stop.
+  syncing: false,
   config: null, // GET /__api/config result (null until loaded / failed)
   // C1 auth: undefined = not yet checked, null = signed out (Login screen),
   // object = GET /__api/auth/me ({user, principal, isAdmin, authMode, hasAdmin, oidc}).
@@ -52,13 +61,17 @@ let state = {
   //     interactive modal is open for it, auto-snapshots paused); null = no
   //     takeover in progress. Keyed by request so a stale takeover never
   //     leaks into the next request.
-  //   panel — side-panel visibility: null = auto (open while the selected
-  //     session has an open screen-request), true/false = user override.
-  //     Reset to auto whenever a new screen-request arrives.
+  //   panel — side-panel visibility: null = closed until the human opens it
+  //     (header chip), true/false = their choice. A screen-request does NOT
+  //     open it: the request renders once, as the chat card — a second copy
+  //     in the panel only narrowed the chat and doubled the live view.
   //   modal — the interactive ScreenModal: false = closed; {} = the plain
   //     global view (rail icon); {sessionId, requestId} = opened by "Take
   //     over" on a request_screen card, so the modal shows Done / Cancel.
   screen: { controlRequestId: null, panel: null, modal: false },
+  // The shared desktop's lease (server/lib/shared-desktop.ts): who holds it, who waits, whether the owner is on it.
+  // GET /__api/shared-desktop once, then 'shared-desktop' over WS. null = not loaded.
+  sharedDesktop: null,
 };
 
 const listeners = new Set();
@@ -68,11 +81,14 @@ function setState(patch) {
   detectAttention();
   for (const fn of listeners) fn();
 }
+// VAULT4: a grant given, revoked or failed changes who needs the human — recompute without waiting for a session update
+subscribeGrants(() => setState({}));
 
 /* ---------------- "needs attention" detection ---------------------------- */
 // A session needs attention when it has a pending question for the human.
 export function needsAttention(s) {
-  return !!(s && (s.action || s.claude?.state === 'awaiting-input'));
+  // VAULT4: an open vault card is the human's too — unless this tab's grant is about to fill it
+  return !!(s && (s.action || s.claude?.state === 'awaiting-input' || (s.credentialRequest && needsHuman(s.id, s.credentialRequest))));
 }
 
 // Set of session ids currently needing attention (kept across setState calls).
@@ -182,6 +198,7 @@ export async function setChatMode(session, mode) {
 
 export async function interruptSession(sessionId) {
   if (!sessionId) return;
+  try { window.dispatchEvent(new CustomEvent('host:interrupt', { detail: { sessionId } })); } catch { /* no DOM */ }
   await api.post(`/sessions/${sessionId}/interrupt`).catch(() => {});
   const last = state.lastSent[sessionId];
   if (last) {
@@ -258,17 +275,21 @@ function mergeSnapshot(list) {
   setState({ sessions: [...byId.values()] });
 }
 
-function replaceSnapshot(list) {
-  if (!Array.isArray(list)) return;
-  // WS state replay is authoritative for everything it contains, but it may
-  // omit archived sessions — keep any archived ones it didn't mention.
-  const ids = new Set(list.filter((s) => s && s.id).map((s) => s.id));
-  const keepArchived = state.sessions.filter((s) => s.archived && !ids.has(s.id));
-  setState({ sessions: [...list.filter((s) => s && s.id), ...keepArchived] });
+// The `state` replay: full (v2: everything incl. archived; legacy: keep the
+// archived sessions it did not mention) or, on a resumed link, a delta.
+function replaceSnapshot(msg) {
+  const r = applyState(state.sessions, msg);
+  if (r.sessions !== state.sessions) setState({ sessions: r.sessions });
+  return r;
 }
+
+// Stage 1b: read-aloud (lib/speak.js) watches every appended chat event through this one hook.
+let chatTap = null;
+export function setChatTap(fn) { chatTap = typeof fn === 'function' ? fn : null; }
 
 function appendChat(sessionId, event) {
   if (!sessionId || !event) return;
+  try { chatTap?.(sessionId, event); } catch { /* a listener must never break the chat */ }
   const cur = state.chats[sessionId] || [];
   // A permission request arrives both as a chat event and as its own WS
   // broadcast — render it once.
@@ -342,11 +363,6 @@ function appendChat(sessionId, event) {
     return;
   }
   if (event.kind === 'setup') setState({ setupTick: Date.now() });
-  // A fresh screen-request re-arms the side panel's auto-open (a manual close
-  // applies to the request that was open at the time, not forever).
-  if (event.kind === 'screen-request' && state.screen.panel !== null) {
-    setState({ screen: { ...state.screen, panel: null } });
-  }
   const last = cur[cur.length - 1];
   let next;
   if (event.partial) {
@@ -375,19 +391,23 @@ export function patchLocalChat(sessionId, kind, requestId, patch) {
 
 export async function loadSessions() {
   try {
-    const list = await api.get('/sessions?archived=true');
+    const list = await api.get(`/sessions?archived=true&wire=${WIRE}`);
     const sessions = Array.isArray(list) ? list : list?.sessions;
     mergeSnapshot(sessions);
-    // Prefetch chat for the first active session so it's ready when selected
-    if (sessions?.length) {
-      const first = sessions
-        .filter((s) => !s.archived)
-        .sort((a, b) => (a.sortOrder ?? 1e9) - (b.sortOrder ?? 1e9))[0];
-      if (first?.id && !state.chatLoaded[first.id]) loadChat(first.id);
-    }
+    if (!state.openSessionId) prefetchFirstChat(sessions);
   } catch {
     /* host not running — first-run state renders fine on empty */
   }
+}
+
+// Prefetch chat for the first active session so it's ready when selected
+// (nothing deep-linked: App selects exactly that one).
+function prefetchFirstChat(sessions) {
+  if (!sessions?.length) return;
+  const first = sessions
+    .filter((s) => !s.archived)
+    .sort((a, b) => (a.sortOrder ?? 1e9) - (b.sortOrder ?? 1e9))[0];
+  if (first?.id && !state.chatLoaded[first.id]) loadChat(first.id);
 }
 
 export async function loadFolders() {
@@ -397,6 +417,14 @@ export async function loadFolders() {
   } catch {
     /* host not running / pre-folders server */
   }
+}
+
+// Fold/unfold a rail folder. Optimistic: the round-trip (PATCH → folders-updated broadcast) made the chevron feel
+// dead on a phone; flip it locally now, and put it back if the server refuses.
+export function setFolderCollapsed(id, collapsed) {
+  const flip = (v) => setState({ folders: state.folders.map((f) => (f.id === id ? { ...f, collapsed: v } : f)) });
+  flip(collapsed);
+  return api.patch(`/folders/${id}`, { collapsed }).catch(() => flip(!collapsed));
 }
 
 // A1: the team. Cheap (a directory of small JSON files); refreshed on every
@@ -428,7 +456,7 @@ export async function loadExtensions() {
 export async function loadConfig() {
   try {
     const cfg = await api.get('/config');
-    setDefaultEngine(cfg?.defaultEngine);
+    setDefaultEngine(cfg?.effectiveDefaultEngine || cfg?.defaultEngine);
     setCodexTransport(cfg?.codexTransport);
     setState({ config: cfg || {} });
   } catch {
@@ -503,13 +531,47 @@ export async function ensureFullCapabilities(session) {
   if (capsInflight.has(key)) return;
   capsInflight.add(key);
   try {
-    const full = await api.get(`/sessions/${session.id}`);
+    // ?fields= — just the caps; an old host ignores it and sends the whole session
+    const full = await api.get(`/sessions/${session.id}?fields=claude.capabilities`);
     const caps = full?.claude?.capabilities;
     if (caps && !caps.slim) setState({ capsFull: { ...state.capsFull, [session.id]: { rev, caps } } });
   } catch {
     /* transient — the slim form still drives the panel counts */
   } finally {
     capsInflight.delete(key);
+  }
+}
+
+/* ---------------- changes explanations (lazy) ---------------------------- */
+// Wire v2 lists carry `changesExplained` ({mode: generatedAt}) instead of the
+// explanations themselves (~40KB across a busy host, read only by the Changes
+// tab of the open session). null = not loaded yet; an old host still inlines
+// them, and that copy wins.
+export function changesExplanationsOf(session) {
+  if (!session) return {};
+  if (session.changesExplanations) return session.changesExplanations;
+  const key = explanationsKey(session);
+  if (!key) return {};
+  const hit = state.explanations[session.id];
+  if (hit && hit.key === key) return hit.data;
+  return hit ? hit.data : null; // a newer one is on its way — keep showing the last
+}
+
+const explInflight = new Set();
+export async function ensureChangesExplanations(session) {
+  if (!session?.id || session.changesExplanations) return;
+  const key = explanationsKey(session);
+  if (!key || state.explanations[session.id]?.key === key) return;
+  const tag = session.id + key;
+  if (explInflight.has(tag)) return;
+  explInflight.add(tag);
+  try {
+    const r = await api.get(`/sessions/${session.id}?fields=changesExplanations`);
+    setState({ explanations: { ...state.explanations, [session.id]: { key, data: r?.changesExplanations || {} } } });
+  } catch {
+    /* the tab shows no explanation; the next stamp change retries */
+  } finally {
+    explInflight.delete(tag);
   }
 }
 
@@ -521,6 +583,7 @@ const CLIP = 1500;
 const chatInflight = new Set();
 
 export async function loadChat(sessionId) {
+  if (sessionId && state.chatLoaded[sessionId] && state.chatStale[sessionId] != null) return gapFill(sessionId);
   if (!sessionId || state.chatLoaded[sessionId] || chatInflight.has(sessionId)) return;
   // chatLoaded flips only once the page has LANDED — while the request is in
   // flight the pane shows its skeleton (App: loading = !chatLoaded && no rows).
@@ -602,30 +665,33 @@ export function chatHasMore(sessionId) {
 }
 
 // After a WS reconnect, chat events emitted while the socket was down were never
-// delivered. Re-pull the full transcript for every already-loaded session and
-// merge — the snapshot now includes the gap, and mergeChatEvents dedups.
-function refetchLoadedChats() {
-  for (const sid of Object.keys(state.chatLoaded)) {
-    if (!state.chatLoaded[sid]) continue;
-    // Only fetch events newer than what we already have (gap fill). Locally
-    // injected rows have no seq — walk back to the last persisted one.
-    const existing = state.chats[sid] || [];
-    let lastSeq = 0;
-    for (let i = existing.length - 1; i >= 0; i--) {
-      if (existing[i]?.seq > 0) { lastSeq = existing[i].seq; break; }
-    }
-    api
-      .get(`/sessions/${sid}/chat?since=${lastSeq}&clip=${CLIP}`)
-      .then((res) => {
-        const events = Array.isArray(res) ? res : res?.events;
-        if (Array.isArray(events) && events.length) {
-          const live = state.chats[sid] || [];
-          // a since-slice goes AFTER what is on screen; the history stays
-          setState({ chats: { ...state.chats, [sid]: foldSetupUpdates(appendChatEvents(live, events)) } });
-        }
-      })
-      .catch(() => {});
-  }
+// delivered. RESUME: the OPEN chat's gap rides along with the replay (connect →
+// onState); every other loaded chat is only marked stale and refilled here when
+// it is opened — a phone waking up should not pay for chats nobody is looking at.
+const gapInflight = new Map();
+function gapFill(sid, from = state.chatStale[sid] ?? lastSeq(state.chats[sid])) {
+  if (gapInflight.has(sid)) return gapInflight.get(sid);
+  const p = api
+    .get(`/sessions/${sid}/chat?since=${from}&clip=${CLIP}`)
+    .then((res) => {
+      const events = Array.isArray(res) ? res : res?.events;
+      const { [sid]: _done, ...stale } = state.chatStale;
+      const patch = { chatStale: stale };
+      if (Array.isArray(events) && events.length) {
+        // a since-slice goes AFTER the rows it precedes; the history stays
+        patch.chats = { ...state.chats, [sid]: foldSetupUpdates(appendChatEvents(state.chats[sid] || [], events)) };
+      }
+      setState(patch);
+    })
+    .catch(() => {})
+    .finally(() => gapInflight.delete(sid));
+  gapInflight.set(sid, p);
+  return p;
+}
+
+// RESUME: App tells the store which session is on screen (selection or deep link).
+export function setOpenSession(id) {
+  if (state.openSessionId !== (id || null)) state = { ...state, openSessionId: id || null };
 }
 
 export async function answerPermission(sessionId, requestId, behavior, message) {
@@ -671,10 +737,10 @@ export function hasOpenScreenRequest(session) {
   return !!session?.claude?.screenRequest?.requestId;
 }
 
-// Whether the side panel should be showing for `sessionId` (auto or override).
-export function screenPanelOpen(s, sessionId) {
-  if (s.screen.panel !== null) return s.screen.panel;
-  return !!openScreenRequest(s, sessionId);
+// Whether the side panel should be showing — only when the human asked for it.
+// (`sessionId` kept for callers; the answer no longer depends on a request.)
+export function screenPanelOpen(s, _sessionId) {
+  return s.screen.panel === true;
 }
 
 export function setScreenPanel(open) {
@@ -682,10 +748,27 @@ export function setScreenPanel(open) {
 }
 
 // `open`: false, or true (plain GLOBAL view — rail icon only, no sessionId
-// means the shared :99/5900 desktop), or {sessionId} (a session's own
+// means the shared :99/5900 desktop; opens in Watch, view-only — pass
+// {control:true} to open it already in control, e.g. "My browser" where the
+// human clicked in order to drive it), or {sessionId} (a session's own
 // machine — side panel "enlarge", no open request), or {sessionId,
 // requestId} (Take over, same as {sessionId} plus the request context/
 // Done/Cancel footer — see ScreenModal.jsx).
+export async function loadSharedDesktop() {
+  try {
+    const r = await api.get('/shared-desktop');
+    if (r?.lease) setState({ sharedDesktop: r.lease });
+  } catch {
+    /* an older host has no lease */
+  }
+}
+
+/** The owner takes the shared desktop back from the agent holding it. */
+export async function releaseSharedDesktop() {
+  await api.post('/shared-desktop/release', {});
+  await loadSharedDesktop();
+}
+
 export function setScreenModal(open) {
   const modal = open && typeof open === 'object' ? open : open ? {} : false;
   setState({ screen: { ...state.screen, modal } });
@@ -756,9 +839,18 @@ let reconnectTimer = null;
 let started = false;
 let everConnected = false;
 
+// RESUME: where the last `state` + stamped broadcasts left us ({rev, boot}) —
+// handed back on reconnect so the host sends only what changed. null = unknown
+// (first connect, or an old host): the host sends everything.
+let cursor = null;
+const canInflate = typeof DecompressionStream === 'function';
+
+// The open chat's gap a reconnect asks the replay to carry ({sid, from}).
+let resumeGap = null;
+
 function wsUrl() {
   const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
-  return `${proto}://${window.location.host}/__ws`;
+  return `${proto}://${window.location.host}/__ws${wsQuery(cursor, canInflate, resumeGap, CLIP)}`;
 }
 
 function scheduleReconnect() {
@@ -781,7 +873,14 @@ function scheduleReconnect() {
 // counts as proof of life, so a busy stream never pays for pings.
 const PING_MS = 25_000;
 const PONG_TIMEOUT_MS = 8_000;
-const WAKE_PONG_TIMEOUT_MS = 3_000;
+// RESUME: a reconnect costs a few KB now (cursor delta), so a wake doesn't wait
+// long on a socket that may be a ghost — a false alarm is cheap.
+const WAKE_PONG_TIMEOUT_MS = 1_500;
+// Hidden this long → the host's heartbeat (30s rounds) has dropped the socket
+// already; don't probe a ghost, reconnect at once.
+const WAKE_RECONNECT_MS = 45_000;
+// A wake probe still unanswered after this shows the pill (a fast pong never flashes it).
+const WAKE_PILL_MS = 600;
 let lastRx = 0;
 let pingTimer = null;
 let pongTimer = null;
@@ -797,10 +896,17 @@ let silentProbes = 0;
 let hiddenAt = 0;
 const LONG_HIDE_MS = 30_000;
 
+let wakePillTimer = null;
+function clearWakePill() {
+  if (wakePillTimer) clearTimeout(wakePillTimer);
+  wakePillTimer = null;
+}
+
 function stopHeartbeat() {
   if (pingTimer) clearInterval(pingTimer);
   if (pongTimer) clearTimeout(pongTimer);
   pingTimer = pongTimer = null;
+  clearWakePill();
 }
 
 function probe(timeoutMs, onSilent) {
@@ -871,7 +977,19 @@ function onWake() {
       if (hiddenFor > LONG_HIDE_MS) forceReconnect();
       return;
     }
+    // RESUME: long enough away that the host has certainly dropped us — the
+    // socket is a ghost; probing it only adds the probe timeout to the wait.
+    if (hiddenFor > WAKE_RECONNECT_MS && Date.now() - lastRx > WAKE_RECONNECT_MS) {
+      forceReconnect();
+      return;
+    }
     probe(WAKE_PONG_TIMEOUT_MS, () => { if (hiddenFor > LONG_HIDE_MS) forceReconnect(); });
+    // the cached screen stays up; only a probe that takes a while says so
+    clearWakePill();
+    wakePillTimer = setTimeout(() => {
+      wakePillTimer = null;
+      if (pongTimer) setState({ syncing: true });
+    }, WAKE_PILL_MS);
     return;
   }
   if (ws && ws.readyState === WebSocket.CONNECTING) return;
@@ -879,6 +997,15 @@ function onWake() {
 }
 
 function connect() {
+  // RESUME: plan the chat gap now, while the link is down and nothing new can
+  // land on screen: the open chat's gap is asked of the replay itself, every
+  // other loaded chat is marked stale (filled when opened).
+  resumeGap = null;
+  if (everConnected) {
+    const { now, later } = planGapFill(state.chatLoaded, state.chats, state.openSessionId);
+    if (Object.keys(later).length) setState({ chatStale: { ...later, ...state.chatStale } });
+    resumeGap = now[0] || null;
+  }
   setState({ conn: 'connecting', reconnecting: everConnected });
   try {
     ws = new WebSocket(wsUrl());
@@ -888,28 +1015,37 @@ function connect() {
     return;
   }
   const sock = ws;
+  // RESUME: frames are handled strictly in order; a gzip'd binary frame
+  // inflates asynchronously, so everything behind it waits its turn.
+  let rx = null;
+  sock.binaryType = 'arraybuffer';
   sock.onopen = () => {
     if (sock !== ws) return;
     const reconnected = everConnected;
     everConnected = true;
     attempts = 0;
     lastRx = Date.now();
-    setState({ conn: 'open', reconnecting: false });
+    // The cached screen never went away; the pill stays ("reconnecting…")
+    // until the replay and the open chat's gap have landed — see onState.
+    setState({ conn: 'open', reconnecting: false, syncing: reconnected });
+    resync = reconnected ? 1 : 0;
     startHeartbeat();
-    loadSessions(); // pick up archived sessions the state replay may omit
     if (!state.config) loadConfig();
-    // On a genuine reconnect (not the first open), refill any chat events that
-    // were emitted while the socket was down.
-    if (reconnected) refetchLoadedChats();
+    // On a genuine reconnect (not the first open), the chat events emitted
+    // while the socket was down come with the replay (see onState).
     // RES1: `health` only broadcasts on CHANGE, so a queue that emptied while
     // the socket was down is never re-announced — the rail would keep showing
     // a waiting badge for something already resolved until a full reload.
     if (reconnected) loadHealth();
+    clearTimeout(syncGuard);
+    // never let a lost replay pin the pill
+    if (reconnected) syncGuard = setTimeout(() => { if (sock === ws) { resync = 0; setState({ syncing: false }); } }, 15_000);
   };
   sock.onclose = () => {
     if (sock !== ws) return;
     stopHeartbeat();
-    setState({ conn: 'down' });
+    resync = 0;
+    setState({ conn: 'down', syncing: false });
     if (state.auth === null) return; // signed out: Login will reconnect after success
     scheduleReconnect();
   };
@@ -920,15 +1056,11 @@ function connect() {
       /* ignore */
     }
   };
-  sock.onmessage = (e) => {
-    lastRx = Date.now();
-    if (pongTimer) {
-      clearTimeout(pongTimer);
-      pongTimer = null;
-    }
+  const onText = (text) => {
+    if (sock !== ws) return;
     let msg;
     try {
-      msg = JSON.parse(e.data);
+      msg = JSON.parse(text);
     } catch {
       return;
     }
@@ -936,12 +1068,64 @@ function connect() {
       if (msg.type === 'pong') {
         pongSupport = true;
         silentProbes = 0;
+        if (!resync && state.syncing) setState({ syncing: false }); // a wake probe answered
         return;
       }
+      cursor = nextCursor(cursor, msg);
       fanoutWire(msg);
       handleEvent(msg);
     }
   };
+  sock.onmessage = (e) => {
+    lastRx = Date.now();
+    if (pongTimer) {
+      clearTimeout(pongTimer);
+      pongTimer = null;
+    }
+    clearWakePill();
+    if (typeof e.data === 'string' && !rx) return onText(e.data);
+    const step = typeof e.data === 'string' ? () => onText(e.data) : () => inflateFrame(e.data).then(onText, () => {});
+    const p = (rx || Promise.resolve()).then(step).finally(() => {
+      if (rx === p) rx = null;
+    });
+    rx = p;
+  };
+}
+
+// RESUME: the replay of a reconnect landed → wait for the open chat's gap,
+// then the pill may go. Old host (no v2 state): it may omit archived sessions,
+// so fetch the REST list as before.
+let resync = 0; // 0 = in sync, 1 = waiting for the replay, 2 = waiting for the open chat's gap
+let syncGuard = null;
+let firstStateTimer = null;
+let stateSeen = false;
+function onState(r, msg) {
+  stateSeen = true;
+  clearTimeout(firstStateTimer);
+  if (r.legacy) loadSessions();
+  else if (!state.openSessionId) prefetchFirstChat(state.sessions);
+  else if (!state.chatLoaded[state.openSessionId]) loadChat(state.openSessionId);
+  if (resync !== 1) return;
+  resync = 2;
+  const sock = ws;
+  const gap = resumeGap;
+  resumeGap = null;
+  const events = stateChatGap(msg, gap);
+  let gapDone = null;
+  if (events) {
+    const { [gap.sid]: _f, ...stale } = state.chatStale;
+    setState({
+      chatStale: stale,
+      ...(events.length ? { chats: { ...state.chats, [gap.sid]: foldSetupUpdates(appendChatEvents(state.chats[gap.sid] || [], events)) } } : {}),
+    });
+  } else if (gap) gapDone = gapFill(gap.sid, gap.from); // an old host, or a gap too big to ride along
+  Promise.resolve(gapDone).finally(() => {
+    if (sock === ws && resync === 2) {
+      resync = 0;
+      clearTimeout(syncGuard);
+      setState({ syncing: false });
+    }
+  });
 }
 
 if (typeof window !== 'undefined') {
@@ -998,7 +1182,20 @@ export async function loadAuth() {
 
 function bootLoads() {
   loadConfig();
-  loadSessions();
+  // RESUME: the sessions come with the socket's `state` replay (archived
+  // included) — no second copy over REST. Only if no replay shows up (a proxy
+  // that eats WebSockets, an unreachable socket) does the REST list fill in.
+  // A socket that is open but slow (a phone on a bad link) gets longer before
+  // the list is fetched a second time.
+  clearTimeout(firstStateTimer);
+  const fallback = (ms) => {
+    firstStateTimer = setTimeout(() => {
+      if (stateSeen) return;
+      if (state.conn === 'open' && ms < 10_000) return fallback(10_000);
+      loadSessions();
+    }, ms);
+  };
+  fallback(4000);
   loadFolders();
   loadAgents();
   loadExtensions();
@@ -1063,9 +1260,10 @@ function handleEvent(msg) {
     case 'setup.changed':
     case 'setup':
       setState({ setupTick: Date.now() });
+      loadConfig(); // voiceProviders (1a) rides on /config — a key pasted just now gates the voice buttons
       return;
     case 'state':
-      replaceSnapshot(msg.sessions ?? payload?.sessions);
+      onState(replaceSnapshot(msg.sessions ? msg : payload), msg.sessions ? msg : payload);
       if (Array.isArray(msg.folders ?? payload?.folders))
         setState({ folders: msg.folders ?? payload.folders });
       if (Array.isArray(msg.listeners ?? payload?.listeners))
@@ -1178,6 +1376,11 @@ function handleEvent(msg) {
       patchSession(sid, { progress });
       return;
     }
+    case 'shared-desktop': {
+      const lease = msg.lease ?? payload?.lease;
+      if (lease) setState({ sharedDesktop: lease });
+      return;
+    }
     case 'health': {
       // RES1: one event carries both the map and the queue, and only fires when
       // something the cockpit renders actually changed.
@@ -1194,6 +1397,15 @@ function handleEvent(msg) {
       const ev = payload?.event || payload;
       if (ev?.kind) setState({ hostEvent: { ...ev, at: Date.now() } });
       // UPD1: the `claude` CLI updater's outcome — one line, wherever you are.
+      // A first-boot / first-use install (reason 'install', server/lib/engine-install.ts) says so in its own words.
+      if (ev?.reason === 'install' && /^(claude|codex)-update-(started|done|failed)$/.test(ev.kind)) {
+        const [engine, , phase] = ev.kind.split('-');
+        const key = `host.install.${phase}`;
+        const name = engine === 'codex' ? 'Codex CLI' : 'Claude Code';
+        if (phase === 'failed') toastError(t(key, { name, error: ev.error || '?' }));
+        else toast(t(key, { name, to: ev.to || '' }));
+        return;
+      }
       if (ev?.kind === 'claude-update-done') toast(t('host.cli.updatedToast', { from: ev.from || '?', to: ev.to || '?' }));
       else if (ev?.kind === 'claude-update-failed') toastError(t('host.cli.failedToast', { error: ev.error || '?' }));
       else if (ev?.kind === 'codex-update-done') toast(t('host.codexCli.updatedToast', { from: ev.from || '?', to: ev.to || '?' }));

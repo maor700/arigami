@@ -46,5 +46,5 @@ function subscribe(fn) {
 }
 
 export function useConfirm() {
-  return useSyncExternalStore(subscribe, () => current);
+  return useSyncExternalStore(subscribe, () => current, () => current);
 }

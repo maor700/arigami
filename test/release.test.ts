@@ -12,6 +12,7 @@ import {
   setPackageVersion, repoUrlFromPackage, isNoise, lastTag, commitsSince, main, CHANGELOG_HEADER,
   autoBump, NOTHING_TO_RELEASE, clampZeroVer, releaseBoundary, lastVersionCommit, setChartAppVersion, setCargoVersion, setCargoLockVersion, MIRRORED,
 } from '../scripts/release.ts';
+import { tmpDir } from './_tmp.js';
 
 test('bumpVersion: patch/minor/major and an explicit X.Y.Z', () => {
   expect(bumpVersion('0.1.0', 'patch')).toBe('0.1.1');
@@ -82,7 +83,7 @@ test('setPackageVersion keeps formatting; repoUrlFromPackage reads git+https / s
 });
 
 test('main: dry run touches nothing; a real patch release writes VERSION/CHANGELOG/package.json, commits and tags; notes prints the section', () => {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-rel-'));
+  const repo = tmpDir('arigami-rel-');
   const g = (...a: string[]) => { const r = spawnSync('git', a, { cwd: repo, encoding: 'utf8' }); if (r.status !== 0) throw new Error(r.stderr); return r.stdout.trim(); };
   g('init', '-q'); g('config', 'user.email', 't@example.invalid'); g('config', 'user.name', 't');
   fs.writeFileSync(path.join(repo, 'package.json'), '{\n  "name": "x",\n  "version": "0.1.0",\n  "repository": {"url": "git+https://github.com/o/r.git"}\n}\n');
@@ -153,7 +154,7 @@ test('autoBump: breaking → major, feat → minor, anything else → patch; noi
 });
 
 test('main auto: picks the bump from the commits, exits 3 when there is nothing releasable', () => {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-rel-auto-'));
+  const repo = tmpDir('arigami-rel-auto-');
   const g = (...a: string[]) => { const r = spawnSync('git', a, { cwd: repo, encoding: 'utf8' }); if (r.status !== 0) throw new Error(r.stderr); return r.stdout.trim(); };
   g('init', '-q'); g('config', 'user.email', 't@example.invalid'); g('config', 'user.name', 't');
   fs.writeFileSync(path.join(repo, 'package.json'), '{\n  "name": "x",\n  "version": "0.1.0",\n  "repository": {"url": "git+https://github.com/o/r.git"}\n}\n');
@@ -228,7 +229,7 @@ test('clampZeroVer: pre-1.0 never auto-mints 1.0.0; an explicit major still can'
 });
 
 test('releaseBoundary: the last v* tag, else the commit that last wrote VERSION', () => {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-rel-bound-'));
+  const repo = tmpDir('arigami-rel-bound-');
   const g = (...a: string[]) => { const r = spawnSync('git', a, { cwd: repo, encoding: 'utf8' }); if (r.status !== 0) throw new Error(r.stderr); return r.stdout.trim(); };
   g('init', '-q'); g('config', 'user.email', 't@example.invalid'); g('config', 'user.name', 't');
   fs.writeFileSync(path.join(repo, 'package.json'), '{\n  "name": "x",\n  "version": "0.1.0"\n}\n');
@@ -252,7 +253,7 @@ test('releaseBoundary: the last v* tag, else the commit that last wrote VERSION'
 });
 
 test('main auto with no tag: changelog starts at the VERSION commit, not at the dawn of the repo', () => {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-rel-notag-'));
+  const repo = tmpDir('arigami-rel-notag-');
   const g = (...a: string[]) => { const r = spawnSync('git', a, { cwd: repo, encoding: 'utf8' }); if (r.status !== 0) throw new Error(r.stderr); return r.stdout.trim(); };
   g('init', '-q'); g('config', 'user.email', 't@example.invalid'); g('config', 'user.name', 't');
   fs.writeFileSync(path.join(repo, 'package.json'), '{\n  "name": "x",\n  "version": "0.1.0",\n  "repository": {"url": "git+https://github.com/o/r.git"}\n}\n');
@@ -279,7 +280,7 @@ test('main auto with no tag: changelog starts at the VERSION commit, not at the 
 });
 
 test('main auto --dry-run touches nothing but still reports the bump it would take', () => {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-rel-dry-'));
+  const repo = tmpDir('arigami-rel-dry-');
   const g = (...a: string[]) => { const r = spawnSync('git', a, { cwd: repo, encoding: 'utf8' }); if (r.status !== 0) throw new Error(r.stderr); return r.stdout.trim(); };
   g('init', '-q'); g('config', 'user.email', 't@example.invalid'); g('config', 'user.name', 't');
   fs.writeFileSync(path.join(repo, 'package.json'), '{\n  "name": "x",\n  "version": "2.3.4"\n}\n');
@@ -354,7 +355,7 @@ test('setCargoVersion/setCargoLockVersion: the desktop crate only, never a depen
 });
 
 test('a release mirrors the number into every MIRRORED file that exists, skipping the rest', () => {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-rel-mirror-'));
+  const repo = tmpDir('arigami-rel-mirror-');
   const g = (...a: string[]) => { const r = spawnSync('git', a, { cwd: repo, encoding: 'utf8' }); if (r.status !== 0) throw new Error(r.stderr); return r.stdout.trim(); };
   const write = (rel: string, body: string) => { fs.mkdirSync(path.dirname(path.join(repo, rel)), { recursive: true }); fs.writeFileSync(path.join(repo, rel), body); };
   g('init', '-q'); g('config', 'user.email', 't@example.invalid'); g('config', 'user.name', 't');

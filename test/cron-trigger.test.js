@@ -13,9 +13,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { runInChild } from './_child.js';
+import { tmpDir } from './_tmp.js';
 
 function isolatedEnv() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-cron-'));
+  const dir = tmpDir('arigami-cron-');
   return { dir, env: { ARIGAMI_DIR: dir, ARIGAMI_STATE_FILE: path.join(dir, 'state.json') } };
 }
 
@@ -174,29 +175,62 @@ test('cron triggers survive a restart (persisted fields round-trip through flush
   expect(reloaded.runs).toEqual([]);
 });
 
-test("runCronNow on 'existing' mode reports+records failure when the target session is gone", () => {
+test('existing targets are validated on create and patch before any mutation', () => {
   const { env } = isolatedEnv();
-  const r = runInChild(
-    `
+  const r = runInChild(`
     const t = await import('./server/triggers.js');
+    const state = await import('./server/state.js');
     t.load();
-    const created = await t.createCronTrigger({
-      name: 'Nudge PM', prompt: 'status update please',
-      schedule: { kind: 'interval', value: '1h' }, sessionMode: 'existing:sess_does_not_exist',
-    });
-    const result = await t.runCronNow(created.id);
-    const after = t.listTriggers().find((x) => x.id === created.id);
-    emit({ result, runs: after.runs, log: t.getTriggerLog(created.id) });
-    `,
-    env
-  );
+    const input = { prompt: 'p', schedule: { kind: 'interval', value: '1h' } };
+    let createError, patchError;
+    try { await t.createCronTrigger({ ...input, sessionMode: 'existing:missing' }); } catch (e) { createError = e.message; }
+    const target = state.createSession({ title: 'valid target' });
+    const created = await t.createCronTrigger({ ...input, sessionMode: 'existing:' + target.id });
+    try { t.patchTrigger(created.id, { name: 'must not change', enabled: false, sessionMode: 'existing:missing' }); } catch (e) { patchError = e.message; }
+    emit({ createError, patchError, created, count: t.listTriggers().length });
+  `, env);
   expect(r.ok).toBe(true);
-  const { result, runs, log } = r.out[0];
-  expect(result.ok).toBe(false);
-  expect(result.reason).toBe('target-not-found');
-  expect(runs.length).toBe(1);
-  expect(runs[0].state).toBe('error');
-  expect(log.some((l) => l.level === 'error')).toBe(true);
+  const { createError, patchError, created, count } = r.out[0];
+  expect(createError).toContain('not found');
+  expect(patchError).toContain('not found');
+  expect(created.name).not.toBe('must not change');
+  expect(created.enabled).toBe(true);
+  expect(count).toBe(1);
+});
+
+test('deleted targets pause failed one-shots without consuming them; retargeting permits retry', () => {
+  const { env } = isolatedEnv();
+  const r = runInChild(`
+    const t = await import('./server/triggers.js');
+    const state = await import('./server/state.js');
+    t.load();
+    const target = state.createSession({ title: 'delete before delivery' });
+    const created = await t.createCronTrigger({
+      prompt: 'status update', schedule: { kind: 'at', value: '2030-01-01T00:00:00Z' },
+      sessionMode: 'existing:' + target.id, deliver: { push: false },
+    });
+    state.deleteSession(target.id);
+    const result = await t.runCronNow(created.id);
+    emit({ result, lastRun: created.lastRun, enabled: created.enabled, next: t.nextRunFor(created), runs: created.runs, log: t.getTriggerLog(created.id), lastError: created.lastError });
+    let enableError;
+    try { t.patchTrigger(created.id, { enabled: true }); } catch (e) { enableError = e.message; }
+    const replacement = state.createSession({ title: 'replacement' });
+    t.patchTrigger(created.id, { sessionMode: 'existing:' + replacement.id, enabled: true });
+    emit({ enableError, enabled: created.enabled, mode: created.sessionMode, lastRun: created.lastRun });
+  `, env);
+  expect(r.ok).toBe(true);
+  const [failed, repaired] = r.out;
+  expect(failed.result).toEqual({ ok: false, reason: 'target-not-found' });
+  expect(failed.lastRun).toBeNull();
+  expect(failed.next).toBe(Date.parse('2030-01-01T00:00:00Z'));
+  expect(failed.enabled).toBe(false);
+  expect(failed.runs[0].state).toBe('error');
+  expect(failed.lastError).toContain('not found');
+  expect(failed.log.some((l) => l.level === 'error')).toBe(true);
+  expect(repaired.enableError).toContain('not found');
+  expect(repaired.enabled).toBe(true);
+  expect(repaired.mode).toMatch(/^existing:sess_/);
+  expect(repaired.lastRun).toBeNull();
 });
 
 test('runCronNow on an unknown trigger id fails cleanly', () => {
@@ -234,4 +268,50 @@ test('nextRunFor: interval trigger has a next run; an already-fired one-shot "at
   expect(intervalNext).toBeGreaterThan(Date.now() - 5000);
   expect(beforeFire).toBe(Date.parse('2030-01-01T00:00:00Z'));
   expect(afterFire).toBeNull();
+});
+
+test('isRunningQueueSession: only a queue-started session that is running a turn takes a budget slot', () => {
+  const { env } = isolatedEnv();
+  const r = runInChild(
+    `
+    const t = await import('./server/triggers.js');
+    const q = (state, fromQueue = true) => ({ metadata: fromQueue ? { fromQueue: true } : {}, claude: { state } });
+    emit({
+      running: t.isRunningQueueSession(q('running')),
+      starting: t.isRunningQueueSession(q('starting')),
+      idle: t.isRunningQueueSession(q('idle')),      // waiting on a PR / the human: not working
+      dead: t.isRunningQueueSession(q('dead')),
+      notQueue: t.isRunningQueueSession(q('running', false)), // direct launcher session
+      bare: t.isRunningQueueSession({}),
+    });
+    `,
+    env
+  );
+  expect(r.ok).toBe(true);
+  expect(r.out[0]).toEqual({ running: true, starting: true, idle: false, dead: false, notQueue: false, bare: false });
+});
+
+test('patchPending edits what a queued item starts with; a ticket keeps its identity; junk engines are ignored', () => {
+  const { env } = isolatedEnv();
+  const r = runInChild(
+    `
+    const t = await import('./server/triggers.js');
+    t.load();
+    const e = t.deferEmpty({ title: 'Review x', cwd: '/tmp/a', prompt: 'p1', engine: 'claude' });
+    const a = t.patchPending(e.id, { title: 'Review y', prompt: 'p2', cwd: '/tmp/b', engine: 'codex', model: 'm', effort: 'high', folderName: 'CR', permissionMode: 'plan', junk: 1 });
+    const bad = t.patchPending(e.id, { engine: 'gpt', title: '   ' });
+    const tk = t.deferTicket('ENG-9', 'tk', 'tp');
+    const c = t.patchPending(tk.id, { ticket: 'OTHER-1', title: 'nope', cwd: '/x', prompt: 'p3', model: 'opus' });
+    emit({ a: [a.title, a.prompt, a.cwd, a.engine, a.model, a.effort, a.folderName, a.permissionMode, a.junk],
+           bad: [bad.engine, bad.title],
+           c: [c.ticket, c.title, c.cwd, c.prompt, c.model],
+           none: t.patchPending('pend_nope', { prompt: 'x' }) });
+    `,
+    env
+  );
+  expect(r.ok).toBe(true);
+  expect(r.out[0].a).toEqual(['Review y', 'p2', '/tmp/b', 'codex', 'm', 'high', 'CR', 'plan', null]); // (undefined serializes as null)
+  expect(r.out[0].bad).toEqual(['codex', 'Review y']); // a non-engine value and a blank title change nothing
+  expect(r.out[0].c).toEqual(['ENG-9', 'tk', null, 'p3', 'opus']); // ticket id/title/cwd are not editable
+  expect(r.out[0].none).toBeNull();
 });

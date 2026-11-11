@@ -3,6 +3,7 @@ import { test, expect, beforeAll, afterAll } from 'bun:test';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { tmpDir, tmpPath } from './_tmp.js';
 
 // git.js / watchdog.js are intentionally free of the state singleton (see
 // test/listeners.test.js), so importing them here doesn't race the
@@ -26,7 +27,7 @@ function sh(cwd, ...args) {
 }
 
 beforeAll(() => {
-  repo = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-repo-'));
+  repo = tmpDir('dispatch-repo-');
   sh(repo, 'git', 'init', '-q', '-b', 'main');
   sh(repo, 'git', 'config', 'user.email', 't@t.io');
   sh(repo, 'git', 'config', 'user.name', 'T');
@@ -46,12 +47,12 @@ const samePath = (p) => path.normalize(p);
 
 test('repoCommonRoot resolves a repo, null for a non-repo', async () => {
   expect(samePath(await repoCommonRoot(repo))).toBe(samePath(fs.realpathSync(repo)));
-  const notRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'norepo-'));
+  const notRepo = tmpDir('norepo-');
   expect(await repoCommonRoot(notRepo)).toBeNull();
 });
 
 test('addWorktree creates a new branch + worktree off base, then removeWorktree tears it down', async () => {
-  const dir = path.join(os.tmpdir(), `wt-${Date.now()}`);
+  const dir = tmpPath(`wt-${Date.now()}`);
   const r = await addWorktree(repo, dir, 'dispatch/feature-x', 'main');
   expect(r.ok).toBe(true);
   expect(fs.existsSync(path.join(dir, 'README.md'))).toBe(true);
@@ -65,8 +66,8 @@ test('addWorktree creates a new branch + worktree off base, then removeWorktree 
 });
 
 test('addWorktree fails cleanly on a non-repo parent', async () => {
-  const notRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'norepo2-'));
-  const r = await addWorktree(notRepo, path.join(os.tmpdir(), 'wt-x'), 'dispatch/y', 'main');
+  const notRepo = tmpDir('norepo2-');
+  const r = await addWorktree(notRepo, tmpPath('wt-x'), 'dispatch/y', 'main');
   expect(r.ok).toBe(false);
   expect(r.error).toMatch(/not a git repository/);
 });

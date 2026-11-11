@@ -9,8 +9,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { runInChild } from './_child.js';
+import { tmpDir } from './_tmp.js';
 
-const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-cleanup-'));
+const dir = tmpDir('arigami-cleanup-');
 const r = runInChild(
   "const api=await import('./server/api.js');" +
     "const ro=await api.cleanupPlan({metadata:{role:'worker',kind:'readonly'},cwd:'/some/master/worktree'});" +

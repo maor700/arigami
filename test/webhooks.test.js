@@ -12,8 +12,9 @@ import http from 'node:http';
 import crypto from 'node:crypto';
 import { createWebhooks, safeEqual, parseSms, isInboundWebhookPath, INBOUND_RE } from '../server/webhooks.ts';
 import { createShareTokens } from '../server/share-token.ts';
+import { tmpDir } from './_tmp.js';
 
-const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-wh-'));
+const tmp = () => tmpDir('arigami-wh-');
 const hmac = (secret, data) => crypto.createHmac('sha256', secret).update(data).digest('hex');
 
 let t0 = 1_800_000_000_000;

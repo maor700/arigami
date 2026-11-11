@@ -4,6 +4,10 @@
 Codex) that runs on real desktops, hands you the wheel when it needs you, and learns your business only
 with your approval.**
 
+**Website:** [arigami-site.vercel.app](https://arigami-site.vercel.app) · **Film (42 s):** click the poster
+
+[![Arigami in 42 seconds: one workspace for Claude Code and Codex](docs/media/film-poster.jpg)](https://github.com/maor700/arigami/releases/download/v0.5.1/arigami-film.mp4)
+
 ![Arigami hands you the wheel: a child agent hits 2FA on its own desktop, pushes to your phone, you type the code, it continues](docs/media/hands-you-the-wheel.gif)
 
 ## Install in 60s
@@ -75,17 +79,11 @@ differs, and what does not work on Codex yet: [docs/ENGINES.md](docs/ENGINES.md)
 
 A profile bundle folds the cockpit to a purpose — repos + skills + memory
 seed + cron, applied additively (new skills land in `$ARIGAMI_DIR/skills`,
-cron jobs start disabled). Shipped in [`profiles/bundles/`](profiles/bundles/):
-
-| bundle | one-liner |
-|---|---|
-| `solo-dev` | one developer, their own repos: a daily standup skill and a weekday cron |
-| `agency-client` | *Arigami folded to a client*: weekly status report as a shareable artifact, intake → ticket → child session, `CLIENT.md` template |
-| `ops` | ops team: signed alert webhook → incident session → decision on your phone; runbooks executed on a real desktop that hands you the wheel at login/2FA; daily digest |
-| `il-whatsapp-business` | Hebrew small business in WhatsApp: inbox triage that drafts replies and asks the owner before sending (never auto-sends), quote/appointment follow-ups, `BUSINESS.md` template |
+cron jobs start disabled). The product ships no example profiles: they come from your
+organisation's profile repo (a git URL) or `~/.arigami/profiles/` — see [profiles/README.md](profiles/README.md).
 
 `install.sh --profile <name>` · `bin/host profile apply <name>` · Setup → Profile.
-Copy a bundle directory to make your own; see [docs/INSTALL.md](docs/INSTALL.md) §3.
+Write your own; see [docs/INSTALL.md](docs/INSTALL.md) §3.
 
 ## Why not …
 

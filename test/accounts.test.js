@@ -8,9 +8,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { runInChild } from './_child.js';
+import { tmpDir } from './_tmp.js';
 
 test('seed does not duplicate the env-imported account after a secret rotation', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-acct-'));
+  const dir = tmpDir('arigami-acct-');
   // A pre-seeded env account whose sealed token was encrypted with a DIFFERENT
   // key — so open() fails to decrypt it under the current secret.
   fs.writeFileSync(

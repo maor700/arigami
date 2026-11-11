@@ -14,6 +14,7 @@ import net from 'node:net';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { hostDiag } from './_host-diag.js';
+import { tmpDir } from './_tmp.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -77,7 +78,7 @@ const seedSession = (id: string, title: string, metadata: Record<string, unknown
 });
 
 beforeAll(async () => {
-  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-UX1-host-'));
+  dir = tmpDir('arigami-UX1-host-');
   fs.mkdirSync(path.join(dir, 'workspace'), { recursive: true });
   // An agent whose record LOST its homeSessionId (an export/import round-trip
   // strips it — see backup.ts exportBundle) while two of its sessions are still

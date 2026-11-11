@@ -13,6 +13,7 @@ import {
   nextCodexAccount,
   DEFAULT_CODEX_MODEL_CHAIN,
 } from '../server/lib/codex-quota.ts';
+import { tmpDir } from './_tmp.js';
 
 const NOW = Date.parse('2026-09-15T10:00:00Z');
 const LATER = '2026-09-15T15:00:00.000Z';
@@ -103,7 +104,7 @@ test('codexChain: config default filtered to the account catalog, the picked mod
 
 let dir: string;
 beforeAll(() => {
-  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-quota-recovery-'));
+  dir = tmpDir('codex-quota-recovery-');
 });
 afterAll(() => {
   fs.rmSync(dir, { recursive: true, force: true });

@@ -198,10 +198,11 @@ test('the engine choice is a two-button radio group, not a <select> among the ot
   expect(codex).toMatch(/aria-checked="true"[^>]*>Codex</);
 });
 
-test('the options picker keeps only skill/model/effort — the engine has left it', () => {
+test('the options picker keeps only skill/model/effort/folder — the engine has left it', () => {
   const html = render(h(Launcher.SessionOptionsPicker, { options: { engine: '', skill: '', model: '', effort: '' }, onChange() {} }));
-  expect(html.split('<select').length - 1).toBe(3);
+  expect(html.split('<select').length - 1).toBe(4); // skill, model, effort, and the folder LIST (not a free-text box)
   expect(html).not.toContain('Codex');
+  expect(html).toContain('No folder');
 });
 
 test('picking Codex swaps the model list and the effort ladder in the rendered picker', () => {
@@ -276,4 +277,13 @@ test('Settings › Host carries the default-engine toggle', () => {
   const src = fs.readFileSync(path.join(ROOT, 'web/src/components/settings/Host.jsx'), 'utf8');
   expect(src).toContain("api.post('/config/default-engine', { engine })");
   expect(src).toContain('<DefaultEngineField />');
+});
+
+test('launcher folder setting renders, reaches ticket payloads and survives presets', () => {
+  const options = { folderName: 'Frontend', engine: '', skill: '', model: '', effort: '' };
+  const html = render(h(Launcher.SessionOptionsPicker, { options, onChange() {} }));
+  expect(html).toContain('value="Frontend"');
+  expect(Launcher.buildTicketPayload({ id: 'ENG-1' }, {}, [], '', '', options).folderName).toBe('Frontend');
+  prefs.saveSessionPreset('folder work', options);
+  expect(prefs.getPrefs().sessionPresets.at(-1).folderName).toBe('Frontend');
 });

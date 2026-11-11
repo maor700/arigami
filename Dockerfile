@@ -27,9 +27,20 @@ ARG TARGETARCH
 #              buttons fail with a spawn ENOENT — `claude setup-token` run by
 #              hand under `docker compose exec -it` still works, since that has
 #              a real TTY and needs no bridge.
+#   jq       : JSON in shell skills (queue scripts, PR context, upload URLs)
+#   sudo     : the workspace owner is admin in their own container (below)
 #   gh        comes from the apt repo below
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      git curl ca-certificates ripgrep procps lsof python3-minimal less openssh-client gnupg gosu \
+      git curl ca-certificates ripgrep procps lsof python3-minimal less openssh-client gnupg gosu jq sudo \
+    && rm -rf /var/lib/apt/lists/*
+
+# --- Everyday CLI tools agents reach for (~30MB): archives (unzip/zip, xz,
+#     bzip2, zstd), file, network debugging (ss/ip, nc, dig), rsync, the
+#     sqlite3 shell, patch and nano. pip/venv for user-level Python installs
+#     into ~/.local (see PATH below). ---
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      unzip zip xz-utils bzip2 zstd file iproute2 netcat-openbsd dnsutils rsync sqlite3 patch nano \
+      python3-pip python3-venv \
     && rm -rf /var/lib/apt/lists/*
 
 # --- GitHub CLI (optional; sessions use it for PRs) ---
@@ -44,9 +55,15 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
 #     (server/lib/desktops.ts) spawns Xvfb :99 + openbox + tint2 + x11vnc on
 #     loopback at boot, and per-session desktops on demand. No supervisord,
 #     no systemd — the host process owns them. dbus-x11 gives Chrome a session
-#     bus; fonts-noto(+emoji) cover the scripts/emoji the agent screenshots. ---
+#     bus; fonts-noto(+emoji) cover the scripts/emoji the agent screenshots.
+#     lxterminal is the desktop's terminal (panel icon + right-click "Terminal",
+#     wired by server/lib/desktop-terminal.ts): VTE-based, so Hebrew/Arabic get
+#     real BiDi, and ~+3MB because Chrome already pulls in GTK3 (xterm costs the
+#     same and has no BiDi). xclip backs cockpit → desktop paste
+#     (server/lib/desktop-clipboard.ts); scrot is capture_screen's fallback
+#     when the VNC grab fails (server/vnc.ts). ---
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      xvfb x11vnc openbox tint2 x11-utils xauth dbus-x11 \
+      xvfb x11vnc openbox tint2 x11-utils xauth dbus-x11 lxterminal xclip scrot \
       fonts-noto-core fonts-noto-color-emoji fonts-liberation \
     && rm -rf /var/lib/apt/lists/*
 
@@ -74,11 +91,14 @@ ENV CHROME_BIN=/usr/local/bin/arigami-chrome
 COPY --from=oven/bun:1-debian /usr/local/bin/bun /usr/local/bin/bun
 RUN ln -s /usr/local/bin/bun /usr/local/bin/bunx && bun --version
 
-# --- Claude Code CLI (pinned to match local; bin → /usr/local/bin/claude) ---
-RUN npm install -g @anthropic-ai/claude-code@2.1.196 && claude --version \
-    && npm cache clean --force && rm -rf /root/.npm
+# --- Engine CLIs are NOT in the image. Claude Code installs into ~/.local on
+#     the volume at first boot (the official native installer, latest release;
+#     server/lib/claude-update.js), codex the first time a Codex account is added
+#     (server/lib/engine-install.ts). Both then update in place there, so they
+#     follow their own release channel instead of the image's. ---
 
-# --- Playwright MCP + ffmpeg (visual ticket skills: screenshots/GIFs).
+# --- Playwright MCP + ffmpeg (visual ticket skills: screenshots/GIFs; ffmpeg also renders the desktop
+#     wallpapers, server/lib/desktop-wallpaper.ts).
 #     No bundled Playwright Chromium: the MCP is registered by the entrypoint
 #     with `--executable-path $CHROME_BIN`, so it drives the same Chrome/
 #     Chromium as the desktop (saves ~700MB vs `playwright install --with-deps`). ---
@@ -92,21 +112,9 @@ RUN npm install -g playwright @playwright/mcp \
 #     installed globally so the first bridge start needs no network. The
 #     checkout's auth_info/ is symlinked onto /data by the entrypoint (upstream
 #     hardcodes it next to src/); the message DB goes to ARIGAMI_WA_DATA_DIR. ---
-ARG WHATSAPP_MCP_REPO=https://github.com/jlucaso1/whatsapp-mcp-ts
-ARG WHATSAPP_MCP_REF=ce9b144a2327d44f4288ee400503e2dc06c7d2d5
-RUN set -eux; \
-    git init -q /opt/whatsapp-mcp; \
-    cd /opt/whatsapp-mcp; \
-    git remote add origin "$WHATSAPP_MCP_REPO"; \
-    git fetch -q --depth 1 origin "$WHATSAPP_MCP_REF"; \
-    git checkout -q FETCH_HEAD; \
-    rm -rf .git; \
-    npm install --omit=dev --no-audit --no-fund --ignore-scripts=false --engine-strict=false; \
-    npm cache clean --force; \
-    npm install -g tsx; \
-    npm cache clean --force; rm -rf /root/.npm; \
-    rm -rf auth_info data; \
-    chown -R node:node /opt/whatsapp-mcp
+COPY scripts/install-whatsapp.sh scripts/prepare-whatsapp.mjs scripts/whatsapp-status.ts scripts/whatsapp-media.ts /opt/arigami-whatsapp-setup/
+RUN ARIGAMI_WA_MCP_DIR=/opt/whatsapp-mcp bash /opt/arigami-whatsapp-setup/install-whatsapp.sh \
+    && chown -R node:node /opt/whatsapp-mcp
 
 WORKDIR /app
 
@@ -120,7 +128,9 @@ RUN bun install
 # --- app source + built web cockpit ---
 COPY server/ ./server/
 COPY mcp/ ./mcp/
+COPY mods/ ./mods/
 COPY skills/ ./skills/
+COPY docs/ ./docs/
 COPY profiles/ ./profiles/
 COPY bin/ ./bin/
 COPY .claude-plugin/ ./.claude-plugin/
@@ -143,7 +153,19 @@ ENV ARIGAMI_IMAGE=${ARIGAMI_IMAGE} \
     ARIGAMI_COMMIT=${ARIGAMI_COMMIT} \
     ARIGAMI_BRANCH=${ARIGAMI_BRANCH} \
     ARIGAMI_SUPERVISOR=docker
+# LANG/LC_ALL: the slim base leaves the locale at POSIX, so git octal-escapes
+# non-ASCII paths and terminals show raw bytes; C.UTF-8 ships with libc.
+# PATH: ~/.local/bin (on the /data volume) first — the only place a user-level
+# install (`pip install --user`, `npm i -g --prefix ~/.local`, a static binary)
+# survives a restart besides apt packages (see apt-persist below): the root fs
+# is reset.
+# PIP_BREAK_SYSTEM_PACKAGES lets `pip install --user` past Debian's PEP 668
+# guard; --user never touches the system's own packages.
 ENV HOME=/data/home \
+    PATH=/data/home/.local/bin:$PATH \
+    PIP_BREAK_SYSTEM_PACKAGES=1 \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
     ARIGAMI_PORT=3099 \
     ARIGAMI_DIR=/data/.arigami \
     ARIGAMI_STATE_FILE=/data/.arigami/state.json \
@@ -164,7 +186,24 @@ ENV HOME=/data/home \
 #     drops to `node` via gosu. ---
 
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chmod +x /usr/local/bin/entrypoint.sh
+COPY docker/register-playwright-mcp.sh /usr/local/bin/arigami-register-playwright-mcp
+RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/arigami-register-playwright-mcp
+
+# --- The workspace owner is admin in their own container: passwordless sudo
+#     for `node`, so `sudo apt-get install` works (the Helm chart allows the
+#     privilege escalation sudo needs; docs/DOCKER.md "Admin (sudo)"). The root
+#     fs resets on restart, so apt-persist copies every installed .deb to the
+#     volume and the entrypoint reinstalls missing ones at the next start. ---
+COPY docker/apt-persist.sh /usr/local/lib/arigami/apt-persist
+RUN chmod 0755 /usr/local/lib/arigami/apt-persist \
+    && printf 'node ALL=(ALL) NOPASSWD:ALL\n' > /etc/sudoers.d/arigami-node \
+    && chmod 0440 /etc/sudoers.d/arigami-node && visudo -cf /etc/sudoers.d/arigami-node \
+    && printf '%s\n' \
+      'DPkg::Pre-Install-Pkgs { "/usr/local/lib/arigami/apt-persist cache"; };' \
+      'DPkg::Post-Invoke { "/usr/local/lib/arigami/apt-persist prune || true"; };' \
+      > /etc/apt/apt.conf.d/90arigami-persist
+# Run right after the host's first-boot claude install (claude-update.js).
+ENV ARIGAMI_CLAUDE_POSTINSTALL=/usr/local/bin/arigami-register-playwright-mcp
 
 VOLUME ["/data"]
 EXPOSE 3099

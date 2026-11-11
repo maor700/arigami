@@ -33,6 +33,7 @@ const ALLOW = [
   ['test/proxy-headers.test.ts', '10.0.0.', 'RFC1918 example: non-loopback peer (C2)'],
   ['test/proxy-headers.test.ts', '172.18.0.2', 'RFC1918 example: docker-network peer (C2)'],
   ['test/proxy-headers.test.ts', 'box.ts.net', 'placeholder tailnet host in a test (C2)'],
+  ['test/remote-tailscale-timeout.test.ts', 'box.example.ts.net', 'placeholder tailnet host in a test'],
   ['docs/TLS.md', '<tailnet>.ts.net', 'placeholder tailnet host in docs (C2)'],
   ['deploy/helm/arigami-tenant/values.yaml', '10.0.0.0/8', 'RFC1918 range the egress policy subtracts from 0.0.0.0/0'],
   ['deploy/helm/arigami-tenant/values.yaml', '172.16.0.0/12', 'RFC1918 range the egress policy subtracts from 0.0.0.0/0'],
@@ -81,12 +82,15 @@ test('no internal references or private network identifiers anywhere in the repo
 // sources. Which *specific* org must never appear is not spelled out here —
 // test/no-personal-data.test.js scans profiles/ along with everything else,
 // against the out-of-repo denylist.
+// The product ships none (profiles/bundles/ is absent); the fixtures stand in for them and hold the same bar.
 test('profiles/ ships only generic bundles', () => {
-  const root = path.join(ROOT, 'profiles', 'bundles');
-  const bundles = fs.readdirSync(root, { withFileTypes: true }).filter((e) => e.isDirectory());
+  const roots = [path.join(ROOT, 'profiles', 'bundles'), path.join(ROOT, 'test', 'fixtures', 'bundles')];
+  const bundles = roots.flatMap((root) =>
+    fs.existsSync(root) ? fs.readdirSync(root, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => ({ name: e.name, root })) : []
+  );
   expect(bundles.length).toBeGreaterThan(0);
   for (const b of bundles) {
-    const f = path.join(root, b.name, 'profile.json');
+    const f = path.join(b.root, b.name, 'profile.json');
     const p = JSON.parse(fs.readFileSync(f, 'utf8'));
     expect(typeof p.name).toBe('string');
     for (const r of p.repos || []) {

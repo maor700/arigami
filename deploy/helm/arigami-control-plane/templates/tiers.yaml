@@ -1,0 +1,14 @@
+{{- if .Values.tiers }}
+{{- if not (hasKey .Values.tiers .Values.defaultTier) }}
+{{- fail (printf "defaultTier %q is not one of the tiers (%s)" .Values.defaultTier (keys .Values.tiers | sortAlpha | join ", ")) }}
+{{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "arigami-control-plane.fullname" . }}-tiers
+  labels:
+    {{- include "arigami-control-plane.labels" . | nindent 4 }}
+data:
+  tiers.json: |
+    {{- toJson .Values.tiers | nindent 4 }}
+{{- end }}

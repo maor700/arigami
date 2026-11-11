@@ -4,6 +4,9 @@
 #
 # How a run starts:
 #   git push --follow-tags  → on.push.tags, the whole matrix, files land on the
+#                             (GitHub lists a workflow only after a push to the
+#                             default branch touches its file — a repo created
+#                             from an existing tree needs one such push first)
 #                             Release for that tag.
 #   Run workflow            → any ref; `targets` picks the matrix lines (default
 #                             all). Without a tag the files are run artifacts
@@ -294,6 +297,7 @@ jobs:
           name: installers-${{ matrix.name }}
           path: dist-installers/*
           if-no-files-found: error
+          retention-days: 1 # the Release keeps them; no job downloads this artifact
 
       # release.yml writes the Release for this tag from the CHANGELOG section,
       # and runs in parallel with this — so wait for it rather than racing to

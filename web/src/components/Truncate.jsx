@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { strongDirOf } from '../lib/i18n.js';
 
 // Sets a native `title` equal to the full text only when the element is
 // actually overflowing (scrollWidth > clientWidth). Watches size via
@@ -22,12 +23,18 @@ export function useOverflowTitle(text) {
 }
 
 // Drop-in truncating element. Renders a <span> (override via `as`) with the
-// `truncate` utility and an overflow-aware title.
+// `truncate` utility and an overflow-aware title. A Truncate that carries its
+// own `dir` (a title whose language differs from the UI) still aligns to the UI's
+// start edge (`ui-start`), so a row's title, chips and indicator share one edge.
 export function Truncate({ text, as: Tag = 'span', className = '', children, ...rest }) {
   const content = children ?? text;
   const { ref, title } = useOverflowTitle(typeof content === 'string' ? content : text);
+  // Ellipsis and clipping happen at the END of the element's own direction, so
+  // user text must be laid out in ITS direction (an English title in a Hebrew UI
+  // keeps its start and loses its tail, not the other way round).
+  const dir = rest.dir ?? (typeof content === 'string' ? strongDirOf(content) : undefined);
   return (
-    <Tag ref={ref} title={title} className={`truncate ${className}`} {...rest}>
+    <Tag ref={ref} title={title} className={`truncate ${dir ? 'ui-start ' : ''}${className}`} {...rest} dir={dir}>
       {content}
     </Tag>
   );

@@ -3,25 +3,27 @@
 // terminal overrides (each terminal can flip its own dir + light/dark).
 import { useSyncExternalStore } from 'react';
 import { logoDataUri, DEFAULT_ACCENT, DEFAULT_LOGO } from './logos.js';
+import { CHAT_TEXT, chatScale, migrateChatText } from './chatText.js';
 import { langDir, resolveLang, isLangId, isVoiceLangId, resolveVoiceLang } from './langs.js';
 
 const KEY = 'arigami-prefs';
 
-export const PREF_LIMITS = { font: [10, 24], rail: [180, 420] };
+export const PREF_LIMITS = { chat: [CHAT_TEXT.min, CHAT_TEXT.max], rail: [180, 420] };
 
 // UI size: one factor on the root font-size, so everything measured in rem/em
 // (the rail, chrome, settings) grows together. The chat output has its own
-// px size (termFontSize) and is untouched by this.
+// px size (chatTextSize) and is untouched by this.
 export const UI_SCALES = { small: 0.875, medium: 1, large: 1.15 };
 export const UI_SCALE_IDS = ['small', 'medium', 'large'];
 export const isUiScale = (v) => UI_SCALE_IDS.includes(v);
 
 const DEFAULTS = {
-  theme: 'dark', // app chrome: 'light' | 'dark' — dark by default, like the landing page
-  termTheme: 'dark', // default terminal: 'light' | 'dark'
-  termFontSize: 16, // px, clamped 10–24 — the chat output text size
+  themeMode: 'system', // app chrome choice: 'system' (follows prefers-color-scheme) | 'light' | 'dark'
+  theme: 'dark', // app chrome as RENDERED: 'light' | 'dark' — derived from themeMode (dark when no system signal)
+  termTheme: 'auto', // default chat theme: 'auto' (follows the app theme) | 'light' | 'dark'
+  chatTextSize: CHAT_TEXT.def, // px, clamped 12–20 — the chat prose size; --chat-scale on <html> (index.css)
   termDir: 'auto', // default terminal direction: 'auto' | 'ltr' | 'rtl'
-  railWidth: 248, // px, clamped 180–420
+  railWidth: 264, // px, clamped 180–420
   uiScale: 'medium', // whole-UI size incl. the rail: 'small' | 'medium' | 'large' → --ui-scale on <html> (rem)
   termOverrides: {}, // { [sessionId]: { dir?, theme? } } — per-terminal overrides
   voiceAutoSend: false, // auto-send voice prompts without confirmation
@@ -29,22 +31,24 @@ const DEFAULTS = {
   voiceMode: 'hold', // 'hold' (push-to-talk, hold the key) | 'toggle' (press to start/stop)
   voiceLang: 'auto', // 'auto' (= the UI language) | ISO code from langs.VOICE_LANGS — the language the mic listens in
   voiceHotkey: 'Cmd+Shift+V', // keyboard shortcut to start recording
+  voiceReadAloud: false, // stage 1b: speak the agent's answers (needs a TTS source: a host provider or the browser voice)
+  voiceBrowserTts: false, // stage 1b: the browser's speechSynthesis counts as a (free) TTS source
   ticketPresets: [], // [{ id, name, filters }] — saved launcher ticket filters
   ticketDefaultPresetId: '', // id of the preset applied when the launcher opens
   sessionPresets: [], // [{ id, name, engine, skill, model, effort }] — saved launcher session options
   sessionDefaultPresetId: '', // id of the preset applied when the launcher opens, any tab
   sessionDefaultPresetByMode: { ticket: '', empty: '', trigger: '' }, // per-launcher-tab override
   autonomyWarningDismissed: false, // "don't show again" for the autonomous-trigger warning
+  launcherPermissionMode: '', // the launcher's last-picked permission mode ('' = never picked → bypassPermissions)
   usageExpanded: false, // rail usage panel: collapsed = one 5h-session line, expanded = full session+week charts
   accent: '', // brand accent hex (#rrggbb); '' = built-in default (jade)
   logo: DEFAULT_LOGO, // origami logo preset: 'star' (brand) | 'crane' | 'fold' | 'plane' | 'boat'
-  // 'auto' (browser) | 'en' | 'he' — drives strings + text direction.
-  // English, not 'auto': the product is English-first, and 'auto' meant a
-  // Hebrew-locale machine opened in Hebrew with no warning. 'auto' is still
-  // selectable in Settings for anyone who wants it. Note the sanitiser below
-  // falls back to 'en' as well, so this moves any stored profile that never
-  // wrote a `language` key — not only fresh installs.
-  language: 'en',
+  // 'auto' (browser language: Hebrew on a he browser, else English) | 'en' | 'he' —
+  // drives strings + text direction. First-run testers on Hebrew phones were
+  // dropped into English with the switch buried in Settings, so a fresh profile
+  // follows the browser. An explicit pick in Settings (or the pair screen's
+  // toggle) always wins.
+  language: 'auto',
 };
 
 export const EMPTY_TICKET_FILTERS = {
@@ -97,6 +101,7 @@ function sanitizeSessionOptions(o) {
     skill: typeof p.skill === 'string' ? p.skill : '',
     model: typeof p.model === 'string' ? p.model : '',
     effort: typeof p.effort === 'string' ? p.effort : '',
+    ...(typeof p.folderName === 'string' && p.folderName.trim() ? { folderName: p.folderName.trim() } : {}),
   };
 }
 
@@ -140,12 +145,32 @@ function sanitizeOverrides(o) {
   return out;
 }
 
+// The OS colour scheme: 'light' only when the browser says so, else 'dark'
+// (no signal, SSR/tests → the brand default).
+export function systemTheme() {
+  try {
+    if (typeof window !== 'undefined' && window.matchMedia?.('(prefers-color-scheme: light)').matches) return 'light';
+  } catch {
+    /* no matchMedia */
+  }
+  return 'dark';
+}
+
+// A store written before `themeMode` existed carries an explicit light/dark —
+// that stays an explicit choice. A fresh store (nothing saved) follows the system.
+export function resolveThemeMode(p) {
+  if (['system', 'light', 'dark'].includes(p.themeMode)) return p.themeMode;
+  return p.theme === 'light' || p.theme === 'dark' ? p.theme : 'system';
+}
+
 function sanitize(raw) {
   const p = raw && typeof raw === 'object' ? raw : {};
+  const themeMode = resolveThemeMode(p);
   return {
-    theme: p.theme === 'light' ? 'light' : 'dark',
-    termTheme: p.termTheme === 'light' ? 'light' : 'dark',
-    termFontSize: clamp(p.termFontSize, PREF_LIMITS.font[0], PREF_LIMITS.font[1], DEFAULTS.termFontSize),
+    themeMode,
+    theme: themeMode === 'system' ? systemTheme() : themeMode,
+    termTheme: p.termTheme === 'light' || p.termTheme === 'dark' ? p.termTheme : 'auto',
+    chatTextSize: migrateChatText(p),
     termDir: ['auto', 'ltr', 'rtl'].includes(p.termDir) ? p.termDir : DEFAULTS.termDir,
     railWidth: clamp(p.railWidth, PREF_LIMITS.rail[0], PREF_LIMITS.rail[1], DEFAULTS.railWidth),
     uiScale: isUiScale(p.uiScale) ? p.uiScale : DEFAULTS.uiScale,
@@ -155,12 +180,15 @@ function sanitize(raw) {
     voiceMode: ['hold', 'toggle'].includes(p.voiceMode) ? p.voiceMode : DEFAULTS.voiceMode,
     voiceLang: sanitizeVoiceLang(p.voiceLang ?? p.voiceLanguage), // `voiceLanguage` = pre-VOICE1 name of the same pref
     voiceHotkey: typeof p.voiceHotkey === 'string' && p.voiceHotkey ? p.voiceHotkey : DEFAULTS.voiceHotkey,
+    voiceReadAloud: p.voiceReadAloud === true,
+    voiceBrowserTts: p.voiceBrowserTts === true,
     ticketPresets: sanitizePresets(p.ticketPresets),
     ticketDefaultPresetId: typeof p.ticketDefaultPresetId === 'string' ? p.ticketDefaultPresetId : '',
     sessionPresets: sanitizeSessionPresets(p.sessionPresets),
     sessionDefaultPresetId: typeof p.sessionDefaultPresetId === 'string' ? p.sessionDefaultPresetId : '',
     sessionDefaultPresetByMode: sanitizeByMode(p.sessionDefaultPresetByMode),
     autonomyWarningDismissed: p.autonomyWarningDismissed === true,
+    launcherPermissionMode: ['default', 'acceptEdits', 'plan', 'bypassPermissions'].includes(p.launcherPermissionMode) ? p.launcherPermissionMode : '',
     usageExpanded: p.usageExpanded === true,
     accent: /^#[0-9a-fA-F]{6}$/.test(p.accent) ? p.accent : '',
     // No UI exposes a logo picker (Appearance.jsx keeps it out — SETTINGS-IA
@@ -171,7 +199,7 @@ function sanitize(raw) {
     // old localStorage. Once a picker ships, go back to
     // `isLogoId(p.logo) ? p.logo : DEFAULT_LOGO` to respect a real choice.
     logo: DEFAULT_LOGO,
-    language: p.language === 'auto' || isLangId(p.language) ? p.language : 'en',
+    language: p.language === 'auto' || isLangId(p.language) ? p.language : 'auto',
   };
 }
 
@@ -205,6 +233,7 @@ function applyBranding() {
   if (state.accent) root.style.setProperty('--color-brand', state.accent);
   else root.style.removeProperty('--color-brand');
   root.style.setProperty('--ui-scale', String(UI_SCALES[state.uiScale] || 1));
+  root.style.setProperty('--chat-scale', String(chatScale(state.chatTextSize)));
   root.setAttribute('dir', langDir(state.language));
   root.setAttribute('lang', resolveLang(state.language));
   const link = document.querySelector("link[rel='icon']");
@@ -214,6 +243,24 @@ function applyBranding() {
 }
 applyTheme(); // set before first paint
 applyBranding();
+
+// Follow the OS while themeMode is 'system' (a phone that switches at sunset).
+if (HAS_DOM && typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
+  try {
+    const mq = window.matchMedia('(prefers-color-scheme: light)');
+    const onChange = () => {
+      if (state.themeMode !== 'system') return;
+      const next = systemTheme();
+      if (next === state.theme) return;
+      state = { ...state, theme: next };
+      applyTheme();
+      for (const fn of listeners) fn();
+    };
+    mq.addEventListener?.('change', onChange);
+  } catch {
+    /* old browsers */
+  }
+}
 
 export function subscribe(fn) {
   listeners.add(fn);
@@ -234,6 +281,9 @@ export const getPrefs = () => state;
 export const currentTheme = () => (state.theme === 'light' ? 'light' : 'dark');
 
 export function setPrefs(patch) {
+  // An explicit `theme: 'light'|'dark'` (settings, palette toggle, extension
+  // bridge) is a choice: it becomes the mode. 'system' goes through themeMode.
+  if (patch && (patch.theme === 'light' || patch.theme === 'dark') && !('themeMode' in patch)) patch = { ...patch, themeMode: patch.theme };
   state = sanitize({ ...state, ...patch });
   try {
     localStorage.setItem(KEY, JSON.stringify(state));
@@ -255,7 +305,7 @@ export function termViewFrom(prefs, sessionId) {
   const ov = (prefs.termOverrides && prefs.termOverrides[sessionId]) || {};
   return {
     dir: ov.dir || prefs.termDir,
-    theme: ov.theme || prefs.termTheme,
+    theme: ov.theme || (prefs.termTheme === 'light' || prefs.termTheme === 'dark' ? prefs.termTheme : prefs.theme === 'light' ? 'light' : 'dark'),
   };
 }
 

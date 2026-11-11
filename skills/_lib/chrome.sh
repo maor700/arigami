@@ -4,7 +4,7 @@
 # Why not just launch google-chrome yourself: every session gets its own
 # Xvfb+VNC desktop, allocated lazily on first use, and its own
 # <ARIGAMI_DIR>/chrome-sessions/<id> profile — empty for a plain session (logins
-# arrive one site at a time through request_login), seeded from the agent's own
+# arrive one site at a time through sign_in), seeded from the agent's own
 # profile for an agent session. (A shared --user-data-dir can't work — Chrome locks
 # the profile, so two sessions running Chrome at once would collide.) This
 # helper asks the host to do both, then hands back the DISPLAY it ran on.
@@ -14,7 +14,7 @@
 #   skills/_lib/chrome.sh --sync    AGENT sessions: sync into the agent's own
 #                                    profile now. A plain session gets an error:
 #                                    its logins reach the human's browser only via
-#                                    save_login, one site, with their approval.
+#                                    sign_in, one site, with their approval.
 #
 # Binary + container flags are decided host-side (server/lib/chrome.ts):
 # CHROME_BIN picks google-chrome/chromium, and when /.dockerenv exists (or

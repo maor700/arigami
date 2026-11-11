@@ -37,15 +37,15 @@ beforeAll(async () => {
   SettingsMod = await import(web('components/Settings.jsx'));
 });
 
-test('defaults: mint app accent, dark chrome, 16px chat font, medium UI size, star mark', () => {
+test('defaults: mint app accent, dark chrome, 15px chat text, medium UI size, star mark', () => {
   expect(logos.DEFAULT_ACCENT).toBe('#6eceb7');
   expect(logos.DEFAULT_LOGO).toBe('star');
   const p = prefs.getPrefs();
   expect(p.theme).toBe('dark');
-  expect(p.termFontSize).toBe(16);
+  expect(p.chatTextSize).toBe(15);
   expect(p.uiScale).toBe('medium');
   expect(p.logo).toBe('star');
-  expect(prefs.PREF_LIMITS.font).toEqual([10, 24]);
+  expect(prefs.PREF_LIMITS.chat).toEqual([12, 20]);
 });
 
 test('sanitize: uiScale accepts only small/medium/large; font size clamps into the new range', () => {
@@ -55,9 +55,9 @@ test('sanitize: uiScale accepts only small/medium/large; font size clamps into t
   expect(prefs.getPrefs().uiScale).toBe('large');
   expect(prefs.UI_SCALES.large).toBeGreaterThan(prefs.UI_SCALES.medium);
   expect(prefs.UI_SCALES.small).toBeLessThan(prefs.UI_SCALES.medium);
-  prefs.setPrefs({ termFontSize: 99 });
-  expect(prefs.getPrefs().termFontSize).toBe(24);
-  prefs.setPrefs({ uiScale: 'medium', termFontSize: 16 });
+  prefs.setPrefs({ chatTextSize: 99 });
+  expect(prefs.getPrefs().chatTextSize).toBe(20);
+  prefs.setPrefs({ uiScale: 'medium', chatTextSize: 15 });
 });
 
 test('favicon svg: mint facets shaded darker (no translucent facets), star by default', () => {

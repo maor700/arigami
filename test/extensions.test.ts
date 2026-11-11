@@ -9,11 +9,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { runInChild } from './_child.js';
+import { tmpDir } from './_tmp.js';
 
 const REPO = path.resolve(import.meta.dir, '..');
 const HELLO = path.join(REPO, 'examples', 'extensions', 'hello');
 
-const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-ext-'));
+const tmp = () => tmpDir('arigami-ext-');
 const env = (dir: string) => ({
   ARIGAMI_DIR: dir,
   ARIGAMI_PORT: '',

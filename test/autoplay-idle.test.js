@@ -16,8 +16,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { runInChild } from './_child.js';
+import { tmpDir } from './_tmp.js';
 
-const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-autoplay-'));
+const tmp = () => tmpDir('arigami-autoplay-');
 
 // Boilerplate for every child: isolated state, a recording auto-player, and a
 // sleep long enough for the 800 ms settle delay to fire.

@@ -63,7 +63,7 @@ function DelegatedLineView({ props: { event } }) {
   return (
     <ReceiptLine data-delegated-line={a.slug} data-delegated-how={how}>
       <AgentAvatar agent={a} size={14} />
-      <span className="font-bold">{label}</span>
+      <span className="font-medium">{label}</span>
       {event.delivered === 'queued' && <span className="text-[var(--term-accent-dim)]">· {t('chat.delegatedQueued')}</span>}
       {event.text && <span dir="auto" className="min-w-0 flex-1 truncate">{event.text}</span>}
       {(home ? !!a.slug : !!event.target) && (
@@ -102,7 +102,7 @@ function AgentAdoptLineView({ props: { event, sessionId } }) {
   return (
     <ReceiptLine data-agent-adopt={a.slug || ''} data-agent-adopt-reverted={reverted || undefined}>
       {a.slug && <AgentAvatar agent={a} size={14} />}
-      <span className="font-bold">{reverted ? t('chat.agentAdoptReverted') : t('chat.agentAdopted', { name: a.name || a.slug })}</span>
+      <span className="font-medium">{reverted ? t('chat.agentAdoptReverted') : t('chat.agentAdopted', { name: a.name || a.slug })}</span>
       {!reverted && <span className="text-[var(--term-accent-dim)]">{t('chat.agentAdoptedHint')}</span>}
       {!reverted && (
         <Btn variant="tag" className="ms-auto" data-agent-adopt-revert onClick={revert}>

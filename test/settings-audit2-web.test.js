@@ -90,22 +90,23 @@ test('the nav is the settings pages; voice/automation are aliases onto General',
   expect(SettingsMod.resolveCategory('bogus')).toEqual({ cat: 'appearance', section: '' });
 });
 
-test('General: 4 fields on the page while voice is off; accent/terminal/voice/heartbeat/telemetry are in the closed drawer', () => {
+test('General: the Appearance block (theme, chat theme, language, sizes, accent) is on the page while voice is off; terminal/voice/heartbeat/telemetry are in the closed drawer', () => {
   prefs.setPrefs({ language: 'en' });
   const html = render(h(General, { voiceEnabled: false, recording: false, setRecording: () => {} }));
   const top = beforeDrawer(html);
   expect(top).toContain('Theme');
   expect(top).toContain('Language');
-  expect(top).toContain('Chat font size');
+  expect(top).toContain('Chat text size');
   expect(top).toContain('UI size');
-  expect(top).not.toContain('Accent');
+  expect(top).toContain('Accent');
+  expect(top).toContain('Chat theme');
+  expect(top).toContain('Text direction');
   expect(top).not.toContain('Record hotkey');
   expect(top).not.toContain('Heartbeat');
   expect(drawerOpen(html)).toBe(false);
   expect(html).toContain('Advanced');
   expect(html).toContain('data-voice-off');
   expect(html).toContain('Accent');
-  expect(html).toContain('Terminal theme');
   expect(html).toContain('Microphone');
   expect(html).toContain('anonymous usage milestones');
   // The payload preview / anonymous id rows are gone from the UI.
@@ -141,12 +142,13 @@ test('Connections: one connected list (native + Composio + WhatsApp + Tailscale)
   expect(html).toContain('Recent connections');
   // Deep-linking to the old catalog sections opens the picker instead.
   const picker = render(h(Connections, { section: 'mcp' }));
-  expect(picker).toContain('data-add-connection');
-  expect(picker).toContain('Search services');
+  // The picker is a Radix Dialog (portaled, so absent from SSR output); its body is covered below.
+  expect(picker).toContain('data-add-connection-btn');
+  expect(picker).not.toContain('Search services');
 });
 
 test('Connections rows: provider is a hover title, not a heading', async () => {
-  const { default: AddConnection } = await import(web('components/settings/AddConnection.jsx'));
+  const { AddConnectionPanel: AddConnection } = await import(web('components/settings/AddConnection.jsx')); // the dialog body (Radix portals do not SSR)
   // The picker: unconnected native rows + FEATURED Composio only (not the 150-card catalog) until you type.
   const html = render(h(AddConnection, { mcpCaps: CAPS.capabilities.filter((c) => c.provider === 'native-mcp'), composio: TOOLKITS, whatsappCap: { id: 'whatsapp', ok: false }, onPick: () => {}, onClose: () => {} }));
   expect(html).toContain('data-add-item="mcp:notion"');

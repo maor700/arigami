@@ -19,6 +19,21 @@ import path from 'node:path';
  * the same tools, the same calls back to the REST API with the same session
  * token, without a process per session.
  */
+/**
+ * A tool result becomes MCP content. A result carrying `__image` ({data: base64, mimeType}) is returned as a
+ * real IMAGE block (the model sees it) followed by the rest as JSON text; anything else is JSON text as before.
+ */
+export function toMcpContent(result) {
+  if (result && typeof result === 'object' && result.__image?.data) {
+    const { __image, ...rest } = result;
+    return [
+      { type: 'image', data: __image.data, mimeType: __image.mimeType || 'image/png' },
+      { type: 'text', text: JSON.stringify(rest) },
+    ];
+  }
+  return [{ type: 'text', text: JSON.stringify(result ?? { ok: true }) }];
+}
+
 export async function createArigamiServer(env = process.env) {
   // INTERNAL base for host→self fetches only. NEVER put HOST into a value the
   // agent might echo to a human — results carry host-relative paths instead
@@ -84,6 +99,12 @@ export async function createArigamiServer(env = process.env) {
   const OPENUI_SIGNATURES = (OPENUI_HELP.match(/## Components\n\n([\s\S]*?)\n\n## /) || [])[1] || '';
 
   const SID_PROP = { session_id: { type: 'string', description: 'Host session id (defaults to ARIGAMI_SESSION_ID env)' } };
+  const SHARED_PROP = {
+    shared: {
+      type: 'boolean',
+      description: "true = the SHARED desktop (the owner's own screen, with their real browser) instead of this session's own. Needs the lease: shared_desktop_acquire first.",
+    },
+  };
   const obj = (properties, required = []) => ({ type: 'object', properties, required, additionalProperties: false });
 
   const TOOLS = [
@@ -108,7 +129,7 @@ export async function createArigamiServer(env = process.env) {
         skill: { type: 'string', description: 'Name of a bundled skill (from GET /__api/skills) for the session to run, e.g. for ticket work' },
         engine: { type: 'string', enum: ['claude', 'codex'], description: 'Which agent-engine CLI drives the new session. Default: the `agent`\'s engine, else (with `kind`) your own engine, else the host default engine.' },
         model: { type: 'string', description: 'Model value for the chosen `engine` (claude: a `--model` alias or full id; codex: e.g. gpt-5.6-terra); omit for that engine\'s default' },
-        effort: { type: 'string', enum: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'], description: 'Reasoning effort. claude: `--effort` (low…max). codex: the `model_reasoning_effort` config key, and its ladder is per-model — gpt-5.6-terra adds `ultra`, gpt-5.5 stops at `xhigh`. Omit for the model\'s own default.' },
+        effort: { type: 'string', description: 'Reasoning effort (low | medium | high | xhigh | max, plus whatever the model adds). claude: `--effort` (low…max). codex: the `model_reasoning_effort` config key, and its ladder is per-model — gpt-5.6-terra adds `ultra`, gpt-5.5 stops at `xhigh`. Omit for the model\'s own default.' },
         permission_mode: { type: 'string', enum: ['default', 'acceptEdits', 'plan', 'bypassPermissions'] },
         metadata: { type: 'object' },
         kind: { type: 'string', enum: ['mutating', 'readonly', 'full'], description: 'Spawn as your child: thin dispatch worker (mutating/readonly) or full regular session (full)' },
@@ -119,6 +140,7 @@ export async function createArigamiServer(env = process.env) {
         needs_server: { type: 'boolean', description: 'Worker needs a dev server — host allocates a free port from the pool into metadata.port and passes it to the worker as $PORT' },
         needs_screen: { type: 'boolean', description: 'Session will drive a browser/machine — host allocates a per-session desktop (Xvfb+VNC) up front instead of lazily on the first request_screen/capture_screen/browser open' },
         agent: { type: 'string', description: 'Slug of an agent (see list_agents) the session is born from: it inherits the agent\'s engine and default model (unless `engine` / `model` are given), persona (system prompt), referenced skills, memory namespace and rail emoji/color, and carries metadata.agent. Unknown slug → error.' },
+        folder_name: { type: 'string', description: 'Project folder name (trimmed, exact match); creates it if missing. folder_id takes precedence. Dispatch children inherit their master folder.' },
         folder_id: { type: 'string', description: 'Project-folder rail id to place the new session in at creation time (same effect as dragging it into that folder afterward). Works regardless of which other fields are set — an unknown id is silently ignored (session lands at root). Not needed for `kind` dispatch: that already places the child in your own project folder.' },
       }),
       run: async (a) => {
@@ -128,6 +150,7 @@ export async function createArigamiServer(env = process.env) {
           permissionMode: a.permission_mode, metadata: a.metadata,
           ...(a.agent ? { agent: a.agent } : {}),
           ...(a.folder_id ? { folderId: a.folder_id } : {}),
+          ...(a.folder_name ? { folderName: a.folder_name } : {}),
         };
         if (a.needs_screen) body.needsScreen = true;
         // Dispatch: forward the caller as the worker's master + the worker spec.
@@ -156,7 +179,7 @@ export async function createArigamiServer(env = process.env) {
       name: 'merge_session',
       description:
         'Merge an APPROVED child branch into its base — executed by the HOST (git merge in the base checkout), not by any agent turn. ' +
-        'Rules: the child never merges; the HUMAN approves (review verdict approve / ✓ Verified stamps metadata.review.state="approved"); ' +
+        'Rules: the child never merges; the HUMAN approves (Approve — on the review card or in the Changes tab, one action — stamps metadata.review.state="approved"); ' +
         'after that the merge is one click for the human or this one call for you (the child\'s master/controller). ' +
         'Refused (409) if not approved, the base checkout is dirty, or the base branch is not checked out; on a conflict the merge is ' +
         'aborted and you get {conflict:true, files:[…]} (plus a chat line) — resolve with the human, never force. ' +
@@ -268,6 +291,8 @@ export async function createArigamiServer(env = process.env) {
         id: { type: 'string', description: 'Cron job id — required for pause/resume/run/remove' },
         name: { type: 'string', description: 'create: short label shown in the Triggers UI' },
         prompt: { type: 'string', description: 'create: the message the job sends (first message for isolated, task text for existing)' },
+        folder_name: { type: 'string', description: 'Project folder name for isolated runs (trimmed, exact match); creates it on launch if missing. folder_id takes precedence. Existing-session delivery keeps its folder.' },
+        folder_id: { type: 'string', description: 'Project folder id for isolated runs; takes precedence over folder_name.' },
         schedule_kind: { type: 'string', enum: ['cron', 'interval', 'at'], description: 'create: required' },
         schedule_value: { type: 'string', description: 'create: e.g. "0 9 * * 1-5" (cron), "30m" (interval), or an ISO timestamp (at). Required.' },
         session_mode: { type: 'string', enum: ['isolated', 'existing'], description: 'create: default "isolated"' },
@@ -298,6 +323,8 @@ export async function createArigamiServer(env = process.env) {
             autonomous: a.autonomous,
             ...(a.agent !== undefined ? { agent: a.agent } : {}),
             ...(a.engine ? { engine: a.engine } : {}),
+            folderId: a.folder_id,
+            folderName: a.folder_name,
             createdBySessionId: sid(a),
           });
         }
@@ -650,7 +677,7 @@ export async function createArigamiServer(env = process.env) {
         'Show an action bar with buttons in the session UI. Answers come ONLY from a human click (delivered as a user message). ' +
         'Sends a push notification to the human\'s phone, so use it for real decisions, not status updates (use set_status_summary / set_progress for those). ' +
         'Best practice: one short question in `prompt` (what you need decided and why, ≤200 chars — that is the notification body), 2–4 buttons with clear labels, ' +
-        'and stop working until the answer arrives. Do NOT use it for things the human has to DO on the machine (login, 2FA, CAPTCHA, payment) — that is request_screen.',
+        'and stop working until the answer arrives. Do NOT use it for things the human has to DO: signing in anywhere is sign_in; CAPTCHA, payment, a push approval is request_screen.',
       inputSchema: obj({
         prompt: { type: 'string' },
         buttons: {
@@ -664,16 +691,17 @@ export async function createArigamiServer(env = process.env) {
     },
     {
       name: 'request_review',
-      description: 'Sugar: set status to "In Review" and show a review action bar (Request changes / Verified).',
+      description: 'Sugar: set status to "In Review" and show a review card (Request changes / Approve). Approve is the one approval action (same as the Changes tab\'s): for your own work it stamps metadata.review.state="approved" (a child branch then becomes mergeable by the host); for someone else\'s PR it posts an APPROVE review. Already approved and unchanged → the card shows Approved. The answer arrives as a message.',
       inputSchema: obj({ summary: { type: 'string' }, ...SID_PROP }),
       run: async (a) => {
         const id = sid(a);
         await api('PATCH', `/__api/sessions/${id}`, { status: 'In Review' });
         return api('POST', `/__api/sessions/${id}/action`, {
           prompt: a.summary || 'The agent finished — review the changes',
+          kind: 'review',
           buttons: [
             { label: 'Request changes', value: 'request-changes' },
-            { label: '✓ Verified', value: 'verified', style: 'primary' },
+            { label: 'Approve', value: 'approve', style: 'primary' },
           ],
         });
       },
@@ -684,13 +712,13 @@ export async function createArigamiServer(env = process.env) {
         'Arm a deterministic poller for an external event this session is waiting on, so you can stop working and be woken when something happens — instead of polling yourself. ' +
         'type "github-pr" — watches a pull request and wakes this session (with a thin pointer; you then re-fetch and decide) on new reviews/comments/approval, CI failures, merge conflicts, and once when it is merged/closed. ' +
         'PR target: pass a github PR url, or owner+repo+number; if you omit both, it infers the PR for the current branch in the session worktree. ' +
-        'PR fire_on (default ["new_review","new_comment","ci_failed","conflicts"]): any of new_review | approved | changes_requested | new_comment | ci_failed (a check-run/status turned red — fires once per check per push) | ci_passed (ALL checks green — once per push) | conflicts (PR became unmergeable — once until resolved). ' +
+        'PR fire_on (default ["new_review","new_comment","ci_failed","conflicts"]): any of new_review | approved | changes_requested | new_comment | ci_failed (a check-run/status turned red — fires once per check per push) | ci_passed (ALL checks green — once per push) | conflicts (PR became unmergeable — once until resolved) | new_push (new commits on the PR head — once per head; for review sessions). Reviews/comments by the GitHub user this host is signed in as are ignored — on a PR you review, the author\'s replies still wake you. ' +
         'type "linear-issue" — watches a Linear ticket and wakes this session when someone comments on it (or, opted-in, when its status/assignee changes), and once when it is completed/canceled. ' +
         'Issue target: pass issue_id (the ENG-XXXX identifier or the UUID). ' +
         'Linear fire_on (default ["new_comment"]): any of new_comment | status_changed | assignee_changed. Comments authored by this session\'s own Linear user are ignored. ' +
         'type "slack" — watches a Slack channel/DM (or a single thread) and wakes this session on new messages. ' +
         'Slack target: pass channel_id (a channel/DM id like C0123ABCD / D0123ABCD), optionally thread_ts to watch one thread, or a Slack message url. Requires a Slack user token connected in the host settings. ' +
-        'Slack fire_on (default ["new_message"]): any of new_message | mention (a message that @-mentions you) | reply (a threaded reply). Messages authored by your own Slack user are ignored. ' +
+        'Slack fire_on (default ["new_message"]): any of new_message | mention (a message that @-mentions you) | reply (a threaded reply). Messages authored by your own Slack user are ignored — pass ignore_user_id to self-filter a DIFFERENT identity instead (e.g. when a separate bot token does the actual posting and the connected user token is a human\'s, so "your own Slack user" would otherwise wrongly mean that human). ' +
         'type "host-load" — watches THIS MACHINE and wakes this session when it calms down. This is how you PAUSE instead of making a loaded box worse: call host_resources, see "critical", register this, and stop. '
         + 'until: "ok" (default, comfortable) | "not-critical" (just out of the red); for_sec: how long it must HOLD before waking you (default 60 — load is spiky and a one-sample dip is not a free machine); interval_sec: min 15. '
         + 'The wake-up carries the heaviest processes, so you can see what had been eating it. No target required. '
@@ -717,7 +745,8 @@ export async function createArigamiServer(env = process.env) {
         issue_id: { type: 'string', description: 'Linear issue identifier (ENG-1234) or UUID — for type linear-issue' },
         channel_id: { type: 'string', description: 'Slack channel/DM id (C…/D…/G…) — for type slack' },
         thread_ts: { type: 'string', description: 'Slack thread ts to watch a single thread — for type slack' },
-        fire_on: { type: 'array', items: { type: 'string', enum: ['new_review', 'approved', 'changes_requested', 'new_comment', 'ci_failed', 'ci_passed', 'conflicts', 'status_changed', 'assignee_changed', 'new_message', 'mention', 'reply', 'new_sms', 'host_clear'] } },
+        ignore_user_id: { type: 'string', description: 'Slack user id to self-filter instead of the connected token\'s own user — for type slack. Use when a different identity (e.g. a bot token) does the actual posting.' },
+        fire_on: { type: 'array', items: { type: 'string', enum: ['new_review', 'approved', 'changes_requested', 'new_comment', 'ci_failed', 'ci_passed', 'conflicts', 'new_push', 'status_changed', 'assignee_changed', 'new_message', 'mention', 'reply', 'new_sms', 'host_clear'] } },
         until: { type: 'string', enum: ['ok', 'not-critical'], description: 'host-load: how calm is calm enough (default "ok")' },
         for_sec: { type: 'number', description: 'host-load: how long the bar must hold before waking you (default 60)' },
         group_jid: { type: 'string', description: 'WhatsApp group JID to track (e.g. "120363000000000000@g.us") — for type whatsapp. Omit for personal messages only.' },
@@ -726,13 +755,15 @@ export async function createArigamiServer(env = process.env) {
         from_filter: { type: 'string', description: 'SMS sender filter — partial match on phone number (for type sms)' },
         ttl_days: { type: 'number', description: 'Auto-stop after this many days (default 7)' },
         interval_sec: { type: 'number', description: 'Poll interval seconds (default 10 for whatsapp, 30 for others)' },
+        folder_name: { type: 'string', description: 'Place the session this listener wakes in this project folder, creating it if missing. Listeners wake their existing session; they do not spawn one.' },
+        folder_id: { type: 'string', description: 'Place the listener session in this project folder id; wins over folder_name.' },
         ...SID_PROP,
       }),
       // Extension types take their own arguments (declared in the provider's
       // schema), so anything the caller passed that isn't a core field rides along.
       run: (a) => {
         const { session_id, ...rest } = a || {};
-        return api('POST', `/__api/sessions/${sid(a)}/listeners`, { ...rest, type: a.type || 'github-pr' });
+        return api('POST', `/__api/sessions/${sid(a)}/listeners`, { ...rest, folderId: a.folder_id, folderName: a.folder_name, type: a.type || 'github-pr' });
       },
     },
     {
@@ -750,14 +781,14 @@ export async function createArigamiServer(env = process.env) {
     {
       name: 'request_screen',
       description:
-        'Hand the shared desktop over to the human for a step only they can do — manual login, 2FA / OTP code, CAPTCHA, payment, an interactive installer. ' +
+        'Hand the shared desktop over to the human for a step only their hands can do — CAPTCHA, payment, a push/app approval, an interactive installer, or an installer. Signing in to a site is sign_in, not this (inside it, a CAPTCHA / push is sign_in({site, human})). ' +
         'Shows a live embedded view in the chat with a "Take over" / "Done" control and pushes a notification to the human\'s phone. ' +
         'BLOCKS until they click Done (or ~30 min timeout); the response may include a short note about what they did. ' +
         'Best practice (see the machine-work skill): (1) call capture_screen right before, so the human sees where you are; ' +
         '(2) `prompt` = one sentence on what you were trying to do and where you got stuck; (3) set `reason` to the closest category — it drives the notification title; ' +
         '(4) `hint` = exactly what the human should do and what "done" looks like (e.g. "enter the SMS code and wait for the dashboard, then click Done"); ' +
         '(5) after it returns, verify the state yourself (re-read the page / capture_screen) before continuing — do not assume it worked; ' +
-        '(6) never ask for passwords or codes in chat — let the human type them on the machine. ' +
+        '(6) never ask for passwords or codes in chat. Signing in (username / password / one-time code) is NOT this tool: call sign_in. ' +
         'Opens in Watch (view-only) mode; the human can click "Take over" to drive the machine, then "Done". Returns {takenOver: boolean, note?: string} — takenOver=true means the human actually intervened. ' +
         'Do not call it for questions or decisions — use request_action for those.',
       inputSchema: obj(
@@ -765,6 +796,7 @@ export async function createArigamiServer(env = process.env) {
           prompt: { type: 'string', description: 'What you were doing and why you need the human (shown in the card and the push).' },
           reason: { type: 'string', enum: ['login', '2fa', 'captcha', 'payment', 'other'], description: 'Why the human is needed. Drives the card label and push title.' },
           hint: { type: 'string', description: 'Exactly what to do and what "done" looks like.' },
+          shared: { type: 'boolean', description: 'The step is on the SHARED desktop (the owner\'s screen). Automatic while you hold it: your lease is parked until the human answers, then you get it back first.' },
           ...SID_PROP,
         },
         ['prompt']
@@ -775,17 +807,18 @@ export async function createArigamiServer(env = process.env) {
           prompt: a.prompt,
           ...(a.reason ? { reason: a.reason } : {}),
           ...(a.hint ? { hint: a.hint } : {}),
+          ...(a.shared === true ? { shared: true } : {}),
         }),
     },
     {
       name: 'request_setup',
       description:
         'Ask for a capability this host does not have yet (JIT setup) — call it whenever a tool answers {needs_setup:"<capability>", why, hint}. ' +
-        'Capability ids: identity (Google login in Chrome) · claude (Claude account) · codex (ChatGPT login / OpenAI key) — the engine logins, each only for sessions on that engine · git (gh/PAT) · repo:<name> · whatsapp · composio:<toolkit> (gmail/googledrive/googlecalendar/slack/linear/notion…) · desktop · push · remote (tailscale) · telemetry. ' +
+        'Capability ids: identity (Google login in Chrome) · claude (Claude account) · codex (ChatGPT login / OpenAI key) — the engine logins, each only for sessions on that engine · git (gh/PAT) · repo:<name> · whatsapp · composio:<toolkit> (gmail/googledrive/googlecalendar/slack/linear/notion…) · desktop · push · remote (tailscale) · telemetry · voice:<openai|elevenlabs|cartesia|deepgram> / telephony:twilio (voice & phone keys). ' +
         'The host posts a Setup card in the chat (with a QR / token field / OAuth button / Auto-Manual switch as appropriate) and pushes "the agent needs <capability>" to the human\'s phone. ' +
         'mode: omit to let the host pick — "auto" when a Google identity is connected and the capability is auto-capable, else "manual". ' +
         'ALWAYS BLOCKS (≤15 min) until the human acts on the card: connects it manually → {state:"done"}, clicks "Not now" → {state:"skipped"}, nobody → {state:"timeout"}, or clicks "Connect automatically" (consent) → {state:"auto", id, playbook}. `mode` only PRESELECTS the card switch — there is never auto without that click. On "skipped"/"timeout" offer an alternative, never nag. ' +
-        'AUTO: YOU then run the named playbook skill (connect-<provider>, machine-work rules: never type passwords/2FA yourself, request_screen for those, ≤2 attempts, one final screenshot as evidence), narrate with report_setup({capability, line}) and finish with report_setup({capability, ok}). ' +
+        'AUTO: YOU then run the named playbook skill (connect-<provider>, machine-work rules: never type passwords/2FA yourself — a sign-in is sign_in, CAPTCHA / push approval is request_screen — ≤2 attempts, one final screenshot as evidence), narrate with report_setup({capability, line}) and finish with report_setup({capability, ok}). ' +
         'If the capability is already connected you get {state:"done", already:true} at once (one audit line is still written). why: one short clause the card shows ("read your inbox"); defaults to the capability title.',
       inputSchema: obj(
         {
@@ -837,13 +870,41 @@ export async function createArigamiServer(env = process.env) {
       name: 'whatsapp',
       description:
         'Read or send WhatsApp on the human\'s own account (linked-device bridge on the host). ' +
-        'tool: list_chats | list_messages | search_contacts | search_messages | get_chat | get_message_context | get_recent_messages | send_message; ' +
-        'args: that tool\'s arguments (e.g. list_chats {limit, query}; list_messages {chat_jid, limit}; search_contacts {query}; send_message {recipient, message}). ' +
+        'tool: list_chats | list_messages | search_contacts | search_messages | get_chat | get_message_context | get_recent_messages | download_media | send_message; ' +
+        'args: that tool\'s arguments (e.g. list_chats {limit, query}; list_messages {chat_jid, limit}; search_contacts {query}; download_media {chat_jid, message_id} returns a local file path (50 MiB limit); send_message {recipient, message}). ' +
         'If WhatsApp is not connected yet the result is {needs_setup:"whatsapp", why, hint} — do NOT say you have no access: call request_setup({capability:"whatsapp", why}) so the human gets the QR card in the chat, then retry. ' +
         'send_message is NOT sent by this call: the owner gets a card with the recipient and your exact text, and the host sends it only if they press Send — you get {pending:true}; stop and wait for the "[host] …" message. Write the message exactly as it should go out. ' +
         'Returns {ok:true, result} (the MCP content blocks) or {ok:false, error}.',
       inputSchema: obj({ tool: { type: 'string' }, args: { type: 'object', additionalProperties: true }, why: { type: 'string', description: 'What you need it for — shown on the setup card' }, ...SID_PROP }, ['tool']),
       run: (a) => api('POST', '/__api/whatsapp/tool', { tool: a.tool, args: a.args || {}, why: a.why }),
+    },
+    {
+      name: 'call_contact',
+      description:
+        'Phone ANOTHER person for the owner (stage 4a): files a card with the recipient, goal, the brief the voice caller will follow, caller ID and cost — NOTHING dials until the owner presses Send. ' +
+        'to = a WhatsApp contact name or a phone number (+… international; a local number only when Settings has a default country code); never guess a number — if the result says it is unknown or ambiguous, ask the owner. ' +
+        'The caller introduces itself as the owner\'s digital assistant, follows only the brief, can take notes, ask the owner (≤60 s) or transfer to them, and leaves a voicemail per settings. ' +
+        'Refusals (quiet hours/Shabbat, daily cap, budget, opted out) come back as {ok:false, error} — tell the owner the reason. On success {pending:true}: stop and wait for the "[host] …" lines; the outcome, summary and transcript arrive as a card when the call ends. ' +
+        'If Twilio is not connected you get {needs_setup} — call request_setup({capability:"telephony:twilio", why}).',
+      inputSchema: obj({
+        to: { type: 'string', description: 'Contact name or phone number' },
+        goal: { type: 'string', description: 'One sentence: what the call should achieve' },
+        brief: { type: 'string', description: 'What the caller may say, ask and agree to — full sentences; it never goes beyond this' },
+        caller_id: { type: 'string', description: 'Optional: "agent" (the agent\'s Twilio number) or "owner" (the owner\'s own number, once verified); default from settings' },
+        language: { type: 'string', enum: ['he', 'en'], description: 'Optional: the call\'s language (default the voice language)' },
+        voicemail: { type: 'string', description: 'Optional: the short message to leave on an answering machine' },
+        why: { type: 'string', description: 'Shown on the card' },
+        ...SID_PROP,
+      }, ['to', 'goal', 'brief']),
+      run: (a) => api('POST', '/__api/voice/call', { to: a.to, goal: a.goal, brief: a.brief, caller_id: a.caller_id, language: a.language, voicemail: a.voicemail, why: a.why }),
+    },
+    {
+      name: 'send_sms',
+      description:
+        'Send an SMS to ANOTHER person from the agent\'s Twilio number (stage 4a): files a card with the recipient and your exact text — NOTHING is sent until the owner presses Send. ' +
+        'to = a WhatsApp contact name or a phone number; never guess a number. Refusals come back as {ok:false, error}. On success {pending:true}: stop and wait for the "[host] …" message. Replies to the number land in the "Voice calls" session and wake sms listeners.',
+      inputSchema: obj({ to: { type: 'string', description: 'Contact name or phone number' }, text: { type: 'string', description: 'The exact message' }, why: { type: 'string', description: 'Shown on the card' }, ...SID_PROP }, ['to', 'text']),
+      run: (a) => api('POST', '/__api/voice/sms', { to: a.to, text: a.text, why: a.why }),
     },
     {
       name: 'check_setup',
@@ -870,10 +931,185 @@ export async function createArigamiServer(env = process.env) {
         }
       },
     },
+    // ---- DESKTOP CONTROL — engine-neutral: any session, Claude or Codex, drives its OWN desktop ----------------
+    {
+      name: 'desktop_screenshot',
+      description:
+        'Take a FRESH screenshot of this session\'s own desktop right now and get it back as an IMAGE you can look at (also saved as a file: `file`). ' +
+        'Coordinates in the image are screen pixels — exactly what desktop_pointer takes; `width`/`height` are the screen size. ' +
+        'Look at the screen before every action that depends on it, and again after it: this tool never returns a cached frame. ' +
+        'For anything inside a browser page prefer the browser_* tools (precise, cheap); use the desktop tools for what is outside the page — other windows, menus, installers, apps. ' +
+        'Never use them to type passwords, 2FA or other secrets: signing in is sign_in (the host types vault values; you never see them).',
+      inputSchema: obj({ ...SHARED_PROP, ...SID_PROP }),
+      run: async (a) => {
+        const r = await api('POST', `/__api/sessions/${sid(a)}/desktop/screenshot`, a.shared === true ? { shared: true } : {});
+        if (r && r.ok === false) return r;
+        return {
+          __image: { data: r.png_base64, mimeType: 'image/png' },
+          ok: true, width: r.width, height: r.height, ts: r.ts, file: r.file,
+          ...(r.shared ? { shared: true } : {}),
+          coordinates: 'screen pixels, origin top-left',
+        };
+      },
+    },
+    {
+      name: 'desktop_pointer',
+      description:
+        'Move or click the mouse on this session\'s own desktop. action: move | click | double_click | right_click | middle_click | drag (from x,y to x2,y2) | scroll (at x,y by dy wheel ticks: >0 down, <0 up). ' +
+        'x/y are screen pixels from desktop_screenshot. After acting, take another desktop_screenshot to confirm it did what you meant.',
+      inputSchema: obj({
+        action: { type: 'string', enum: ['move', 'click', 'double_click', 'right_click', 'middle_click', 'drag', 'scroll'] },
+        x: { type: 'number' }, y: { type: 'number' },
+        x2: { type: 'number', description: 'drag: end x' }, y2: { type: 'number', description: 'drag: end y' },
+        dy: { type: 'number', description: 'scroll: wheel ticks, >0 down, <0 up' },
+        ...SHARED_PROP,
+        ...SID_PROP,
+      }, ['action', 'x', 'y']),
+      run: (a) => api('POST', `/__api/sessions/${sid(a)}/desktop/act`, { action: a.action, x: a.x, y: a.y, x2: a.x2, y2: a.y2, dy: a.dy, ...(a.shared === true ? { shared: true } : {}) }),
+    },
+    {
+      name: 'desktop_keyboard',
+      description:
+        'Type text (printable ASCII; `text`) or press a key / combo (`key`, e.g. Return, Tab, Escape, ctrl+l, ctrl+a, alt+F4) on this session\'s own desktop, into whatever has focus. ' +
+        'Click the target first. A sign-in field is sign_in({site, fill}) (the host types it from the vault) — but whatever the human wrote in the chat themselves (a code, a password) and asked you to enter, type it here.',
+      inputSchema: obj({
+        text: { type: 'string', description: 'Printable ASCII to type' },
+        key: { type: 'string', description: 'A key or combo like ctrl+l' },
+        from_human: { type: 'boolean', description: 'shared desktop only: this text is what the human wrote in the chat themselves and asked you to enter' },
+        ...SHARED_PROP,
+        ...SID_PROP,
+      }),
+      run: (a) => {
+        if (a.text !== undefined && a.key !== undefined) throw new Error('pass either text or key, not both');
+        if (a.text === undefined && a.key === undefined) throw new Error('pass text or key');
+        const extra = a.shared === true ? { shared: true, ...(a.from_human === true ? { from_human: true } : {}) } : {};
+        return api('POST', `/__api/sessions/${sid(a)}/desktop/act`, a.text !== undefined ? { action: 'type', text: a.text, ...extra } : { action: 'key', key: a.key, ...extra });
+      },
+    },
+    {
+      name: 'desktop_launch',
+      description:
+        'Start a program on this session\'s own desktop, detached so it keeps running after the call (a plain background shell command dies with its shell). ' +
+        '`command` is one program name or path, its arguments go in `args`. Returns the pid; stop it with desktop_quit. ' +
+        'To open a browser with a persistent profile and NO automation port: command "google-chrome", args ["--user-data-dir=<dir>", "--password-store=basic", "--no-first-run", "<url>"].',
+      inputSchema: obj({
+        command: { type: 'string' },
+        args: { type: 'array', items: { type: 'string' } },
+        ...SHARED_PROP,
+        ...SID_PROP,
+      }, ['command']),
+      run: (a) => api('POST', `/__api/sessions/${sid(a)}/desktop/launch`, { command: a.command, args: a.args || [], ...(a.shared === true ? { shared: true } : {}) }),
+    },
+    {
+      name: 'shared_desktop_acquire',
+      description:
+        "Take the SHARED desktop — the owner's own screen, with their real browser where they are signed in to Google — for one job. A sign-in does NOT start here: sign_in takes the desktop itself. " +
+        'One session at a time: {granted:true} = yours, act with the desktop_* tools and shared:true; {queued:true, position} = STOP and end your turn — the host messages you "[host] Your turn…" when it is yours (never poll, never xinput on it). ' +
+        '`site` = the site you are signing in to: only its URLs, the sign-in providers and the owner\'s account email can be typed there; no passwords, no pasting, no closing windows. ' +
+        'It goes back after 60 s without an action; request_screen parks it (others may use the screen meanwhile, you get it back first). The owner\'s own input pauses you. Release it with shared_desktop_release as soon as you are done.',
+      inputSchema: obj({
+        site: { type: 'string', description: 'The site you are signing in to, e.g. todoist.com' },
+        reason: { type: 'string', description: 'One line the owner sees in the cockpit' },
+        ...SID_PROP,
+      }, ['site']),
+      run: (a) => api('POST', `/__api/sessions/${sid(a)}/shared-desktop/acquire`, { site: a.site, reason: a.reason || '' }),
+    },
+    {
+      name: 'shared_desktop_release',
+      description: 'Give the shared desktop back (or leave its queue). Call it as soon as you are done on it — the next session is waiting.',
+      inputSchema: obj({ ...SID_PROP }),
+      run: (a) => api('POST', `/__api/sessions/${sid(a)}/shared-desktop/release`, {}),
+    },
+    {
+      name: 'desktop_quit',
+      description: 'Stop a program you started with desktop_launch (by pid).',
+      inputSchema: obj({ pid: { type: 'number' }, ...SID_PROP }, ['pid']),
+      run: (a) => api('POST', `/__api/sessions/${sid(a)}/desktop/quit`, { pid: a.pid }),
+    },
+    {
+      name: 'sign_in',
+      description:
+        'THE way to get signed in anywhere — a website, a service, or a CLI (site: "gcloud"). The host runs the order itself: a connection it already has (MCP / Composio) → ' +
+        "a saved login that is really signed in → a NEW sign-in in the owner's own Chrome on the shared desktop, with real mouse and keyboard. It waits, then answers ONE of: " +
+        '{status:"signed_in", via, next} — do what next says; {status:"blocked", reason} — stop and report that one reason; ' +
+        "{status:\"driving\", next} — the site's sign-in is open in the owner's Chrome and the shared desktop is yours: look with desktop_screenshot({shared:true}), click with desktop_pointer({shared:true}), " +
+        'and for a username / password / one-time-code field click into it and call sign_in({site, fill:"username"|"password"|"otp"}) — the HOST types it from the vault, you never see or type a secret. ' +
+        'A CAPTCHA, an SMS code or a push only the owner can do: sign_in({site, human:"<exactly what to do>"}). When the page shows you signed in: sign_in({site, done:true}). ' +
+        'The owner has more than one account (work / personal)? pass account (an email, "work.example", a Chrome profile name).',
+      inputSchema: obj({
+        site: { type: 'string', description: 'The site (a domain or url, e.g. facebook.com or https://app.todoist.com/auth/login), a service name, or "gcloud"' },
+        reason: { type: 'string', description: 'One short line the owner sees: what you need it for' },
+        account: { type: 'string', description: 'Which of the owner\'s accounts: an email, a Chrome profile name, or a domain (work.example)' },
+        browser: { type: 'boolean', description: 'You need the site in your browser even though the host has an API connection for it' },
+        url: { type: 'string', description: 'A connect playbook\'s consent / authorize page (https) to finish in the owner\'s Chrome, where their Google is signed in; done gives the desktop back' },
+        fill: { type: 'string', enum: ['username', 'password', 'otp'], description: 'driving only: the host types this vault value into the field you clicked into' },
+        human: { type: 'string', description: 'driving only: the one step only the owner can do, in one line ("solve the I\'m-not-a-robot check")' },
+        done: { type: 'boolean', description: 'driving only: the page shows you signed in — the host checks the session and brings it into your browser' },
+        ...SID_PROP,
+      }),
+      run: (a) => blockingCall(`/__api/sessions/${sid(a)}/sign-in`, {
+        site: a.site, reason: a.reason, account: a.account, ...(a.browser === true ? { browser: true } : {}), ...(a.url ? { url: a.url } : {}),
+        ...(a.fill ? { fill: a.fill } : {}), ...(a.human ? { human: a.human } : {}), ...(a.done === true ? { done: true } : {}),
+      }),
+    },
+    // VAULT2: the owner's named details beyond a sign-in — a card number, an ID number, a customer code. Names and
+    // outcomes reach the model; a value goes cockpit → host → the page, never through a tool result.
+    {
+      name: 'vault_fields',
+      description:
+        "Which details the owner's vault holds for a site — entries (accounts) with their FIELD NAMES and types, never a value. " +
+        'Call it before vault_fill to learn the names, and before vault_collect to see what is missing. ' +
+        'Standard names: username, password, otp; anything else is a name the owner or an agent gave (e.g. "card_number", "id_number", "expiry").',
+      inputSchema: obj({
+        site: { type: 'string', description: 'The site the details belong to (a domain or url)' },
+        ...SID_PROP,
+      }, ['site']),
+      run: (a) => api('GET', `/__api/sessions/${sid(a)}/vault/fields?site=${encodeURIComponent(a.site)}`),
+    },
+    {
+      name: 'vault_collect',
+      description:
+        'Ask the human for private details you need for a site (card number and expiry, an ID number, a customer code…) on a SECURE FORM only they see: the cockpit encrypts what they type straight into their vault; ' +
+        'you get back {status:"saved", entry:{id, title, fields:[names]}} and never a value. Then vault_fill puts a field into a page. ' +
+        'Never ask for such details in the chat. {status:"cancelled"|"expired", reason} — stop and tell the human that one reason. It waits for the human (up to 30 minutes).',
+      inputSchema: obj({
+        site: { type: 'string', description: 'The site the details are for (a domain) — the entry is matched to it on fill' },
+        fields: {
+          type: 'array',
+          description: 'The fields to ask for, in order. type shapes the input only: secret (default, dots) | text | multiline (notes) | number | date | email | phone | otp (a TOTP secret / otpauth:// URI)',
+          items: { type: 'object', properties: { name: { type: 'string', description: 'The field name you will fill by (≤ 64 chars, any language)' }, type: { type: 'string', enum: ['secret', 'text', 'multiline', 'number', 'date', 'email', 'phone', 'otp'] }, label: { type: 'string', description: 'What the human sees on the form (the name when absent)' }, required: { type: 'boolean' } }, required: ['name'] },
+        },
+        title: { type: 'string', description: 'The entry (account) these belong to, when the owner has more than one for the site — e.g. a person\'s name' },
+        reason: { type: 'string', description: 'One short line the human sees: what you need these for' },
+        ...SID_PROP,
+      }, ['site', 'fields']),
+      run: (a) => blockingCall(`/__api/sessions/${sid(a)}/vault/collect`, { site: a.site, fields: a.fields, ...(a.title ? { title: a.title } : {}), ...(a.reason ? { reason: a.reason } : {}) }),
+    },
+    {
+      name: 'vault_fill',
+      description:
+        'Have the host put ONE saved detail from the owner\'s vault into a field of the page in your browser — you never see the value. ' +
+        'Click into the field first (browser_click), or pass target: words of its label / name / placeholder, then vault_fill({site, field}). ' +
+        'The owner sees on a card which page field it goes into and taps (a named field is never automatic); the host types it into that one field on that host, draws the field as dots, and answers {status:"filled"} — then press the page\'s own button yourself and check with browser_snapshot. ' +
+        'A secret is never put into a search box or a free-text area (blocked) — aim at the field made for it. A <select> (an expiry month / year) gets the matching option, with part:"month" | "year" on the saved expiry. A filled field is hidden and off-limits afterwards: browser_click / browser_type refuse it. After you submit, the site may show the value back on its next page; that is the site\'s doing, not a value for you to repeat. ' +
+        'Only in YOUR session browser: while you are driving a sign-in in the owner\'s Chrome it is refused (finish with sign_in({site, done:true}) first, or hand the step to the owner with sign_in({site, human})). ' +
+        '{status:"manual", next} — the owner types it themselves (request_screen); {status:"blocked"|"cancelled"|"expired", reason} — stop and report that one reason. ' +
+        'The field names: vault_fields({site}); a missing one: vault_collect.',
+      inputSchema: obj({
+        site: { type: 'string', description: 'The site the detail belongs to (a domain or url) — it is filled only on that site' },
+        field: { type: 'string', description: 'The saved field\'s name (username | password | otp, or a name from vault_fields / vault_collect)' },
+        part: { type: 'string', enum: ['value', 'month', 'year'], description: 'Which part of the saved value: value (default, the whole of it) | month | year — for an expiry saved as MM/YY (or MM/YYYY, YYYY-MM) going into two selects; the vault splits it (month two digits, year four), the host picks the matching option' },
+        entry: { type: 'string', description: 'Which entry (account) when the owner has several for the site: its title or id from vault_fields' },
+        target: { type: 'string', description: 'Words of the page field\'s label / name / placeholder, instead of clicking into it first' },
+        reason: { type: 'string', description: 'One short line the owner sees on the card' },
+        ...SID_PROP,
+      }, ['site', 'field']),
+      run: (a) => blockingCall(`/__api/sessions/${sid(a)}/vault/fill`, { site: a.site, field: a.field, ...(a.part ? { part: a.part } : {}), ...(a.entry ? { entry: a.entry } : {}), ...(a.target ? { target: a.target } : {}), ...(a.reason ? { reason: a.reason } : {}) }),
+    },
     {
       name: 'browser_logins',
       description:
-        "Which sites the owner is signed in to in their OWN browser (\"my browser\") — site names only, never a cookie or token. " +
+        "Which sites the owner is signed in to in their OWN browsers — \"my browser\" (sources: vault) and, on a host that has one, their everyday Chrome on the shared desktop (sources: chrome) — site names only, never a cookie or token. " +
         'Check this before signing in anywhere: if the site is listed, call request_login for it instead of asking for credentials.',
       inputSchema: obj({ ...SID_PROP }),
       run: (a) => api('GET', `/__api/sessions/${sid(a)}/logins`),
@@ -885,13 +1121,66 @@ export async function createArigamiServer(env = process.env) {
         'Your browser starts with no logins; this is the only way one gets in. The owner sees a card and chooses: use their login, always for this site, sign in fresh, or no. ' +
         'Returns {available:false, next} when there is nothing to hand over or the site must never be copied (WhatsApp Web, banks) — then do what `next` says. ' +
         'Returns {pending:true} when a card is up: STOP and wait — the host messages you "[host] …" with the outcome, and on approval the login is already in your browser. ' +
-        "Never ask the owner to type a password into the chat: for a fresh sign-in, open the login page and call request_screen so they type it on the machine.",
+        "Never ask the owner to type a password into the chat: for a fresh sign-in, sso_login if the site offers SSO, else open the login page and call request_credentials.",
       inputSchema: obj({
         site: { type: 'string', description: "The site: a name ('google'), a domain ('linear.app') or a url" },
         reason: { type: 'string', description: 'One short line shown on the card: what you need the login for' },
         ...SID_PROP,
       }, ['site']),
       run: (a) => api('POST', `/__api/sessions/${sid(a)}/login-request`, { site: a.site, reason: a.reason }),
+    },
+    {
+      name: 'request_credentials',
+      description:
+        "Sign in on the page that is open in your browser now (a sign-in form: username, password, or a one-time code), without ever seeing the details. " +
+        "The host looks at the form and shows the owner a card: they fill it from their vault (or type it once, and save it for next time), or choose to type it themselves. " +
+        'Returns {pending:true} when the card is up: STOP and wait — the host messages you "[host] …" once it is filled (and submitted), or tells you to call request_screen when the owner types it themselves. ' +
+        'Returns {manual:true, next} when the owner always types this site themselves, and {ok:false, next} when the page has no sign-in field or the site is never signed in to with a password (Google, GitHub) — do what `next` says. ' +
+        'Before it: browser_logins / request_login (the owner may already be signed in), and sso_login when the site offers SSO (Continue with Google / Microsoft…). Never type a password, never read a password field, never ask for one in the chat.',
+      inputSchema: obj({
+        site: { type: 'string', description: "The site you expect the form to be on (a domain or url) — the card only fills a page on that site" },
+        reason: { type: 'string', description: 'One short line shown on the card: what you need to sign in for' },
+        ...SID_PROP,
+      }),
+      run: (a) => api('POST', `/__api/sessions/${sid(a)}/credentials/request`, { site: a.site, reason: a.reason }),
+    },
+    {
+      name: 'sso_login',
+      description:
+        "Sign in to a site through the owner's identity provider (\"Continue with Google\", \"Sign in with Microsoft\", Apple, Okta, company SSO) — " +
+        "the first way into a site that offers SSO, once browser_logins / request_login has nothing for it. SSO only works in the owner's own browser (\"My browser\", signed in to their account); your session's browser cannot. " +
+        'The owner approves on a card; then the site opens in a tab of its own in My browser and you drive it with sso_look / sso_click / sso_navigate — only that site and the sign-in pages, no typing. ' +
+        'Returns {pending:true}: STOP and wait for the "[host] …" line. {available:true, next} = the owner is already signed in there, do what next says. When signed in: sso_done brings the login into your browser.',
+      inputSchema: obj({
+        site: { type: 'string', description: "The site's sign-in page url (or its domain)" },
+        reason: { type: 'string', description: 'One short line shown on the card' },
+        ...SID_PROP,
+      }, ['site']),
+      run: (a) => api('POST', `/__api/sessions/${sid(a)}/sso-request`, { site: a.site, reason: a.reason }),
+    },
+    {
+      name: 'sso_look',
+      description: "See the SSO tab in My browser (after sso_login was approved): a screenshot, its url and text, and needsHuman when it asks for a password or a code — that part is the owner's. Nothing is shown when the tab is outside the site and the sign-in pages.",
+      inputSchema: obj({ ...SID_PROP }),
+      run: (a) => api('POST', `/__api/sessions/${sid(a)}/sso/look`, {}),
+    },
+    {
+      name: 'sso_click',
+      description: 'Click in the SSO tab of My browser — by visible text ("Continue with Google", the account email) or by {x,y} from sso_look. Only inside the site and the sign-in pages. There is no typing tool, on purpose.',
+      inputSchema: obj({ text: { type: 'string' }, x: { type: 'number' }, y: { type: 'number' }, ...SID_PROP }),
+      run: (a) => api('POST', `/__api/sessions/${sid(a)}/sso/click`, { text: a.text, x: a.x, y: a.y }),
+    },
+    {
+      name: 'sso_navigate',
+      description: "Move the SSO tab of My browser to another page of the same site (e.g. its /login) or of a sign-in provider. Anywhere else is refused.",
+      inputSchema: obj({ url: { type: 'string' }, ...SID_PROP }, ['url']),
+      run: (a) => api('POST', `/__api/sessions/${sid(a)}/sso/navigate`, { url: a.url }),
+    },
+    {
+      name: 'sso_done',
+      description: "The SSO sign-in landed (the site shows you signed in): close the tab in My browser and bring that one site's login into your own browser. Then browser_open the site and carry on there.",
+      inputSchema: obj({ ...SID_PROP }),
+      run: (a) => api('POST', `/__api/sessions/${sid(a)}/sso/done`, {}),
     },
     {
       name: 'save_login',
@@ -944,7 +1233,7 @@ export async function createArigamiServer(env = process.env) {
       name: 'browser_snapshot',
       description:
         'Look at the current page: a screenshot card (posted in chat, deduped like capture_screen) PLUS the page\'s url, title and visible text (innerText, truncated). ' +
-        'Also reports {needsHuman, reason, hint} when the page shows a credential/OTP field or a CAPTCHA — if needsHuman is true, stop and call request_screen instead of clicking/typing further. ' +
+        'Also reports {needsHuman, reason, hint} when the page shows a credential/OTP field or a CAPTCHA — if needsHuman is true, stop: a credential/OTP field → sign_in({site}); a CAPTCHA → request_screen. ' +
         'This is the browser_* equivalent of capture_screen — use it at the required moments (first page, before/after a hand-over, the end), not after every click.',
       inputSchema: obj({ caption: { type: 'string', description: 'What this snapshot shows (short, factual) — used as the screenshot caption.' }, ...SID_PROP }),
       run: (a) => api('POST', `/__api/sessions/${sid(a)}/browser/snapshot`, { caption: a.caption }),
@@ -966,7 +1255,7 @@ export async function createArigamiServer(env = process.env) {
       description:
         'Type text into whatever has focus on the page (CDP Input.insertText, unicode ok), optionally pressing Enter after (`submit:true`). ' +
         'REFUSES and returns {ok:false, needsHuman:true, reason, hint} instead of typing when the focused field looks like a password/OTP/2FA input, or the page shows a CAPTCHA — ' +
-        'call request_screen in that case, per the machine-work rule (never type credentials/codes yourself). Click the field first with browser_click if it is not already focused.',
+        'then call sign_in({site}) for a password/OTP field (a sign-in runs in the owner\'s Chrome; the host types vault values — you never see them), or request_screen for a CAPTCHA.',
       inputSchema: obj({ text: { type: 'string' }, submit: { type: 'boolean', description: 'Press Enter after typing (default false)' }, ...SID_PROP }, ['text']),
       run: (a) => api('POST', `/__api/sessions/${sid(a)}/browser/type`, { text: a.text, submit: a.submit === true }),
     },
@@ -996,6 +1285,7 @@ export async function createArigamiServer(env = process.env) {
           content: { type: 'string', description: 'New/replacement text (required for add/replace; usable as the remove needle if old_text is omitted)' },
           old_text: { type: 'string', description: 'Existing line to match, for replace/remove' },
           agent: { type: 'string', description: 'Agent namespace for target "memory"/"journal" (default: the agent this session was born from, if any; "" = the shared MEMORY.md). "user" is always the shared USER.md.' },
+          expected_hash: { type: 'string', description: 'Optional: the `hash` memory_get returned for this file. If the file changed since, the write is refused (conflict) instead of overwriting another writer — re-read and retry.' },
           ...SID_PROP,
         },
         ['target', 'action']
@@ -1009,6 +1299,7 @@ export async function createArigamiServer(env = process.env) {
           source: 'agent',
           sessionId: a.session_id || env.ARIGAMI_SESSION_ID,
           agent: agentNs(a),
+          expectedHash: a.expected_hash || undefined,
         }),
     },
     {
@@ -1152,15 +1443,10 @@ export async function createArigamiServer(env = process.env) {
     },
   ];
 
-  // Server instructions ride in the MCP initialize result, so every session gets
-  // them without a skill. Kept to the two rules that decide what a deleted
-  // session leaves behind (server/reap.ts).
-  const INSTRUCTIONS = [
-    'Temporary files go under $TMPDIR — it is this session\'s own scratch directory and the host deletes it with the session. Do not write to /tmp directly: nothing owns files there, so they outlive you.',
-    'Your browser starts with no logins. Before signing in to any site, call browser_logins / request_login: the owner may already be signed in and can hand that one site over. Never ask for a password in the chat — a fresh sign-in is request_screen, with the owner typing.',
-    'Nothing you send to a person leaves on your call: WhatsApp messages, Slack messages, emails and comments through Arigami\'s tools become a card with your exact text, and the host sends them only when the owner presses Send. Write the final text, then stop and wait for the "[host] …" outcome. Never look for another way to send.',
-    'Teardown is the host\'s job. delete_session stops every process this session started (detached ones included) and removes the worktree it owns unless it holds unpushed work. Do not rm -rf, git worktree remove, or kill things yourself as "cleanup".',
-  ].join('\n');
+  // The host's rules for a session (scratch files, logins, outbound cards, teardown, the container note) moved to the
+  // first message, as editable blocks (server/prompt-blocks.ts) that every engine gets — an engine that does not show
+  // MCP server instructions used to miss them, and the owner could not change them. This line only points there.
+  const INSTRUCTIONS = "Arigami's tools. The host's rules for this session are in its first message.";
 
   const server = new Server({ name: 'arigami', version: '0.1.0' }, { capabilities: { tools: {} }, instructions: INSTRUCTIONS });
 
@@ -1170,7 +1456,10 @@ export async function createArigamiServer(env = process.env) {
   let hiddenTools = null; // Set<string> | null (null = unrestricted / not yet known)
   // P2-3: codex never asks for permission, so a permission_prompt card would wait 30 minutes for nobody.
   const ENGINE_HIDDEN = new Set(env.ARIGAMI_ENGINE === 'codex' ? ['permission_prompt'] : []);
-  const isHidden = (name) => ENGINE_HIDDEN.has(name) || !!hiddenTools?.has(name);
+  // sign_in runs the login ladder in the host; the steps it used to be made of are its internals now, not the model's
+  // to pick between. save_browser_logins stays for an AGENT session (its own identity, not the owner's).
+  const LOGIN_INTERNAL = new Set(['browser_logins', 'request_login', 'request_credentials', 'sso_login', 'sso_look', 'sso_click', 'sso_navigate', 'sso_done', 'save_login', ...(env.ARIGAMI_AGENT ? [] : ['save_browser_logins'])]);
+  const isHidden = (name) => ENGINE_HIDDEN.has(name) || LOGIN_INTERNAL.has(name) || !!hiddenTools?.has(name);
 
   // EXT: teach `register_listener` about the types an extension registered. One
   // call at startup (like refreshHidden's policy probe); a failure keeps the
@@ -1223,11 +1512,13 @@ export async function createArigamiServer(env = process.env) {
     const tool = TOOLS.find((t) => t.name === req.params.name);
     if (!tool) return { content: [{ type: 'text', text: `unknown tool: ${req.params.name}` }], isError: true };
     if (ENGINE_HIDDEN.has(tool.name)) return { content: [{ type: 'text', text: `error: tool "${tool.name}" does not exist on this engine` }], isError: true };
+    if (LOGIN_INTERNAL.has(tool.name))
+      return { content: [{ type: 'text', text: `error: "${tool.name}" is internal to sign_in now — call sign_in({site, reason}) and follow its answer` }], isError: true };
     if (hiddenTools?.has(tool.name))
       return { content: [{ type: 'text', text: `error: tool "${tool.name}" is not in this agent's allowlist (ask the human with request_action)` }], isError: true };
     try {
       const result = await tool.run(req.params.arguments || {});
-      return { content: [{ type: 'text', text: JSON.stringify(result ?? { ok: true }) }] };
+      return { content: toMcpContent(result) };
     } catch (e) {
       if (tool.name === 'permission_prompt') {
         // never error the permission channel — deny instead

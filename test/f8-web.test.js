@@ -11,7 +11,7 @@ isolate(); // restore globalThis/process.env after this file (bun test shares th
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const web = (p) => path.join(ROOT, 'web/src', p);
 
-let React, render, prefs, FirstRun, FIRST_RUN_CHIPS;
+let React, render, prefs, FirstRun, FIRST_RUN_CHIPS, TooltipProvider;
 
 beforeAll(async () => {
   const mem = new Map();
@@ -29,9 +29,10 @@ beforeAll(async () => {
   ({ renderToStaticMarkup: render } = await import(path.join(ROOT, 'web/node_modules/react-dom/server.js')));
   prefs = await import(web('lib/prefs.js'));
   ({ default: FirstRun, FIRST_RUN_CHIPS } = await import(web('components/FirstRun.jsx')));
+  ({ TooltipProvider } = await import(web('components/ui/tooltip.jsx')));
 });
 
-const mount = () => render(React.createElement(FirstRun, { config: { defaultCwd: '/tmp/ws' }, sessions: [], onCreated() {}, onOpenLauncher() {} }));
+const mount = () => render(React.createElement(TooltipProvider, null, React.createElement(FirstRun, { config: { defaultCwd: '/tmp/ws' }, sessions: [], onCreated() {}, onOpenLauncher() {} })));
 
 test('FirstRun (en): one prompt box, three chips, Advanced link — no Linear', () => {
   prefs.setPrefs({ language: 'en' });
@@ -57,10 +58,12 @@ test('FirstRun (he): the question and chips are Hebrew', () => {
   prefs.setPrefs({ language: 'en' });
 });
 
-test('Launcher source: ticket tab gated on Linear, empty form has an Advanced fold, default tab is empty', () => {
+test('Launcher source: the ticket tab is always there but never the default without Linear; empty form has an Advanced fold', () => {
   const src = fs.readFileSync(web('components/Launcher.jsx'), 'utf8');
   expect(src).toMatch(/useState\(initialMode \|\| 'empty'\)/);
-  expect(src).toMatch(/\{linear && \(\s*<button/);
+  expect(src).not.toMatch(/\{linear && \(\s*<TabsTrigger value="ticket"/); // shown with a Connect Linear offer inside
+  expect(src).toMatch(/<TabsTrigger value="ticket"/);
+  expect(src).toMatch(/linear === false && mode === 'ticket' && !picked\.current/);
   expect(src).toMatch(/launcher\.empty\.advanced/);
   expect(src).toMatch(/api\.get\('\/linear\/status'\)/);
 });
@@ -74,7 +77,8 @@ test('Rail source: Pending/Triggers and Usage are hidden until a session exists'
 test('one-engine gate + P1-11: Start needs either engine; usage, Connections and Health are not Claude-only', () => {
   const setup = fs.readFileSync(web('components/Setup.jsx'), 'utf8');
   expect(setup).toMatch(/disabled=\{busy \|\| !anyOk\}/);
-  expect(setup).toMatch(/id: 'codex'.*flow: 'codex'/);
+  expect(setup).toMatch(/<EngineConnect /); // Claude + Codex as two equal cards
+  expect(fs.readFileSync(web('components/setup/EngineConnect.jsx'), 'utf8')).toMatch(/id: 'codex'.*flow: 'codex'/);
   expect(fs.readFileSync(web('components/Wizard.jsx'), 'utf8')).toMatch(/step\.id === 'codex'/);
   const rail = fs.readFileSync(web('components/Rail.jsx'), 'utf8');
   expect(rail).toMatch(/activeEngine === 'codex'/);

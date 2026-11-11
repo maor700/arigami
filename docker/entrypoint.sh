@@ -36,9 +36,35 @@ chmod 1777 /tmp/.X11-unix 2>/dev/null || true
 # that at the volume so the WhatsApp login survives image upgrades. The
 # checkout is chowned to `node` at build time, so uid 1000 can do this too.
 if [ -d "$WA_DIR" ] && [ ! -L "$WA_DIR/auth_info" ]; then
-  rm -rf "$WA_DIR/auth_info" 2>/dev/null || true
-  ln -s "$WA_STATE/auth_info" "$WA_DIR/auth_info" 2>/dev/null || true
+  # Preserve an existing pairing when moving from a checkout to the volume.
+  # Never discard credentials silently on an upgrade.
+  if [ -d "$WA_DIR/auth_info" ]; then
+    if [ -n "$(ls -A "$WA_DIR/auth_info")" ]; then
+      if [ -n "$(ls -A "$WA_STATE/auth_info")" ]; then
+        echo "WhatsApp pairing exists in both checkout and volume; resolve before starting" >&2
+        exit 1
+      fi
+      cp -a "$WA_DIR/auth_info/." "$WA_STATE/auth_info/"
+    fi
+    mv "$WA_DIR/auth_info" "$WA_DIR/auth_info.pre-volume-$(date +%s)"
+  fi
+  ln -s "$WA_STATE/auth_info" "$WA_DIR/auth_info"
 fi
+
+# Reinstall the packages the owner added with `sudo apt-get install` before the
+# last restart (docker/apt-persist.sh keeps their .debs on the volume). In the
+# background, logged: a slow mirror must not hold the host back.
+replay_apt() {
+  [ -z "$ARIGAMI_APT_REPLAYED" ] || return 0 # the root pass already did, before the gosu drop
+  export ARIGAMI_APT_REPLAYED=1
+  [ -x /usr/local/lib/arigami/apt-persist ] || return 0
+  ls "$ARIGAMI_DIR"/apt/debs/*.deb >/dev/null 2>&1 || return 0
+  if [ "$(id -u)" = "0" ]; then set -- /usr/local/lib/arigami/apt-persist replay
+  elif sudo -n true 2>/dev/null; then set -- sudo -n /usr/local/lib/arigami/apt-persist replay
+  else return 0
+  fi
+  ( "$@" >>"$ARIGAMI_DIR/logs/apt-replay.log" 2>&1 & ) || true
+}
 
 if [ "$(id -u)" = "0" ]; then
   # A system dbus so Chrome/openbox don't log bus errors. Root-only, and
@@ -55,6 +81,7 @@ if [ "$(id -u)" = "0" ]; then
     touch /data/.chowned
   fi
   chown node:node "$WA_STATE" "$WA_STATE/auth_info" "$WA_STATE/data" 2>/dev/null || true
+  replay_apt
   # gosu resets HOME to the target user's passwd home (/home/node); force the
   # intended HOME (/data/home, on the volume) so git creds, claude config, and
   # the Playwright MCP registration persist across recreates instead of landing
@@ -79,6 +106,8 @@ if [ ! -w "$ARIGAMI_DIR" ]; then
   echo "  Docker:     start as root once, or chown the volume before mounting." >&2
   exit 1
 fi
+replay_apt
+
 # Trust the worktrees the agent creates.
 git config --global --add safe.directory '*' || true
 
@@ -97,15 +126,8 @@ if [ -z "$(git config --global user.name || true)" ]; then
   git config --global user.name "${GIT_NAME:-Arigami}"
 fi
 
-# Register the Playwright MCP for sessions (headless + no-sandbox for a non-root
-# container, driving the image's Chrome/Chromium via CHROME_BIN — the image
-# ships no separate Playwright browser) — once, at user scope so every session
-# inherits it. The `playwright-mcp` bin comes from the global
-# @playwright/mcp install, so no network is needed on first use.
-if ! grep -q '"playwright"' "$HOME/.claude.json" 2>/dev/null; then
-  claude mcp add --scope user playwright -- \
-    playwright-mcp --headless --no-sandbox --isolated \
-      --executable-path "${CHROME_BIN:-/usr/local/bin/arigami-chrome}" >/dev/null 2>&1 || true
-fi
+# Register the Playwright MCP for sessions (once; skipped until claude is
+# installed — the host installs it on first boot and runs this again then).
+/usr/local/bin/arigami-register-playwright-mcp || true
 
 exec "$@"

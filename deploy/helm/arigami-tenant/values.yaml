@@ -40,8 +40,7 @@ fullnameOverride: ""
 # and drops to uid 1000 via gosu) and a direct non-root start (docker/
 # entrypoint.sh "prelude"). Kubernetes should always use the second: fsGroup
 # makes the kubelet hand the volume over already owned, so no root pass is
-# needed and the pod satisfies the `restricted` Pod Security Standard — which
-# a hardened cluster enforces and a root-starting pod simply cannot pass.
+# needed and the pod starts unprivileged (sudo below is the only way up).
 #
 # Set podSecurityContext to {} to go back to the root-then-gosu start (a
 # cluster with no fsGroup support, or a stub image in CI).
@@ -56,10 +55,25 @@ podSecurityContext:
   fsGroupChangePolicy: OnRootMismatch
   seccompProfile:
     type: RuntimeDefault
+# The workspace owner is admin in their own container: the image gives `node`
+# passwordless sudo (docs/DOCKER.md "Admin (sudo)"). sudo is a setuid binary, so
+# it needs allowPrivilegeEscalation (no_new_privs off), and what it runs as root
+# needs a handful of capabilities for apt/dpkg to work: SETUID/SETGID (sudo
+# switches user, apt drops to its sandbox user), CHOWN/FOWNER/DAC_OVERRIDE
+# (dpkg unpacking, writing the .deb cache on the node-owned volume). These are
+# a subset of the container runtime's own defaults and land only in the
+# BOUNDING set: the host and the agents run as uid 1000 with no effective
+# capabilities until something goes through sudo. Still dropped: NET_RAW,
+# MKNOD, SYS_CHROOT, KILL, … and no privileged mode, no hostPath. This is the
+# `baseline` Pod Security Standard, not `restricted`.
+# For a locked-down tenant (no sudo), go back to:
+#   allowPrivilegeEscalation: false
+#   capabilities: { drop: ["ALL"] }
 containerSecurityContext:
-  allowPrivilegeEscalation: false
+  allowPrivilegeEscalation: true
   capabilities:
     drop: ["ALL"]
+    add: ["SETUID", "SETGID", "CHOWN", "FOWNER", "DAC_OVERRIDE"]
 
 # Arigami is a STATEFUL SINGLETON (server/state.ts: the listeners scheduler,
 # session registry and git worktrees all live on the one PVC) — never run two
@@ -88,6 +102,15 @@ resources:
   limits:
     cpu: "4"
     memory: 8Gi
+
+# Where the pod may run. Empty = anywhere (the default). The control plane's hardware tiers (CP_TIERS,
+# docs/CONTROL-PLANE.md "Tiers") use these to put one person on a dedicated node pool:
+#   nodeSelector: {pool: large}
+#   tolerations: [{key: dedicated, operator: Equal, value: large, effect: NoSchedule}]
+nodeSelector: {}
+tolerations: []
+# Optional PriorityClass name (must already exist in the cluster). Empty = none.
+priorityClassName: ""
 
 persistence:
   enabled: true
@@ -226,6 +249,9 @@ networkPolicy:
     mode: restricted
     # Namespace of the cluster DNS service, matched on ingressNamespaceLabelKey.
     dnsNamespace: kube-system
+    # Extra DNS addresses to allow (CIDRs) — the kube-dns Service IP is looked up automatically on a live cluster;
+    # set this when rendering offline (`helm template`) for a cluster with NodeLocal DNSCache.
+    dnsServiceCidrs: []
     # Subtracted from 0.0.0.0/0 in restricted mode. The /8, /12 and /16 are
     # RFC1918 (pod, Service and node networks live in there); 169.254.169.254/32
     # is the cloud metadata endpoint, which on GCP and AWS hands out node
@@ -262,10 +288,27 @@ probes:
 
 env:
   TZ: "UTC"
-  # K8S-1 (server/profiles.ts applyBundleEnv): a git URL (or a name shipped in
-  # the image under profiles/bundles/<name>) applied once, on this tenant's
+  # K8S-1 (server/profiles.ts applyBundleEnv): a git URL (or a name baked into
+  # the image's ARIGAMI_SHIPPED_BUNDLES_DIR) applied once, on this tenant's
   # first boot. Empty = no bundle, tenant starts blank like a fresh install.
   ARIGAMI_BUNDLE: ""
+  # tag / branch / commit of ARIGAMI_BUNDLE checked out on that first boot
+  # (empty = the repo's default branch). Later profile versions are rolled out
+  # by the control-plane's trusted re-apply, not by changing this value.
+  ARIGAMI_BUNDLE_REF: ""
+  # Control-plane URL that signs a person in with the org SSO and hands them back to this tenant (set by the
+  # control plane: <CP_PUBLIC_URL>/workspace, or /workspaces/<name>/open for a shared workspace). A browser that
+  # opens this tenant directly without a session is sent there instead of seeing the pairing screen.
+  # Empty = no redirect (standalone / self-hosted: the pairing screen as ever).
+  ARIGAMI_SSO_URL: ""
+
+# Shared org workspace (docs/CONTROL-PLANE.md "Shared workspaces"): set by the control plane for a tenant that
+# several org members open. Renders ARIGAMI_SHARED_WORKSPACE=1 — the tenant then refuses a sign-in handoff that
+# names no role and keeps those sessions short.
+sharedWorkspace: false
+# The organisation host: renders ARIGAMI_ORG_HOST=1, so `scope: org` cron jobs from the profile run HERE (and
+# only here — one org host per organisation, or every org job runs once per org host).
+orgHost: false
 
 # Extra plain (non-secret) env vars, e.g. ARIGAMI_VOICE_LANG. [{name, value}]
 extraEnv: []

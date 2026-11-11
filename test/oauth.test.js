@@ -7,9 +7,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { isolate } from './_isolate.js';
+import { tmpDir } from './_tmp.js';
 isolate(); // restore globalThis/process.env after this file (bun test shares them)
 
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-oauth-'));
+const tmp = tmpDir('arigami-oauth-');
 process.env.ARIGAMI_DIR = tmp;
 
 const oauth = await import('../server/oauth-login.js');
@@ -44,4 +45,41 @@ test('submitCode with an empty code is rejected', async () => {
   const res = await oauth.submitCode(f.id, '   ');
   expect(res.ok).toBe(false);
   expect(res.error).toMatch(/no code/i);
+});
+
+test('refreshOne is single-flight: concurrent callers share ONE token exchange (a reused refresh token revokes the grant)', async () => {
+  const accounts = await import('../server/accounts.js');
+  const acc = accounts.addTokenAccount({ label: 'sf', token: 'sk-ant-oat01-old', trusted: true, refreshToken: 'rt-old', expiresAt: new Date(Date.now() - 1000).toISOString() });
+  const id = acc.id ?? acc;
+  const realFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls++;
+    await new Promise((r) => setTimeout(r, 40));
+    return { ok: true, status: 200, json: async () => ({ access_token: 'sk-ant-oat01-new', refresh_token: 'rt-new', expires_in: 28800 }) };
+  };
+  try {
+    const results = await Promise.all([1, 2, 3, 4, 5].map(() => oauth.refreshOne(id)));
+    expect(results).toEqual([true, true, true, true, true]);
+    expect(calls).toBe(1);
+    // right after a success, a late caller reuses it instead of spending the rotated token again
+    expect(await oauth.refreshOne(id)).toBe(true);
+    expect(calls).toBe(1);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test('a failing child holding an older token is restarted, not refreshed (a refresh revokes everyone else)', async () => {
+  const { storedTokenIsNewer } = await import('../server/claude.js');
+  const { createHash } = await import('node:crypto');
+  const sig = (t) => createHash('sha256').update(t).digest('hex').slice(0, 12);
+  const soon = new Date(Date.now() + 3 * 3600_000).toISOString();
+  expect(storedTokenIsNewer({ childSig: sig('old'), storedToken: 'new', expiresAt: soon })).toBe(true);
+  // it already holds the stored token → it really is expired/revoked → refresh
+  expect(storedTokenIsNewer({ childSig: sig('same'), storedToken: 'same', expiresAt: soon })).toBe(false);
+  // stored token about to die → refresh instead
+  expect(storedTokenIsNewer({ childSig: sig('old'), storedToken: 'new', expiresAt: new Date(Date.now() + 60_000).toISOString() })).toBe(false);
+  // unknown child token (spawned before any account) → keep the old path
+  expect(storedTokenIsNewer({ childSig: null, storedToken: 'new', expiresAt: soon })).toBe(false);
 });

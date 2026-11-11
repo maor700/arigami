@@ -228,6 +228,7 @@ function launcherHarness(overrides = {}) {
     getContext: () => ({ sessionId: null, tabId: null, extension: 'hello', apiVersion: 1, settings: {}, permissions: perms }),
     post: (m) => posted.push(m),
     onCreated: (s) => created.push(s),
+    ...(overrides.getSessionOptions ? { getSessionOptions: overrides.getSessionOptions } : {}),
     api,
     subscribeWire: (fn) => { wireFn = fn; return () => { wireFn = null; }; },
   });
@@ -585,7 +586,8 @@ test('bridge: dispose stops everything', async () => {
 /* ---------- Settings ------------------------------------------------------ */
 
 test('Settings: "extensions" is the fourth nav page and a valid route id', () => {
-  expect(SettingsMod.SETTINGS_NAV).toEqual(['appearance', 'connections', 'host', 'extensions']);
+  expect(SettingsMod.SETTINGS_NAV.slice(0, 4)).toEqual(['appearance', 'connections', 'host', 'extensions']);
+  expect(SettingsMod.resolveCategory('customization')).toEqual({ cat: 'customization', section: '' }); // PROMPT1's page, after it
   expect(SettingsMod.SETTINGS_CATEGORIES).toContain('extensions');
   expect(SettingsMod.resolveCategory('extensions')).toEqual({ cat: 'extensions', section: '' });
 });
@@ -672,4 +674,47 @@ test('composer: a manifest slash opens the tab; skills still win the name', () =
 
 test('TabBar still exports its default component with the extension rows compiled in', () => {
   expect(typeof TabBarMod.default).toBe('function');
+});
+
+test('settingsFields: multiline is only set on string fields that ask for it', () => {
+  const f = ext.settingsFields({
+    tpl: { type: 'string', multiline: true },
+    plain: { type: 'string' },
+    n: { type: 'number', multiline: true },
+  });
+  expect(f.map((x) => x.multiline)).toEqual([true, false, false]);
+});
+
+test('launcher tab: the side panel\'s engine/model/effort win over the tab\'s; the tab keeps prompt, title, skill, metadata', async () => {
+  const t = launcherHarness({ getSessionOptions: () => ({ engine: 'codex', model: 'gpt-5.6-terra', effort: 'high', skill: 'ignored' }) });
+  await t.send(callMsg('createSession', { spec: { title: 'Review', prompt: 'p', skill: 'mine', engine: 'claude', model: 'opus', metadata: { prNumber: 3 } } }));
+  const b = t.calls[0][2];
+  expect(b.engine).toBe('codex');
+  expect(b.model).toBe('gpt-5.6-terra');
+  expect(b.effort).toBe('high');
+  expect(b.skill).toBe('mine'); // the panel never overrides the tab's skill
+  expect(b.prompt).toBe('p');
+  expect(b.metadata).toEqual({ prNumber: 3 });
+});
+
+test('launcher tab: an empty panel field (engine default) leaves the tab\'s value; an empty model/effort clears it', async () => {
+  const t = launcherHarness({ getSessionOptions: () => ({ engine: '', model: '', effort: '' }) });
+  await t.send(callMsg('createSession', { spec: { title: 'x', engine: 'claude', model: 'opus', effort: 'low' } }));
+  const b = t.calls[0][2];
+  expect(b.engine).toBe('claude'); // panel on "default engine" does not erase an explicit tab choice
+  expect(b.model).toBeUndefined(); // panel says "model: default"
+  expect(b.effort).toBeUndefined();
+});
+
+test('launcher tab folder settings reach creation and the human folder overrides a tab id', async () => {
+  const t = launcherHarness({ getSessionOptions: () => ({ folderName: 'Reviews' }) });
+  await t.send(callMsg('createSession', { spec: { title: 'Review', folderId: 'old', folderName: 'Other' } }));
+  expect(t.calls[0][2].folderName).toBe('Reviews');
+  expect(t.calls[0][2].folderId).toBeUndefined();
+});
+
+test('launcher tab can provide a folder when the human has not chosen one', async () => {
+  const t = launcherHarness({ getSessionOptions: () => ({ folderName: '' }) });
+  await t.send(callMsg('createSession', { spec: { title: 'Review', folderName: 'Reviews' } }));
+  expect(t.calls[0][2].folderName).toBe('Reviews');
 });

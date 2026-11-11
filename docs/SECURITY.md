@@ -26,7 +26,15 @@ trusts, and what it deliberately does not.
 Public paths (no credential): `/__api/auth/*`, reduced `/__api/config`,
 `/__host/*` (static SPA), `/`, `/__health`, `/__poc-sw.js`,
 `/__api/webhooks/{sms,slack,github,custom/<id>}` (C3 — each authenticates
-itself, see below) and, for one more release, the legacy `/__api/sms/inbound`.
+itself, see below). The legacy unauthenticated `/__api/sms/inbound` is **no longer public** (it needs a normal
+credential; use the signed `/__api/webhooks/sms` route).
+
+**One reading of the path.** The gate and the router must agree on what a request path means. A path whose meaning
+depends on normalisation — dot segments in any encoding (`..`, `%2e%2e`), a backslash, an encoded slash or backslash,
+control characters, an absolute-form target — is refused with `400` before anything else (`server/auth.ts`
+`pathIsAmbiguous`; regression tests in `test/security-gate.test.ts`). Before this, `/__api/auth/../sessions` was a
+public path to the gate and `/__api/sessions` to the router. A pinned dev-server proxy target (`?__target=` /
+`X-Poc-Target`) on the public `/` also needs a signed-in user: it makes the host fetch a URL on the caller's behalf.
 
 ## Share links (K2)
 
@@ -69,6 +77,7 @@ public; `/__api/sessions` & co. stay 401 for the same caller.
 
 | kind | credential | replay guard |
 |---|---|---|
+| `twilio/voice`, `twilio/status` | `X-Twilio-Signature` = base64 HMAC-SHA1(Twilio Auth Token, public URL + sorted form params); the media-stream WebSocket under the same prefix is authenticated by a one-time token minted after the caller's PIN (server/voice-phone.ts). | status: 5-min signature seen-set; voice: inert by state machine |
 | `sms` | share-token `{kind:'webhook', id:'sms'}` in `?t=` or `X-Arigami-Token` (K2 module, same secret file). Long-lived (1 year), rotated/revoked from Settings → Webhooks; only the *current* token is accepted. | none possible (the phone app cannot sign) — mitigated by rotation + revocation; a replay only re-delivers an SMS the owner already received |
 | `slack` | Slack v0: `X-Slack-Signature` = `v0=HMAC(secret, "v0:<ts>:<body>")`, `X-Slack-Request-Timestamp` within ±5 min | signature seen-set, 5 min |
 | `github` | `X-Hub-Signature-256` = `sha256=HMAC(secret, body)` | `X-GitHub-Delivery` seen-set, 5 min |
@@ -93,13 +102,8 @@ the funnel and expects its 401. Off by default.
 
 ## What is *not* protected (known, by design or pending)
 
-- **`/__api/sms/inbound`** — the pre-C3 phone webhook still accepts
-  unauthenticated SMS for **one more release** (the live phone automation
-  must be repointed first). It answers with a `Deprecation` header and the
-  host logs a warning once a minute while it is in use. Anyone reaching the
-  origin can inject an SMS event through it (they still cannot read
-  anything). Remove `handleLegacySms` + its allowlist line in the release
-  after C3.
+- **`/__api/sms/inbound`** — the pre-C3 phone webhook was unauthenticated; it is now an ordinary gated route (no
+  credential → 401). Point the phone at the signed `/__api/webhooks/sms` URL (Settings → Webhooks).
 - **Authorization is coarse.** A session token can call any `/__api` route, not
   only its own session's; API tokens inherit their owner's role; the only
   admin-only surface is `/__api/auth/*` administration. Per-session scoping is

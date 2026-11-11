@@ -10,6 +10,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import zlib from 'node:zlib';
+import { tmpDir } from './_tmp.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const {
@@ -23,7 +24,7 @@ const {
 } = await import(path.join(ROOT, 'server/archive.js'));
 
 let tmp;
-const dest = () => fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-archive-dest-'));
+const dest = () => tmpDir('arigami-archive-dest-');
 
 function py(script) {
   const r = Bun.spawnSync(['python3', '-c', script], { cwd: tmp });
@@ -31,7 +32,7 @@ function py(script) {
 }
 
 beforeAll(() => {
-  tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-archive-fixtures-'));
+  tmp = tmpDir('arigami-archive-fixtures-');
 
   py(`
 import zipfile, stat

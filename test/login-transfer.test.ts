@@ -16,6 +16,7 @@ import path from 'node:path';
 import { runInChild } from './_child.js';
 import * as sites from '../server/lib/login-sites.ts';
 import { findChromeBin } from '../server/lib/platform.ts';
+import { tmpDir } from './_tmp.js';
 
 const chrome = findChromeBin();
 
@@ -84,7 +85,7 @@ let e2e: any = null;
 
 beforeAll(() => {
   if (!chrome) return;
-  const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'login-e2e-'));
+  const sandbox = tmpDir('login-e2e-');
   const vault = path.join(sandbox, 'vault');
   const target = path.join(sandbox, 'target');
 
@@ -101,7 +102,7 @@ beforeAll(() => {
        const u = new URL(req.url);
        if (u.pathname === '/login') return new Response('<!doctype html><title>login</title>ok', { headers: { 'content-type': 'text/html',
          // httpOnly + Secure: the kind a real session cookie is (localhost is a secure context)
-         'set-cookie': 'sid=SECRET-SESSION; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=86400' } });
+         'set-cookie': 'auth_sid=SECRET-SESSION; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=86400' } });
        return new Response('<!doctype html><title>page</title>ok', { headers: { 'content-type': 'text/html' } });
      } });
      const ORIGIN = 'http://localhost:' + server.port;
@@ -181,9 +182,9 @@ test.skipIf(!chrome)('detection reads the login from disk and returns no values'
 });
 
 test.skipIf(!chrome)('only the site moves: its cookie, its auth database, its localStorage', () => {
-  expect(e2e.exportedCookieNames).toEqual(['sid']); // the other.test cookie stayed behind
+  expect(e2e.exportedCookieNames).toEqual(['auth_sid']); // the other.test cookie stayed behind
   expect(e2e.exportedDbs).toEqual(['firebaseLocalStorageDb']); // the cache db stayed behind
-  expect(e2e.targetCookies).toEqual([expect.stringMatching(/^sid@localhost$/)]);
+  expect(e2e.targetCookies).toEqual([expect.stringMatching(/^auth_sid@localhost$/)]);
   expect(e2e.seen.dbs).toEqual(['firebaseLocalStorageDb']);
   expect(e2e.seen.refresh).toBe('REFRESH-TOKEN');
   expect(e2e.seen.whenIsDate).toBe(true); // tagged JSON kept the Date a Date

@@ -84,9 +84,10 @@ pending = { id, ticket, title, triggerId, triggerName, addedAt }
 - Single **▶/⏸ toggle** on the Pending section header — persisted. ▶ = autoplay
   on (queue self-drains top-down), ⏸ = off (items start only via per-item Play).
   *No separate enable checkbox.*
-- Global **`maxConcurrent` (default 3)** next to the toggle. Counts **live,
-  non-archived sessions started from the queue** (auto or manual Play). Autoplay
-  holds when live count = `maxConcurrent`; resumes as slots free.
+- Global **`maxConcurrent` (default 3)** next to the toggle. Counts **non-archived sessions
+  started from the queue (auto or manual Play) that are running a turn** — an idle one (a review
+  waiting on its PR, a question waiting on the human, a finished run kept open) is waiting, not
+  working, and takes no slot. Autoplay holds when that count = `maxConcurrent`; resumes as slots free.
 - **Execution order = the queue's D&D order**, initialized to arrival order, then
   freely reorderable. Autoplay drains top-down in that order.
 
@@ -211,7 +212,7 @@ fires this job."
   the create-guard flag (see Guard below). On a terminal
   `report_to_master(state:'done'|'error')`, `server/api.ts`'s `/report`
   handler calls `triggers.onCronReport()` (records the run, delivers the
-  result) and archives the session. `state:'blocked'` delivers but does NOT
+  result) and, for `state:'done'`, **deletes** the session a few seconds later (a finished run leaves nothing to keep; the result is on the trigger's run log) — a failed run (`error`) is archived instead so it stays readable. `state:'blocked'` delivers but does NOT
   archive — a human still needs to look at it (same `pushIntervention`
   'blocked' push as any worker uses).
 - `sessionMode: 'existing:<sessionId>'` — delivers `prompt` into that session
@@ -244,7 +245,8 @@ Reuses existing channels — no new transport:
   calls `send_message` on it), so no second Baileys connection is opened and
   the live pairing is never replaced. The value is either a JID
   (`…@s.whatsapp.net` / `…@lid` / `…@g.us`) or `true`, which means "the default
-  target", `notify.whatsappJid` in `config.json`. Not paired, or no target
+  target", `notify.whatsappJid` in `config.json` (Settings › Connections ›
+  Notifications, or `POST /__api/config/notify {whatsappJid}`). Not paired, or no target
   resolved → the delivery is skipped with a `tlog` warning; a notification is
   never allowed to become an error. Delivery goes through `server/notify.ts`,
   which is also where an extension registers extra channels (Telegram, mail…).
@@ -325,3 +327,25 @@ Reused as-is: `POST /sessions`, create-from-ticket, the `/__ticket/<id>` page,
 the Linear OAuth client, `report_to_master` (cron's own completion channel),
 `push.ts`, `listeners.enqueueWake`.
 ```
+
+### Project folders at launch
+
+Session creation, pending items and trigger definitions accept `folderName` (REST)
+/ `folder_name` (`create_session` and `cronjob` MCP). Names are trimmed and matched
+exactly, case-sensitively; a missing folder is created when the session launches.
+Blank names leave sessions at root. Concurrent launches reuse the same folder.
+`folderId` / `folder_id` takes precedence, including the existing behavior that an
+unknown id leaves the session at root. Dispatch children still inherit their
+master's folder. Folder membership does not create a project controller.
+
+The launcher exposes the name in session options (also saved in presets), Linear
+trigger options and isolated cron options. Deferred items retain it; tickets
+produced by a trigger use its current settings when started. Trigger PATCH accepts
+`folderName: null` or `""` to clear the choice. Cron delivery to an existing session
+does not move it. Profile-bundle cron entries also accept `folderName`.
+
+Listeners wake their existing session rather than create one. Listener registration
+accepts `folderName` / `folderId` in REST (`folder_name` / `folder_id` in MCP) to
+place that session in the chosen folder after successful registration; omitting
+them keeps its current membership. Extension launcher tabs can pass `folderName`
+or `folderId` in `createSession`; a human-entered folder name takes precedence.

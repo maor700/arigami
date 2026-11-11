@@ -1,0 +1,224 @@
+// The desktop terminal (desktop-terminal.ts): the launcher script picks a terminal that exists, tint2/openbox get a
+// "Terminal" entry through generated configs, and a user's own ~/.config is never overridden.
+import { test, expect } from 'bun:test';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { ensureDesktopConfig, tint2Config, dockLayout, openboxRc, openboxMenu, terminalScript, sessionTint2Config, chromeScript } from '../server/lib/desktop-terminal.ts';
+import { tmpDir } from './_tmp.js';
+
+const STOCK_TINT2 = 'panel_items = LTSC\npanel_size = 100% 30\npanel_shrink = 0\nlauncher_icon_size = 24\nlauncher_icon_theme_override = 0\nlauncher_item_app = tint2conf.desktop\nlauncher_item_app = google-chrome.desktop\n';
+const STOCK_OPENBOX = '<openbox_config>\n<menu>\n  <file>/var/lib/openbox/debian-menu.xml</file>\n  <file>menu.xml</file>\n</menu>\n</openbox_config>\n';
+
+function tmp() {
+  return tmpDir('arigami-desktop-terminal-');
+}
+
+function fixture() {
+  const root = tmp();
+  const home = path.join(root, 'home');
+  fs.mkdirSync(home);
+  fs.writeFileSync(path.join(root, 'tint2rc'), STOCK_TINT2);
+  fs.writeFileSync(path.join(root, 'rc.xml'), STOCK_OPENBOX);
+  const run = () =>
+    ensureDesktopConfig({
+      dir: path.join(root, 'desktop'),
+      env: { HOME: home },
+      stockTint2rc: path.join(root, 'tint2rc'),
+      stockOpenboxRc: path.join(root, 'rc.xml'),
+    });
+  return { root, home, run };
+}
+
+test('tint2Config: terminal first, no tint2 settings icon, one full-width bar with the launcher centred and the clock right', () => {
+  const rc = tint2Config(STOCK_TINT2 + 'background_color = #000000 60\n', '/d/terminal.desktop', () => true);
+  const items = rc.split('\n').filter((l) => l.startsWith('launcher_item_app'));
+  expect(items).toEqual(['launcher_item_app = /d/terminal.desktop', 'launcher_item_app = google-chrome.desktop']);
+  for (const l of ['panel_items = :LTC', 'panel_size = 100% 56', 'panel_shrink = 0', 'launcher_icon_size = 48', 'panel_position = bottom center horizontal', 'taskbar_name = 0'])
+    expect(rc.split('\n').filter((x) => x.startsWith(l.split(' =')[0] + ' '))).toEqual([l]);
+  expect(rc).toMatch(/^background_color = #000000 50$/m); // the bar: black at 50% over the wallpaper
+  expect(rc).toMatch(/^separator_size = 588$/m); // (1280 - 2×48 - 8) / 2: the two icons sit at the centre
+  expect(tint2Config(null, '/x')).toBeNull();
+  expect(tint2Config('panel_items = TSC\n', '/x')).toBeNull();
+});
+
+test('dockLayout drops launchers tint2 would skip and re-centres on what is left, idempotently', () => {
+  const rc = tint2Config(STOCK_TINT2, '/d/terminal.desktop', () => true);
+  const one = dockLayout(rc, (item) => item.startsWith('/'));
+  expect(one.split('\n').filter((l) => l.startsWith('launcher_item_app'))).toEqual(['launcher_item_app = /d/terminal.desktop']);
+  expect(one).toMatch(/^separator_size = 616$/m); // (1280 - 48) / 2
+  expect(dockLayout(one, () => true)).toBe(one);
+  expect((one.match(/^separator = new$/gm) || []).length).toBe(1);
+});
+
+test('openboxRc swaps only the stock menu.xml for ours; openboxMenu opens with Terminal', () => {
+  const rc = openboxRc(STOCK_OPENBOX, '/d/openbox-menu.xml');
+  expect(rc).toContain('<file>/d/openbox-menu.xml</file>');
+  expect(rc).toContain('<file>/var/lib/openbox/debian-menu.xml</file>');
+  expect(rc).not.toContain('<file>menu.xml</file>');
+  expect(openboxRc('<openbox_config/>', '/x')).toBeNull();
+  const menu = openboxMenu("/a b/it's/arigami-terminal");
+  expect(menu.indexOf('label="Terminal"')).toBeLessThan(menu.indexOf('<separator'));
+  expect(menu).toContain('<command>\'/a b/it\'\\\'\'s/arigami-terminal\'</command>');
+});
+
+test('ensureDesktopConfig writes the launcher, icon, configs and lxterminal defaults; returns the args to use them', () => {
+  const { root, home, run } = fixture();
+  const conf = run();
+  const dir = path.join(root, 'desktop');
+  expect(conf.terminal).toBe(path.join(dir, 'arigami-terminal'));
+  expect(fs.statSync(conf.terminal).mode & 0o111).toBeTruthy();
+  expect(conf.tint2Args).toEqual([['-c', path.join(dir, 'tint2rc')]]);
+  expect(conf.openboxArgs).toEqual(['--config-file', path.join(dir, 'openbox-rc.xml')]);
+  expect(fs.readFileSync(path.join(dir, 'tint2rc'), 'utf8')).toContain(`launcher_item_app = ${path.join(dir, 'terminal.desktop')}`);
+  const entry = fs.readFileSync(path.join(dir, 'terminal.desktop'), 'utf8');
+  expect(entry).toContain(`Exec="${conf.terminal}"`);
+  expect(entry).toContain(`Icon=${path.join(dir, 'terminal.svg')}`);
+  expect(fs.readFileSync(path.join(dir, 'openbox-rc.xml'), 'utf8')).toContain(path.join(dir, 'openbox-menu.xml'));
+  expect(fs.readFileSync(path.join(home, '.config/lxterminal/lxterminal.conf'), 'utf8')).toMatch(/scrollback=10000/);
+  // idempotent
+  expect(run()).toEqual(conf);
+});
+
+test("a user's own tint2/openbox/lxterminal config is left alone", () => {
+  const { home, run } = fixture();
+  for (const f of ['tint2/tint2rc', 'openbox/menu.xml', 'lxterminal/lxterminal.conf']) {
+    fs.mkdirSync(path.join(home, '.config', path.dirname(f)), { recursive: true });
+    fs.writeFileSync(path.join(home, '.config', f), 'mine');
+  }
+  const conf = run();
+  expect(conf.tint2Args).toEqual([[]]);
+  expect(conf.openboxArgs).toEqual([]);
+  expect(fs.readFileSync(path.join(home, '.config/lxterminal/lxterminal.conf'), 'utf8')).toBe('mine');
+});
+
+test('no stock configs (non-Debian layout): no args, the launcher script is still there', () => {
+  const root = tmp();
+  const conf = ensureDesktopConfig({ dir: path.join(root, 'd'), env: { HOME: root }, stockTint2rc: '/nonexistent', stockOpenboxRc: '/nonexistent' });
+  expect(conf.tint2Args).toEqual([[]]);
+  expect(conf.openboxArgs).toEqual([]);
+  expect(fs.existsSync(conf.terminal)).toBe(true);
+});
+
+// Run the real script against a PATH of fake terminals that print their name, cwd and LANG.
+function runScript(fakes, env = {}) {
+  const root = tmp();
+  const bin = path.join(root, 'bin');
+  fs.mkdirSync(bin);
+  for (const t of fakes) fs.writeFileSync(path.join(bin, t), `#!/bin/sh\necho "${t}|$(pwd)|$LANG|$*"\n`, { mode: 0o755 });
+  fs.symlinkSync('/bin/sh', path.join(bin, 'sh'));
+  const script = path.join(root, 'arigami-terminal');
+  fs.writeFileSync(script, terminalScript(), { mode: 0o755 });
+  const r = spawnSync('/bin/sh', [script], { env: { PATH: bin, HOME: root, ...env }, encoding: 'utf8' });
+  return { root, out: r.stdout.trim(), err: r.stderr.trim(), status: r.status };
+}
+
+const posix = process.platform === 'win32' ? test.skip : test;
+
+posix('launcher script: system x-terminal-emulator wins, in the session cwd, with a UTF-8 locale', () => {
+  const cwd = tmp();
+  const { out } = runScript(['x-terminal-emulator', 'lxterminal'], { ARIGAMI_TERMINAL_CWD: cwd, LANG: 'C' });
+  expect(out).toBe(`x-terminal-emulator|${fs.realpathSync(cwd)}|C.UTF-8|`);
+});
+
+posix('launcher script: falls back down the list, keeps an existing UTF-8 LANG, defaults to HOME', () => {
+  const r = runScript(['xfce4-terminal', 'xterm'], { LANG: 'he_IL.UTF-8' });
+  expect(r.out).toBe(`xfce4-terminal|${fs.realpathSync(r.root)}|he_IL.UTF-8|`);
+  const x = runScript(['xterm']);
+  expect(x.out.startsWith('xterm|')).toBe(true);
+  expect(x.out).toContain('-u8');
+});
+
+posix('launcher script: ARIGAMI_TERMINAL overrides; nothing installed exits non-zero with a message', () => {
+  expect(runScript(['lxterminal', 'mine'], { ARIGAMI_TERMINAL: 'mine --flag' }).out).toMatch(/^mine\|.*\|--flag$/);
+  const none = runScript([]);
+  expect(none.status).toBe(1);
+  expect(none.err).toMatch(/No terminal emulator/);
+});
+
+// Per-session desktops: the dock's browser icon opens the SESSION's Chrome (through the host), not the default-profile
+// Chrome — which, when the owner already runs it, only opens a window on the shared :99.
+test('sessionTint2Config swaps the first browser launcher (bare or by path) for the session one and drops the rest', () => {
+  const rc = 'panel_items = LTSC\nlauncher_item_app = /x/terminal.desktop\nlauncher_item_app = firefox.desktop\nlauncher_item_app = /usr/share/applications/google-chrome.desktop\nlauncher_item_app = chromium-browser.desktop\nclock_format = %H:%M\n';
+  const out = sessionTint2Config(rc, '/d/session-chrome.desktop');
+  const launchers = out.split('\n').filter((l) => l.startsWith('launcher_item_app'));
+  expect(launchers).toEqual(['launcher_item_app = /x/terminal.desktop', 'launcher_item_app = /d/session-chrome.desktop']);
+  expect(out).toContain('clock_format = %H:%M');
+  expect(sessionTint2Config('launcher_item_app = /x/terminal.desktop\n', '/d/s.desktop')).toBeNull(); // no browser: left as it is
+  expect(sessionTint2Config(null, '/d/s.desktop')).toBeNull();
+});
+
+test('a session desktop runs the generated dock with the session browser; the shared one keeps the stock browser', () => {
+  const { root, home } = fixture();
+  const opts = { dir: path.join(root, 'desktop'), env: { HOME: home }, stockTint2rc: path.join(root, 'tint2rc'), stockOpenboxRc: path.join(root, 'rc.xml') };
+  const shared = ensureDesktopConfig(opts);
+  const session = ensureDesktopConfig({ ...opts, session: true });
+  expect(shared.tint2Args[0]).toEqual(['-c', path.join(root, 'desktop', 'tint2rc')]);
+  expect(session.tint2Args).toEqual([['-c', path.join(root, 'desktop', 'tint2rc-session')]]);
+  expect(fs.readFileSync(path.join(root, 'desktop', 'tint2rc-session'), 'utf8')).toMatch(/^separator_size = \d+$/m); // re-centred
+  const rc = fs.readFileSync(path.join(root, 'desktop', 'tint2rc-session'), 'utf8');
+  expect(rc).toContain(`launcher_item_app = ${path.join(root, 'desktop', 'session-chrome.desktop')}`);
+  expect(rc).not.toMatch(/google-chrome\.desktop/);
+  expect(rc).toContain(path.join(root, 'desktop', 'terminal.desktop')); // the terminal stays first
+  const entry = fs.readFileSync(path.join(root, 'desktop', 'session-chrome.desktop'), 'utf8');
+  expect(entry).toContain(`Exec="${path.join(root, 'desktop', 'arigami-chrome')}"`);
+  expect(fs.statSync(path.join(root, 'desktop', 'arigami-chrome')).mode & 0o111).toBeTruthy();
+});
+
+test("a session desktop over the user's own dock: a copy of it with the session browser; theirs is untouched", () => {
+  const { home, run, root } = fixture();
+  const mine = 'panel_items = LTSC\nlauncher_item_app = /usr/share/applications/xfce4-terminal.desktop\nlauncher_item_app = /usr/share/applications/google-chrome.desktop\n';
+  fs.mkdirSync(path.join(home, '.config', 'tint2'), { recursive: true });
+  fs.writeFileSync(path.join(home, '.config', 'tint2', 'tint2rc'), mine);
+  expect(run().tint2Args).toEqual([[]]);
+  const session = ensureDesktopConfig({ dir: path.join(root, 'desktop'), env: { HOME: home }, stockTint2rc: path.join(root, 'tint2rc'), stockOpenboxRc: path.join(root, 'rc.xml'), session: true });
+  expect(session.tint2Args).toEqual([['-c', path.join(root, 'desktop', 'tint2rc-session')]]);
+  const rc = fs.readFileSync(path.join(root, 'desktop', 'tint2rc-session'), 'utf8');
+  expect(rc).toContain('launcher_item_app = /usr/share/applications/xfce4-terminal.desktop');
+  expect(rc).toContain(`launcher_item_app = ${path.join(root, 'desktop', 'session-chrome.desktop')}`);
+  expect(fs.readFileSync(path.join(home, '.config', 'tint2', 'tint2rc'), 'utf8')).toBe(mine);
+});
+
+// The browser launcher against fake curl / chrome binaries that log how they were called.
+function runChrome(fakes, env = {}) {
+  const root = tmp();
+  const bin = path.join(root, 'bin');
+  fs.mkdirSync(bin);
+  const log = path.join(root, 'log');
+  for (const [name, code] of Object.entries(fakes)) {
+    fs.writeFileSync(path.join(bin, name), `#!/bin/sh\necho "${name} $*" >> ${log}\nexit ${code}\n`, { mode: 0o755 });
+  }
+  const script = path.join(root, 'arigami-chrome');
+  fs.writeFileSync(script, chromeScript(), { mode: 0o755 });
+  const r = spawnSync('/bin/sh', [script, 'https://example.com'], { env: { PATH: `${bin}:/usr/bin:/bin`, ...env }, encoding: 'utf8' });
+  return { status: r.status, stderr: r.stderr, log: fs.existsSync(log) ? fs.readFileSync(log, 'utf8') : '' };
+}
+
+test("the dock's browser icon asks the host for the session's Chrome, with a new window", () => {
+  const env = { ARIGAMI_SESSION_ID: 'sess_1', ARIGAMI_URL: 'http://127.0.0.1:9', ARIGAMI_TOKEN: 'tok' };
+  const ok = runChrome({ curl: 0, 'google-chrome-stable': 0 }, env);
+  expect(ok.status).toBe(0);
+  expect(ok.log).toContain('http://127.0.0.1:9/__api/sessions/sess_1/browser');
+  expect(ok.log).toContain('{"window":true}');
+  expect(ok.log).toContain('Bearer tok');
+  expect(ok.log).not.toContain('google-chrome-stable'); // never the default-profile Chrome on a session desktop
+  const down = runChrome({ curl: 7, 'google-chrome-stable': 0, xmessage: 0 }, env);
+  expect(down.log).toContain("xmessage -center Could not open this session's browser"); // said on the desktop
+  expect(down.log).not.toContain('google-chrome-stable');
+  const off = runChrome({ curl: 0, 'google-chrome-stable': 0 }); // no session: a regular Chrome
+  expect(off.log.trim()).toBe('google-chrome-stable https://example.com');
+});
+
+test("a tint2rc that is only tint2's own copy of the stock config is not the user's: the generated dock is used", () => {
+  const { root, home, run } = fixture();
+  fs.mkdirSync(path.join(home, '.config', 'tint2'), { recursive: true });
+  fs.writeFileSync(path.join(home, '.config', 'tint2', 'tint2rc'), STOCK_TINT2); // what tint2 writes on its first run without -c
+  expect(run().tint2Args).toEqual([['-c', path.join(root, 'desktop', 'tint2rc')]]);
+  const session = ensureDesktopConfig({ dir: path.join(root, 'desktop'), env: { HOME: home }, stockTint2rc: path.join(root, 'tint2rc'), stockOpenboxRc: path.join(root, 'rc.xml'), session: true });
+  const rc = fs.readFileSync(path.join(root, 'desktop', 'tint2rc-session'), 'utf8');
+  expect(rc).toContain(path.join(root, 'desktop', 'terminal.desktop')); // the terminal is back
+  expect(rc).not.toContain('tint2conf.desktop');
+  fs.writeFileSync(path.join(home, '.config', 'tint2', 'tint2rc'), STOCK_TINT2 + 'panel_size = 100% 40\n'); // one change makes it theirs
+  expect(run().tint2Args).toEqual([[]]);
+});

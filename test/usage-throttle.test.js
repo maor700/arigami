@@ -7,9 +7,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { runInChild } from './_child.js';
+import { tmpDir } from './_tmp.js';
 
 test('getUsage keeps the persisted snapshot when the endpoint throttles, and a throttle is not persisted', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-usage-throttle-'));
+  const dir = tmpDir('arigami-usage-throttle-');
   fs.writeFileSync(
     path.join(dir, 'accounts.json'),
     JSON.stringify({
@@ -44,7 +45,7 @@ test('getUsage keeps the persisted snapshot when the endpoint throttles, and a t
 });
 
 test('a real failure (401) still replaces the snapshot', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-usage-401-'));
+  const dir = tmpDir('arigami-usage-401-');
   fs.writeFileSync(
     path.join(dir, 'accounts.json'),
     JSON.stringify({

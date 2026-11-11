@@ -7,6 +7,7 @@ import path from 'node:path';
 import zlib from 'node:zlib';
 import { encodePng, downscaleRgba, frameDiffRatio } from '../server/lib/png.ts';
 import { runInChild } from './_child.js';
+import { tmpDir } from './_tmp.js';
 
 test('encodePng writes a valid RGBA8 PNG', () => {
   const w = 3, h = 2;
@@ -62,7 +63,7 @@ test('judgeFrame: below threshold → duplicate; above but too soon → throttle
     "const {judgeFrame}=await import('./server/screenshots.ts');" +
       "const P={threshold:0.03,minIntervalMs:30000};" +
       'emit({dup:judgeFrame(0.01,60000,P,true),thr:judgeFrame(0.2,5000,P,true),rec:judgeFrame(0.2,60000,P,true),manualSoon:judgeFrame(0.2,5000,P,false),manualDup:judgeFrame(0.0,5000,P,false)});',
-    { ARIGAMI_DIR: fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-judge-')) }
+    { ARIGAMI_DIR: tmpDir('arigami-judge-') }
   );
   if (!r.ok) throw new Error(r.error);
   expect(r.out[0]).toEqual({ dup: 'duplicate', thr: 'throttled', rec: 'record', manualSoon: 'record', manualDup: 'duplicate' });
@@ -70,7 +71,7 @@ test('judgeFrame: below threshold → duplicate; above but too soon → throttle
 
 // screenshots.ts imports state.js (side effects) → isolate in a child.
 function sweep(setup) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-screens-'));
+  const dir = tmpDir('arigami-screens-');
   const root = path.join(dir, 'screens');
   setup(root);
   const r = runInChild(
@@ -101,3 +102,31 @@ test('sweepScreensDir drops files past max age and trims oldest-first to the byt
   expect(out.r.bytesFreed).toBe(700);
   expect(out.left).toEqual([`sess_b/${NOW - 1000}.png`, `sess_b/${NOW - 2000}.png`, 'sess_b/notes.txt'].sort());
 });
+
+test('explicit observations save fresh frames while passive captures still deduplicate', () => {
+  const dir = tmpDir('arigami-fresh-');
+  const r = runInChild(`
+    const {mock}=await import('bun:test');
+    const fs=await import('node:fs');
+    const {encodePng}=await import('./server/lib/png.ts');
+    const rgba=Buffer.alloc(100*100*4, 64);
+    let png=encodePng(rgba,100,100);
+    mock.module('./server/lib/screen-driver.js',()=>({pickDriver:()=>({
+      ensure:async()=>({}), capture:async()=>({png,frame:{rgba:Buffer.from(rgba),width:100,height:100},width:100,height:100,via:'rfb'})
+    })}));
+    const state=await import('./server/state.ts');
+    const shots=await import('./server/screenshots.ts');
+    const s=state.createSession({title:'test'});
+    const first=await shots.takeScreenshot(s.id);
+    rgba[0]=255; png=encodePng(rgba,100,100);
+    const passive=await shots.takeScreenshot(s.id,{auto:true});
+    const fresh=await shots.takeScreenshot(s.id);
+    const same=await shots.takeScreenshot(s.id);
+    emit({passive:passive.status,fresh:fresh.status,same:same.status,
+      unique:new Set([first.event.url,fresh.event.url,same.event.url]).size,
+      bytes:fs.readFileSync(shots.screenFilePath(s.id,fresh.event.file)).equals(png)});
+  `, { ARIGAMI_DIR: dir });
+  if (!r.ok) throw new Error(r.error);
+  expect(r.out[0]).toEqual({passive:'duplicate',fresh:'recorded',same:'recorded',unique:3,bytes:true});
+// The isolated child waits for the existing 5s retention sweep before exiting.
+}, 10_000);

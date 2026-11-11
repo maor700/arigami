@@ -379,6 +379,22 @@ export function tokenForSession(accountId) {
   return { account: a, token };
 }
 
+/** Host env for a spawned `claude`, inherited credentials stripped (the host picks the account). */
+export function claudeBaseEnv() {
+  const { CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_API_KEY, ...rest } = process.env;
+  return rest;
+}
+
+/** Auth env of a claude account (else the active one); {} = the CLI's own login. */
+export function claudeAuthEnv(accountId) {
+  try {
+    const r = tokenForSession(accountId);
+    return r ? { CLAUDE_CODE_OAUTH_TOKEN: r.token } : {};
+  } catch {
+    return {};
+  }
+}
+
 // True if the host can resolve at least one usable credential for a provider —
 // claude: a live macOS keychain login OR a stored oauth-token; codex: any codex
 // account whose auth.json exists. On macOS the keychain login is NOT a file/env

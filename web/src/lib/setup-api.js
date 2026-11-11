@@ -41,14 +41,29 @@ async function legacyOverview() {
   const push = (id, ok, detail, data) => caps.push({ id, ok: !!ok, detail: detail || '', data: data || {}, ...manualFor(id) });
   push('identity', false, '');
   push('claude', step('claude')?.status === 'ok', step('claude')?.detail, step('claude')?.data);
+  push('codex', step('codex')?.status === 'ok', step('codex')?.detail, step('codex')?.data);
   push('git', step('git')?.status === 'ok', step('git')?.detail, { ...step('git')?.data, ghLogin: wiz?.ghLogin });
   push('whatsapp', wa?.status === 'connected', wa?.user || wa?.status, wa);
   push('composio', !!step('integrations')?.data?.composio, '', step('integrations')?.data);
   push('remote', !!remote?.serving, remote?.httpsUrl || remote?.reason, remote);
   push('telemetry', !!tele?.enabled, tele?.reason, tele);
   push('push', false, '', {});
-  push('repo', (step('repo')?.data?.repos || []).length > 0, (step('repo')?.data?.repos || []).join(', '), step('repo')?.data);
+  push('repo', (step('repo')?.data?.present || step('repo')?.data?.repos || []).length > 0, (step('repo')?.data?.present || step('repo')?.data?.repos || []).join(', '), step('repo')?.data);
   return { identity: null, capabilities: caps, audit: [], legacy: true };
+}
+
+// Register a repo AND get its files: a registered-but-not-cloned name is not an error on the server (it starts the
+// clone itself), a new one is registered here and then cloned. Returns the server's status entry.
+export async function addRepoAndFetch(entry) {
+  const res = await api.post('/onboarding/repos', entry);
+  if (!res?.existing && !res?.present) {
+    try {
+      await api.post(`/onboarding/repos/${encodeURIComponent(res?.name || entry.name)}/clone`);
+    } catch {
+      /* the repo list shows the state either way */
+    }
+  }
+  return res;
 }
 
 // A2: `owner` = 'global' (default) or 'agent:<slug>' — the agent's connections,
@@ -77,6 +92,10 @@ export async function overview({ owner = 'global' } = {}) {
 //   token   {token}            oauth  {action:'start'|'code'|'device', id?, code?}
 //   qr      {}                 toggle {enable}      repo {entry}      takeover {email?}
 export async function connect(capability, payload = {}) {
+  // The bare `repo` id is the wizard's "add a repository" form (no name yet), not a registry capability — the host
+  // only knows `repo:<name>`, so asking it answers 400 "unknown capability: repo" (which the 404 fallback below
+  // never catches). Go straight to the route that adds one.
+  if (capability === 'repo') return legacyConnect(capability, payload);
   try {
     return await api.post(`/setup/${encodeURIComponent(capability)}`, payload);
   } catch (e) {
@@ -116,7 +135,7 @@ async function legacyConnect(capability, p) {
     case 'telemetry':
       return api.post('/onboarding/wizard/telemetry', { action: p.enable ? 'enable' : 'disable' });
     case 'repo':
-      return api.post('/onboarding/repos', p.entry || p);
+      return addRepoAndFetch(p.entry || p);
     default:
       break;
   }

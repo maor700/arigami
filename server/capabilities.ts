@@ -20,6 +20,7 @@ import * as hostGrants from './lib/mcp-grants.js';
 import { cfg } from './lib/config.js';
 import { ARIGAMI_DIR } from './lib/instance.js';
 import * as ob from './onboarding.js';
+import * as vp from './voice-providers.js';
 
 // ---------------------------------------------------------------------------
 // Shared contract (ids, shapes) — S2 (web) and S3 (skills) depend on these.
@@ -66,7 +67,7 @@ export interface Capability {
   id: string;
   title: string;
   // Group for Settings → Connections / doctor output.
-  group: 'core' | 'code' | 'messaging' | 'integrations' | 'machine' | 'host';
+  group: 'core' | 'code' | 'messaging' | 'integrations' | 'machine' | 'host' | 'voice';
   // M1: which provider backs it (native-mcp / composio / local).
   provider: Provider;
   check: () => CheckResult | Promise<CheckResult>;
@@ -128,7 +129,7 @@ export const KNOWN_COMPOSIO_TOOLKITS = ['gmail', 'googledrive', 'googlecalendar'
 export const knownMcpServices = (): string[] => connectableMcp().map((s) => s.slug);
 /** @deprecated snapshot taken at import; call knownMcpServices() for the live list. */
 export const KNOWN_MCP_SERVICES: readonly string[] = connectableMcp().map((s) => s.slug);
-const CAP_ID_RE = /^(identity|claude|codex|git|whatsapp|desktop|push|remote|telemetry|repo:[A-Za-z0-9._-]{1,64}|composio:[a-z0-9_-]{1,40}|mcp:[a-z0-9-]{1,40})$/;
+const CAP_ID_RE = /^(identity|claude|codex|git|whatsapp|desktop|push|remote|telemetry|repo:[A-Za-z0-9._-]{1,64}|composio:[a-z0-9_-]{1,40}|mcp:[a-z0-9-]{1,40}|voice:(openai|gemini|elevenlabs|cartesia|deepgram)|telephony:twilio)$/;
 export const isCapabilityId = (id: unknown): id is string => typeof id === 'string' && CAP_ID_RE.test(id);
 
 // ---------------------------------------------------------------------------
@@ -172,11 +173,16 @@ export const AUDIT_FILE = path.join(ARIGAMI_DIR, 'connections.log');
 // F6: open setup cards survive a host restart (server/api.ts persists them here).
 export const SETUP_PENDING_FILE = path.join(ARIGAMI_DIR, 'setup-pending.json');
 
+/** The sign-in providers an identity can be: the account sites offer as "Continue with …". */
+export type IdentityProvider = 'google' | 'microsoft' | 'apple';
+export const IDENTITY_PROVIDERS: IdentityProvider[] = ['google', 'microsoft', 'apple'];
+export const isIdentityProvider = (v: unknown): v is IdentityProvider => typeof v === 'string' && (IDENTITY_PROVIDERS as string[]).includes(v);
+
 export interface Identity {
   email: string;
-  provider: 'google';
+  provider: IdentityProvider;
   connectedAt: string;
-  chromeProfile: string; // 'base' — the shared chrome-base profile (T8)
+  chromeProfile: string; // 'chrome:<dir>' — a profile of the owner's Chrome on the shared desktop (sign_in); 'base' — the older chrome-base
   providers: Record<string, { at: string }>;
 }
 
@@ -200,16 +206,17 @@ export function readIdentity(owner: Owner = GLOBAL_OWNER): Identity | null {
 }
 
 /** Write (or merge into) identity.json. Refuses anything that smells like a secret. */
-export function writeIdentity(patch: { email?: string; chromeProfile?: string; provider?: 'google' }, owner: Owner = GLOBAL_OWNER): Identity {
+export function writeIdentity(patch: { email?: string; chromeProfile?: string; provider?: IdentityProvider }, owner: Owner = GLOBAL_OWNER): Identity {
   const cur = readIdentity(owner);
   const email = String(patch.email ?? cur?.email ?? '').trim().toLowerCase();
   if (!EMAIL_RE.test(email)) throw new Error('identity: a valid email is required');
   for (const v of Object.values(patch)) {
     if (typeof v === 'string' && SECRET_RE.test(v) && !EMAIL_RE.test(v)) throw new Error('identity: refusing to store what looks like a secret');
   }
+  if (patch.provider !== undefined && !isIdentityProvider(patch.provider)) throw new Error(`identity: provider is one of ${IDENTITY_PROVIDERS.join(', ')}`);
   const id: Identity = {
     email,
-    provider: 'google',
+    provider: patch.provider || (cur?.email === email ? cur.provider : undefined) || 'google',
     connectedAt: cur?.email === email ? cur.connectedAt : new Date().toISOString(),
     // A2: an agent's identity lives in the agent's own Chrome profile.
     chromeProfile: patch.chromeProfile || cur?.chromeProfile || (ownerSlug(owner) ? owner : 'base'),
@@ -306,6 +313,8 @@ export interface CapabilityProbes {
   push: () => boolean;
   remote: () => { available: boolean; loggedIn?: boolean; serving?: boolean; httpsUrl?: string | null; reason?: string };
   telemetry: () => { enabled: boolean; reason: string };
+  // Running in a container (Docker image / Kubernetes tenant): `remote` is not offered there without a tailscale CLI.
+  container: () => boolean;
   composioKey: () => boolean;
   // Connected toolkits (ACTIVE connected accounts). null = unknown (no key / offline).
   // Entries: '<toolkit>' for the host's accounts (user_id 'default'), and
@@ -320,6 +329,8 @@ export interface CapabilityProbes {
   codexMcp: () => Map<string, boolean>;
   // P2-4: the engine asking (a session's), or null for Settings/doctor — mcp:* then counts any engine's grant.
   engine: () => mcpConn.McpEngine | null;
+  // Voice & phone providers: one cheap authenticated call (cached), offline in doctor.
+  voice: (id: string) => Promise<vp.ProviderCheck>;
 }
 
 // Connected-accounts probe: one network call, cached — a tool that checks
@@ -451,12 +462,14 @@ export const defaultProbes: CapabilityProbes = {
     }
   },
   telemetry: () => ob.defaultProbes.telemetry(),
+  container: () => ob.detectEnv().container,
   composioKey: () => !!(cfg.composioApiKey || process.env.COMPOSIO_API_KEY),
   composioConnected: fetchComposioConnected,
   mcp: () => mcpConn.readMcpState(),
   mcpConnections: (owner) => mcpConn.readConnections(owner),
   codexMcp: () => mcpConn.readCodexMcpGrants(),
   engine: () => null,
+  voice: (id) => vp.checkProvider(id),
 };
 
 // ---------------------------------------------------------------------------
@@ -469,7 +482,7 @@ function staticCapabilities(p: CapabilityProbes, owner: Owner = GLOBAL_OWNER): C
   return [
     {
       id: 'identity',
-      title: 'Google identity (Chrome)',
+      title: 'Sign-in identity (Google / Microsoft / Apple)',
       group: 'core',
       provider: 'local',
       check: () => {
@@ -479,9 +492,9 @@ function staticCapabilities(p: CapabilityProbes, owner: Owner = GLOBAL_OWNER): C
         const from: Owner = own ? owner : GLOBAL_OWNER;
         return id
           ? { ok: true, owner: from, detail: `signed in as ${id.email}${from !== owner ? ' (shared)' : ''}`, data: { email: id.email, connectedAt: id.connectedAt, providers: Object.keys(id.providers), owner: from } }
-          : { ok: false, detail: 'sign in to Google once on the session desktop — the agent can then connect other services itself' };
+          : { ok: false, detail: "sign in once to your Google, Microsoft or Apple account, in your own Chrome on the shared desktop — the agent can then use \"Continue with …\" and connect other services itself" };
       },
-      manual: { kind: 'takeover', help: 'The agent opens accounts.google.com on its desktop and hands the screen to you; you sign in, click Done.' },
+      manual: { kind: 'takeover', help: 'The agent opens your account provider (Google, Microsoft or Apple) in your own Chrome on the shared desktop; the password comes from your vault, you approve on your phone if it asks.' },
       autoCapable: false,
       playbook: 'connect-identity',
       events: [...SETUP_EVENTS],
@@ -559,6 +572,7 @@ function staticCapabilities(p: CapabilityProbes, owner: Owner = GLOBAL_OWNER): C
           : {
               ok: false,
               detail: w.status === 'qr' ? 'scan the QR code with WhatsApp'
+                : w.reason === 'not-installed' ? 'WhatsApp bridge missing — run bash scripts/install-whatsapp.sh from the Arigami installation, then Show QR'
                 : w.reason === 'logged-out' ? 'WhatsApp unlinked this device — Show QR to pair again'
                 : w.reason === 'creds-corrupt' ? 'the saved WhatsApp pairing is damaged (creds.json empty) — Show QR to pair again'
                 : w.reason === 'crash-loop' ? 'the WhatsApp process keeps exiting — see the host log, then Show QR'
@@ -768,7 +782,22 @@ function mcpCapability(slug: string, p: CapabilityProbes, owner: Owner = GLOBAL_
   };
 }
 
-/** All capabilities currently worth listing: statics + every registered repo + known/seen toolkits. */
+/** A voice / phone provider (`voice:<name>`, `telephony:twilio`): a pasted key, verified by one call, kept on this host. */
+function voiceCapability(id: vp.VoiceProviderId, p: CapabilityProbes): Capability {
+  const spec = vp.VOICE_PROVIDERS[id];
+  return {
+    id,
+    title: spec.title,
+    group: 'voice',
+    provider: 'local',
+    check: () => p.voice(id),
+    manual: { kind: 'token', fields: spec.fields, help: spec.help },
+    autoCapable: false,
+    events: [...SETUP_EVENTS, 'voice'],
+  };
+}
+
+/** All capabilities currently worth listing: statics + every registered repo + known/seen toolkits + voice providers. */
 export function listCapabilities(probes: Partial<CapabilityProbes> = {}, owner: Owner = GLOBAL_OWNER): Capability[] {
   const p: CapabilityProbes = { ...defaultProbes, ...probes };
   const repos = p.repos().map((r) => repoCapability(r.name, p));
@@ -778,7 +807,11 @@ export function listCapabilities(probes: Partial<CapabilityProbes> = {}, owner: 
   // EXT: the MERGED catalog — core rows plus the user's own mcp-catalog.json,
   // so a service the user declared gets a capability card like any other.
   const native = mcpCatalog().map((sv) => mcpCapability(sv.slug, p, owner));
-  return [...staticCapabilities(p, owner), ...repos, ...native, ...toolkits];
+  // A container reaches the world through its own ingress, and can't run tailscaled (no TUN, no caps): offering
+  // `remote` there is a card nobody can complete.
+  const statics = staticCapabilities(p, owner).filter((c) => c.id !== 'remote' || !p.container() || p.remote().available);
+  const voice = vp.VOICE_PROVIDER_IDS.map((id) => voiceCapability(id, p));
+  return [...statics, ...repos, ...native, ...toolkits, ...voice];
 }
 
 // Toolkits somebody asked about (request_setup / check) join the listing.
@@ -794,6 +827,7 @@ export function getCapability(id: string, probes: Partial<CapabilityProbes> = {}
     return composioCapability(id.slice(9), p, owner);
   }
   if (id.startsWith('mcp:')) return mcpCapability(id.slice(4), p, owner);
+  if (vp.isVoiceProviderId(id)) return voiceCapability(id, p);
   return staticCapabilities(p, owner).find((c) => c.id === id) ?? null;
 }
 
@@ -869,7 +903,7 @@ export async function ensure(id: string, why: string, probes: Partial<Capability
 // ---------------------------------------------------------------------------
 
 export async function formatDoctor(probes: Partial<CapabilityProbes> = {}): Promise<string> {
-  const view = await capabilitiesStatus({ composioConnected: async () => null, ...probes });
+  const view = await capabilitiesStatus({ composioConnected: async () => null, voice: async (id) => vp.checkProviderOffline(id), ...probes });
   const lines = view.capabilities
     .filter((c) => !(c.id.startsWith('composio:') && c.data?.unknown))
     .map((c) => `  ${c.ok ? '✓' : '○'} ${c.id.padEnd(22)} ${c.detail}${c.autoCapable ? '  [auto]' : ''}`);
@@ -877,9 +911,14 @@ export async function formatDoctor(probes: Partial<CapabilityProbes> = {}): Prom
   return lines.join('\n');
 }
 
+// Not a real top-level await: `bun build --compile` (the desktop sidecar) refuses
+// any require() whose transitive dependency awaits at module scope, and
+// claude.js reaches this file through one. Same shape as the CLI block in
+// extensions.ts — a fire-and-forget IIFE that the event loop still runs to
+// completion before a `bun server/capabilities.ts doctor` process exits.
 if (import.meta.main && process.argv[2] === 'doctor') {
   process.env.ARIGAMI_FUNNEL_QUIET = '1';
-  console.log(await formatDoctor());
+  void (async () => { console.log(await formatDoctor()); })();
 }
 
 // Keep the path helper visible for tests/tools.

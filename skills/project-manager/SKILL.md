@@ -18,7 +18,7 @@ over those sessions, never a replacement for the human:
 
 This skill is the *methodology*. The platform capabilities it drives (folders,
 `create_session kind:"full"`, `task_session`, `report_to_master`) are documented
-in `docs/SIDEBAR-FOLDERS.md` and `docs/DISPATCHER.md`.
+in `$ARIGAMI_DOCS/SIDEBAR-FOLDERS.md` and `$ARIGAMI_DOCS/DISPATCHER.md`.
 
 ## Your team
 
@@ -124,7 +124,7 @@ The human may be on a phone, another machine or a tailnet — a
 
 1. **The child never merges.** It commits on its branch and calls
    `request_review` (human) + `report_to_master` (you).
-2. **The human approves.** Their `✓ Verified` / review-approve stamps
+2. **The human approves.** Their **Approve** (review card or Changes tab — one action) stamps
    `metadata.review = {state:"approved", at, by}` on the child. You can read it
    from `list_sessions`. Nothing you do can stamp it.
 3. **After approval, merging is one call for you: `merge_session({session_id,
@@ -187,4 +187,4 @@ When you see one:
 
 **Never work around a missing capability** — no scraping instead of the API, no
 asking for tokens/passwords in chat, no reading another session's profile. The
-card is the only path. Details: `docs/CONNECT.md`.
+card is the only path. Details: `$ARIGAMI_DOCS/CONNECT.md`.

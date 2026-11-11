@@ -56,7 +56,7 @@ function parseField(raw: string, min: number, max: number, wrap?: (n: number) =>
     const m = /^(\*|\d+)(?:-(\d+))?(?:\/(\d+))?$/.exec(part.trim());
     if (!m) throw new Error(`invalid cron field "${raw}" (bad token "${part}")`);
     const start = m[1] === '*' ? min : Number(m[1]);
-    const end = m[2] !== undefined ? Number(m[2]) : m[1] === '*' ? max : start;
+    const end = m[2] !== undefined ? Number(m[2]) : m[1] === '*' || m[3] !== undefined ? max : start;
     const step = m[3] !== undefined ? Number(m[3]) : 1;
     if (step <= 0) throw new Error(`invalid step in cron field "${raw}"`);
     if (start < min || end > max || start > end) throw new Error(`out-of-range cron field "${raw}" (expected ${min}-${max})`);
@@ -128,6 +128,13 @@ export function computeNextRun(
   const { createdAt, lastRun } = opts;
   if (schedule.kind === 'at') {
     if (lastRun) return null; // one-shot — already fired
+    // Date.parse also accepts non-date strings such as "0 9 * * *".
+    const iso = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})?$/.exec(schedule.value);
+    if (!iso) throw new Error('invalid "at" timestamp — expected ISO date and time (YYYY-MM-DDTHH:mm[:ss], optionally Z or ±HH:mm)');
+    const [, year, month, day, hour, minute, second = '0'] = iso;
+    const days = new Date(Date.UTC(Number(year), Number(month), 0)).getUTCDate();
+    if (+month < 1 || +month > 12 || +day < 1 || +day > days || +hour > 23 || +minute > 59 || +second > 59)
+      throw new Error(`invalid "at" timestamp: "${schedule.value}"`);
     const t = Date.parse(schedule.value);
     if (!Number.isFinite(t)) throw new Error(`invalid "at" timestamp: "${schedule.value}"`);
     return t;

@@ -50,6 +50,7 @@ export async function baseStatus(repoRoot: string, base: string, branch: string)
 export interface MergeOpts {
   repoRoot: string;       // the checkout where `base` is checked out (master's repo)
   branch: string;
+  approvedSha?: string; // immutable reviewed commit, rechecked immediately before git merge
   base: string;
   strategy?: MergeStrategy;
   message: string;
@@ -58,7 +59,7 @@ export interface MergeOpts {
 export type MergeResult =
   | { ok: true; sha: string; strategy: MergeStrategy }
   | { ok: false; conflict: true; files: string[] }
-  | { ok: false; conflict?: false; reason: 'not-a-repo' | 'base-not-checked-out' | 'dirty' | 'no-branch' | 'nothing-to-merge' | 'git'; error: string; files?: string[] };
+  | { ok: false; conflict?: false; reason: 'not-a-repo' | 'base-not-checked-out' | 'dirty' | 'no-branch' | 'nothing-to-merge' | 'approval-stale' | 'git'; error: string; files?: string[] };
 
 // Merge `branch` into `base` inside repoRoot. Refuses (without touching the
 // tree) when repoRoot isn't on `base` or has tracked modifications. On a
@@ -73,9 +74,13 @@ export async function mergeBranch(o: MergeOpts): Promise<MergeResult> {
   if (st.dirty) return { ok: false, reason: 'dirty', error: `base worktree has uncommitted changes (${st.dirtyFiles.length} file${st.dirtyFiles.length === 1 ? '' : 's'})`, files: st.dirtyFiles };
   if (st.ahead === 0) return { ok: false, reason: 'nothing-to-merge', error: `${o.branch} has no commits on top of ${o.base}` };
 
+  const tip = await git(o.repoRoot, ['rev-parse', '--verify', `refs/heads/${o.branch}^{commit}`]);
+  if (o.approvedSha && (tip.code !== 0 || tip.out.trim() !== o.approvedSha))
+    return { ok: false, reason: 'approval-stale', error: 'branch changed since approval; request a new review' };
+  const target = o.approvedSha || tip.out.trim();
   const args = strategy === 'squash'
-    ? ['merge', '--squash', o.branch]
-    : ['merge', '--no-ff', '--no-edit', '-m', o.message, o.branch];
+    ? ['merge', '--squash', target]
+    : ['merge', '--no-ff', '--no-edit', '-m', o.message, target];
   const r = await git(o.repoRoot, args);
   if (r.code !== 0) {
     const u = await git(o.repoRoot, ['diff', '--name-only', '--diff-filter=U']);

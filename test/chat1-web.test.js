@@ -22,6 +22,7 @@ const h = (...a) => React.createElement(...a);
 let posts = [];
 let origFetch;
 let failNext = null; // {status, error} → the next fetch rejects like api.js does
+let mergeStatusReply = { kind: 'local', base: 'main', canMerge: true, reason: null, offer: { show: true, reason: null } };
 
 beforeAll(async () => {
   const mem = new Map();
@@ -40,6 +41,10 @@ beforeAll(async () => {
       const f = failNext;
       failNext = null;
       return { ok: false, status: f.status, url: String(url), json: async () => ({ error: f.error }), text: async () => JSON.stringify({ error: f.error }), headers: { get: () => 'application/json' } };
+    }
+    if (String(url).includes('/merge/status')) {
+      const st = mergeStatusReply;
+      return { ok: true, status: 200, url: String(url), json: async () => st, text: async () => JSON.stringify(st), headers: { get: () => 'application/json' } };
     }
     const body = init.body ? JSON.parse(init.body) : {};
     const reply = body.toolUseId === 'tu_gone' ? { ok: true, delivered: 'message' } : { ok: true, delivered: 'tool' };
@@ -190,4 +195,181 @@ test('action card: a refused answer is shown on the card', async () => {
   expect(host.innerHTML).toContain('daily budget spent');
   expect(yes.disabled).toBe(false);
   await act(async () => root.unmount());
+});
+
+// ---- the action card is part of the conversation, not a pinned bar ----------------------------
+
+const ACT = { id: 'act_7', prompt: 'Ship it?', buttons: [{ label: 'Go', value: 'go', style: 'primary' }, { label: 'Wait', value: 'wait' }] };
+const actPane = (events, action) =>
+  render(h(ChatPane, { session: { id: 'sess_t', metadata: { chatMode: 'full' }, claude: { state: 'idle' } }, events, action, chatLoaded: true }));
+const user = (id, text, ts) => ({ id, kind: 'user', text, ts });
+
+test('action card: renders where it was raised, so it scrolls up with the conversation', () => {
+  const html = actPane(
+    [user('u1', 'MSG-BEFORE', 1), { id: 'ar1', kind: 'action-request', actionId: 'act_7', prompt: 'Ship it?', ts: 2 }, user('u2', 'MSG-AFTER', 3)],
+    ACT
+  );
+  const card = html.indexOf('Ship it?');
+  expect(card).toBeGreaterThan(html.indexOf('MSG-BEFORE'));
+  expect(card).toBeLessThan(html.indexOf('MSG-AFTER')); // not pinned below the later message
+  expect(html.split('Ship it?').length - 1).toBe(1); // once, not inline AND pinned
+});
+
+test('action card: once it is no longer the current action it collapses to a one-line record', () => {
+  const html = actPane([{ id: 'ar1', kind: 'action-request', actionId: 'act_7', prompt: 'Ship it?', ts: 2 }], null);
+  expect(html).toContain('data-action-record');
+  expect(html).toContain('Ship it?');
+  expect(html).not.toContain('>Go<'); // no live buttons
+});
+
+test('action card: a current action with no record in the transcript is still answerable (shown last)', () => {
+  const html = actPane([user('u1', 'hello', 1)], ACT);
+  expect(html).toContain('Ship it?');
+  expect(html.indexOf('Ship it?')).toBeGreaterThan(html.indexOf('hello'));
+});
+
+// ---- the merge offer is part of the conversation too, and dismissable --------------------------
+
+const APPROVED = { id: 'sess_t', metadata: { chatMode: 'full', branch: 'feat/x', base: 'main', review: { state: 'approved', at: 'T1', by: 'me' } }, claude: { state: 'idle' } };
+// The merge control renders once the host's merge/status says this viewer can merge — so these
+// render in a DOM (effects run) rather than to a static string.
+async function mergePane(events, extra = {}) {
+  const host = document.createElement('div');
+  document.body.appendChild(host);
+  const root = createRoot(host);
+  await act(async () => { root.render(h(ChatPane, { sessionId: 'sess_t', events, chatLoaded: true, ...extra })); await new Promise((r) => setTimeout(r, 20)); });
+  const html = host.innerHTML;
+  await act(async () => root.unmount());
+  return html;
+}
+const offer = { id: 'mo1', kind: 'merge-offer', approvedAt: 'T1', branch: 'feat/x', ts: 2 };
+
+test('merge offer: live inline with a dismiss button while approved; a one-line record once dismissed or merged', async () => {
+  if (!createRoot) return;
+  const store = await import(web('lib/store.js'));
+  const seed = (md) => { store.getState().sessions = [{ ...APPROVED, metadata: { ...APPROVED.metadata, ...md } }]; };
+  const sess = () => store.getState().sessions[0];
+
+  seed({});
+  let html = await mergePane([user('u1', 'MSG-BEFORE', 1), offer, user('u2', 'MSG-AFTER', 3)]);
+  expect(html).toContain('data-merge-panel');
+  expect(html).toContain('data-merge-dismiss');
+  expect(html.indexOf('data-merge-panel')).toBeGreaterThan(html.indexOf('MSG-BEFORE'));
+  expect(html.indexOf('data-merge-panel')).toBeLessThan(html.indexOf('MSG-AFTER')); // not pinned below the later message
+  expect(html.split('data-merge-panel').length - 1).toBe(1); // once
+
+  seed({ mergeOfferDismissedAt: 'T1' });
+  html = await mergePane([user('u1', 'MSG-BEFORE', 1), offer]);
+  expect(html).not.toContain('data-merge-panel');
+  expect(html).toContain('data-merge-offer-record');
+
+  seed({ merged: { sha: 'abc1234', base: 'main', at: 'T2' } });
+  html = await mergePane([offer]);
+  expect(html).not.toContain('data-merge-panel');
+  expect(html).toContain('data-merge-offer-record');
+
+  // approved before offers were recorded: still offered (last), still dismissable
+  seed({});
+  html = await mergePane([user('u1', 'old chat', 1)]);
+  expect(html).toContain('data-merge-panel');
+  expect(html.indexOf('data-merge-panel')).toBeGreaterThan(html.indexOf('old chat'));
+  seed({ mergeOfferDismissedAt: 'T1' });
+  expect(await mergePane([user('u1', 'old chat', 1)])).not.toContain('data-merge-panel');
+});
+
+test('merge offer: when this viewer cannot merge (someone else\'s PR) it is a passive line — no Merge button', async () => {
+  if (!createRoot) return;
+  const store = await import(web('lib/store.js'));
+  store.getState().sessions = [{ ...APPROVED }];
+  mergeStatusReply = { kind: 'pr', mode: 'pr-review', base: 'main', canMerge: false, reason: 'not-your-pr', offer: { show: false, reason: 'not-your-pr' } };
+  try {
+    const html = await mergePane([user('u1', 'hi', 1), offer]);
+    expect(html).toContain('data-merge-passive="not-your-pr"');
+    expect(html).toContain('its author merges it');
+    expect(html).not.toContain('data-merge-target');
+    expect(html).not.toMatch(/>Merge</);
+  } finally {
+    mergeStatusReply = { kind: 'local', base: 'main', canMerge: true, reason: null, offer: { show: true, reason: null } };
+  }
+});
+
+test('cold load: no live action / merge card while the transcript is loading — it appears once, in place, after', async () => {
+  const store = await import(web('lib/store.js'));
+  store.getState().sessions = [{ ...APPROVED }];
+  const events = [user('u1', 'hi', 1), { id: 'ar1', kind: 'action-request', actionId: 'act_7', prompt: 'Ship it?', ts: 2 }];
+  const loading = render(h(ChatPane, { sessionId: 'sess_t', events, action: ACT, loading: true }));
+  expect(loading).not.toContain('Ship it?'); // neither the card nor a misleading "answered" record
+  const fallback = render(h(ChatPane, { sessionId: 'sess_t', events: [user('u1', 'hi', 1)], action: ACT, loading: true }));
+  expect(fallback).not.toContain('Ship it?');
+  const loaded = render(h(ChatPane, { sessionId: 'sess_t', events, action: ACT, loading: false }));
+  expect(loaded.split('Ship it?').length - 1).toBe(1);
+});
+
+// ---- the review card: THE approve action, one label, already-approved state ------------------
+
+const REVIEW = (o = {}) => ({ id: 'act_r', at: '2026-01-01T00:00:00Z', kind: 'review', prompt: 'Review my change', buttons: [{ label: 'Request changes', value: 'request-changes' }, { label: '✓ Verified', value: 'verified', style: 'primary' }], ...o });
+
+test('review card: Approve (same label as the Changes tab, even on an old "Verified" card) says what it will do', async () => {
+  const store = await import(web('lib/store.js'));
+  store.getState().sessions = [{ id: 'sess_t', metadata: { branch: 'feat/x' } }];
+  const local = render(h(ActionCard, { sessionId: 'sess_t', action: REVIEW({ approval: { mode: 'local', sha: 'a1', branch: 'feat/x', base: 'main' } }) }));
+  expect(local).toContain('Approve');
+  expect(local).not.toContain('Verified');
+  expect(local).toContain('Approves feat/x — then it can be merged into main.');
+  const pr = render(h(ActionCard, { sessionId: 'sess_t', action: REVIEW({ buttons: [{ label: 'Approve', value: 'approve', style: 'primary' }], approval: { mode: 'pr-review', sha: 'h1', pr: 42 } }) }));
+  expect(pr).toContain('Posts an approving review to PR #42 on GitHub.');
+  // a plain (non-review) card keeps its own labels
+  expect(render(h(ActionCard, { sessionId: 'sess_t', action: ACT }))).not.toContain('data-approve');
+});
+
+test('review card: already approved at this commit → "Approved", disabled, nothing to send; a new commit re-enables it', async () => {
+  const store = await import(web('lib/store.js'));
+  store.getState().sessions = [{ id: 'sess_t', metadata: { branch: 'feat/x', review: { state: 'approved', at: '2026-01-01T00:00:01Z', sha: 'a1' } } }];
+  const done = render(h(ActionCard, { sessionId: 'sess_t', action: REVIEW({ approval: { mode: 'local', sha: 'a1' } }) }));
+  expect(done).toContain('data-approve="approved"');
+  expect(done).toMatch(/<button[^>]*disabled=""[^>]*data-approve="approved"/);
+  expect(done).toContain('Approved');
+  const moved = render(h(ActionCard, { sessionId: 'sess_t', action: REVIEW({ approval: { mode: 'local', sha: 'a2' } }) }));
+  expect(moved).not.toContain('data-approve="approved"');
+  // a local stamp is not a posted GitHub approval
+  const pr = render(h(ActionCard, { sessionId: 'sess_t', action: REVIEW({ approval: { mode: 'pr-review', sha: 'a1', pr: 1 } }) }));
+  expect(pr).not.toContain('data-approve="approved"');
+  if (!createRoot) return;
+  // the click answers the card with the approve value — one request, nothing else
+  store.getState().sessions = [{ id: 'sess_t', metadata: { branch: 'feat/x' } }];
+  const host = document.createElement('div');
+  document.body.appendChild(host);
+  const root = createRoot(host);
+  await act(async () => root.render(h(ActionCard, { sessionId: 'sess_t', action: REVIEW({ approval: { mode: 'local', sha: 'a1' } }) })));
+  posts = [];
+  const btn = host.querySelector('[data-approve]');
+  await act(async () => { btn.click(); await new Promise((r) => setTimeout(r, 20)); });
+  expect(posts.map((p) => p.url.replace(/^.*\/__api/, ''))).toEqual(['/sessions/sess_t/action/answer']);
+  expect(posts[0].body).toMatchObject({ actionId: 'act_r', value: 'verified' });
+  await act(async () => root.unmount());
+});
+
+// ---- usage in the rail: one line on a phone, with the engine's name ---------------------------
+
+test('usage mini: on a phone it is a footer chip (bar + %); the bars open above the footer only when expanded', async () => {
+  const { UsageMini } = await import(web('components/Usage.jsx'));
+  const usage = { available: true, session: { pct: 42, resetsAt: Date.now() + 3600_000 }, week: { pct: 10, resetsAt: Date.now() + 86400_000 } };
+  const chip = render(h(UsageMini, { usage, provider: 'codex', chip: true }));
+  expect(chip).toContain('data-usage-mini-phone');
+  expect(chip).toContain('Codex'); // in the aria-label
+  expect(chip).toContain('42%');
+  expect(chip.split('<button').length - 1).toBe(1);
+  expect(chip).not.toContain('10%'); // the week bar is collapsed away
+  expect(render(h(UsageMini, { usage, provider: 'codex' }))).toBe(''); // folded: no bars section at all
+
+  // desktop keeps the two-part panel
+  const was = globalThis.matchMedia;
+  globalThis.matchMedia = () => ({ matches: true, addEventListener() {}, removeEventListener() {} });
+  try {
+    const desk = render(h(UsageMini, { usage, provider: 'claude' }));
+    expect(desk).not.toContain('data-usage-mini-phone');
+    expect(desk).toContain('Usage spent');
+  } finally {
+    globalThis.matchMedia = was;
+  }
 });

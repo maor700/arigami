@@ -5,10 +5,15 @@
 //
 //   bun src/cli.ts tenants
 //   bun src/cli.ts set-digest  <ns|subject|email> <tag-or-sha256:digest>
+//   bun src/cli.ts set-tier    <ns|subject|email> <tier>      # hardware tier (CP_TIERS); guarded like an upgrade, restarts the pod
 //   bun src/cli.ts upgrade     <ns|subject|email>            # one tenant, right now (still refuses while busy)
 //   bun src/cli.ts backup      <ns|subject|email>
 //   bun src/cli.ts backups     <ns|subject|email>
 //   bun src/cli.ts restore     <ns|subject|email> <archive.tgz> [--force]
+//   bun src/cli.ts set-ring    <ns|subject|email> canary|stable   # canary tenants get a new profile first
+//   bun src/cli.ts profile                                        # desired profile commit + every tenant's applied one
+//   bun src/cli.ts profile-retry <ns|subject|email>               # drop a failed tenant's backoff (retried next tick)
+//   bun src/cli.ts shared …                                   # shared org workspaces, see src/shared-cli.ts
 //
 // `restore` takes ANY tenant's archive — restoring tenant A's backup into
 // tenant B is the migration path (proved live, docs/CONTROL-PLANE.md K8S-3).
@@ -16,8 +21,11 @@ import { loadConfig } from './config.js';
 import { openDb, createStore, type Tenant } from './db.js';
 import * as provisioner from './provisioner.js';
 import { upgradeTenant, UpgradeBlockedError } from './upgrade.js';
+import { setTier, realTierDeps, TierError } from './tier.js';
 import { realOps } from './reconcile.js';
 import { backupTenant, listBackups, restoreTenant } from './backup.js';
+import { DESIRED_META_KEY, haltingTenant, rolloutEnabled, type DesiredRecord } from './profile-rollout.js';
+import { runSharedCli } from './shared-cli.js';
 
 const cfg = loadConfig();
 const store = createStore(openDb(cfg.dbPath));
@@ -32,7 +40,14 @@ function findTenant(r: string): Tenant {
 }
 
 try {
-  if (cmd === 'tenants') {
+  if (cmd === 'shared') {
+    process.exitCode = await runSharedCli(
+      process.argv.slice(3),
+      { cfg, store, provisioner, pushRoster: provisioner.pushRoster, log: (m) => process.stderr.write(m + '\n') },
+      out,
+      (s) => process.stderr.write(s),
+    );
+  } else if (cmd === 'tenants') {
     out(store.listTenants().map(({ subject, email, ns, state, running_digest, desired_digest, last_seen_at }) => ({ subject, email, ns, state, running_digest, desired_digest, last_seen_at })));
   } else if (cmd === 'set-digest') {
     const t = findTenant(ref);
@@ -50,6 +65,16 @@ try {
       if (e instanceof UpgradeBlockedError) { out({ ok: false, blocked: true, busySessions: e.busySessions }); process.exitCode = 3; }
       else throw e;
     }
+  } else if (cmd === 'set-tier') {
+    const t = findTenant(ref);
+    if (!arg3) throw new Error(`usage: set-tier <tenant> <tier> (tiers: ${Object.keys(cfg.tiers).join(', ') || 'none configured'})`);
+    try {
+      out({ ok: true, ...(await setTier(cfg, store, realTierDeps(cfg), t, arg3)) });
+    } catch (e) {
+      if (e instanceof UpgradeBlockedError) { out({ ok: false, blocked: true, busySessions: e.busySessions }); process.exitCode = 3; }
+      else if (e instanceof TierError) { process.stderr.write(`refused: ${e.message}\n`); process.exitCode = 4; }
+      else throw e;
+    }
   } else if (cmd === 'backup') {
     const t = findTenant(ref);
     out({ ok: true, ns: t.ns, ...(await backupTenant(cfg, t)) });
@@ -60,8 +85,30 @@ try {
     if (!arg3) throw new Error('usage: restore <tenant> <archive.tgz> [--force]');
     await restoreTenant(cfg, t, arg3, { force });
     out({ ok: true, ns: t.ns, restoredFrom: arg3 });
+  } else if (cmd === 'set-ring') {
+    const t = findTenant(ref);
+    if (arg3 !== 'canary' && arg3 !== 'stable') throw new Error('usage: set-ring <tenant> canary|stable');
+    store.setRing(t.subject, arg3);
+    out({ ok: true, ns: t.ns, ring: arg3 });
+  } else if (cmd === 'profile') {
+    const desired = store.getMeta<DesiredRecord>(DESIRED_META_KEY);
+    const tenants = store.listTenants();
+    out({
+      enabled: rolloutEnabled(cfg),
+      source: cfg.arigamiBundle,
+      desired,
+      haltedBy: desired?.commit ? haltingTenant(tenants, desired.commit)?.ns ?? null : null,
+      tenants: tenants.map((t) => ({
+        ns: t.ns, state: t.state, ring: t.ring, applied: t.profile_commit, ref: t.profile_ref,
+        ...(t.profile_failures ? { failedCommit: t.profile_failed_commit, failures: t.profile_failures, nextAt: new Date(t.profile_next_at).toISOString(), error: t.profile_error } : {}),
+      })),
+    });
+  } else if (cmd === 'profile-retry') {
+    const t = findTenant(ref);
+    store.clearProfileBackoff(t.subject);
+    out({ ok: true, ns: t.ns, note: `retried on the next reconcile tick (${cfg.reconcileSec}s) when the tenant is idle` });
   } else {
-    process.stderr.write('usage: bun src/cli.ts tenants | set-digest <t> <digest> | upgrade <t> | backup <t> | backups <t> | restore <t> <file.tgz> [--force]\n');
+    process.stderr.write('usage: bun src/cli.ts tenants | shared … | set-digest <t> <digest> | set-tier <t> <tier> | upgrade <t> | backup <t> | backups <t> | restore <t> <file.tgz> [--force] | set-ring <t> canary|stable | profile | profile-retry <t>\n');
     process.exitCode = 2;
   }
 } catch (e) {

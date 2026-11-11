@@ -11,25 +11,27 @@ import { useCallback, useEffect, useState } from 'react';
 import { api } from '../lib/api.js';
 import { Icon } from '../lib/icons.js';
 import { useT, currentLang, LANGS } from '../lib/i18n.js';
+import { serverText } from '../lib/server-text.js';
 import { setPrefs } from '../lib/prefs.js';
 import { useStore } from '../lib/store.js';
-import { OAuthCodeStep, TokenStep, QrStep, ToggleStep, RepoStep } from './setup/index.js';
-import { BTN, BTN2, INPUT, CARD, BODY, PILL, ErrorBox, OkLine, Spinner } from './setup/shared.jsx';
+import { OAuthCodeStep, TokenStep, QrStep, ToggleStep, RepoStep, EngineConnect } from './setup/index.js';
+import { BTN, BTN2, INPUT, CARD, BODY, Pill, ErrorBox, OkLine, Spinner } from './setup/shared.jsx';
+import { Badge } from './ui/badge.jsx';
+import { Button } from './ui/button.jsx';
+import { Tip } from './ui/tooltip.jsx';
 import {
   faCheck,
   faArrowLeft,
   faArrowRight,
   faRotateRight,
   faXmark,
+  faMinus,
 } from '@fortawesome/free-solid-svg-icons';
 
-function Pill({ status }) {
+// Step status → shared Badge with a status dot (the label keeps the wizard.status.* copy).
+function StepPill({ status }) {
   const t = useT();
-  return (
-    <span className={`shrink-0 rounded-full border px-2 py-px text-[11px] md:text-[9.5px] font-bold uppercase ${PILL[status] || PILL.blocked}`}>
-      {t(`wizard.status.${status}`)}
-    </span>
-  );
+  return <Pill status={status} label={t(`wizard.status.${status}`)} />;
 }
 
 // ---- step 1: pair ----------------------------------------------------------
@@ -49,9 +51,9 @@ function PairStep({ step }) {
   };
   return (
     <>
-      <p className="text-[12.5px] leading-relaxed text-fgdim">{t('wizard.pair.body')}</p>
+      <p className="text-sm leading-relaxed text-fgdim">{t('wizard.pair.body')}</p>
       {step.status === 'ok' && (
-        <div className="mt-3 text-[12.5px] font-semibold text-[#2f7d4f]">
+        <div className="mt-3 text-sm font-medium text-ok">
           <Icon icon={faCheck} /> {t('wizard.pair.paired', { email: auth?.user?.email || 'admin' })}
         </div>
       )}
@@ -59,8 +61,8 @@ function PairStep({ step }) {
         <button type="button" className={BTN2} onClick={issue}>{t('wizard.pair.another')}</button>
         {code && (
           <div className="mt-3">
-            <div className="inline-block rounded-[10px] border-[1.5px] border-ink bg-bg px-5 py-3 font-mono text-[22px] tracking-[0.2em] select-all">{code}</div>
-            <div className="mt-1 text-[11px] text-fgdim">{t('wizard.pair.codeHint')}</div>
+            <div className="inline-block rounded-md border border-hair bg-muted px-4 py-2.5 font-mono text-xl tracking-[0.2em] select-all" dir="ltr">{code}</div>
+            <div className="mt-1.5 text-xs text-fgdim">{t('wizard.pair.codeHint')}</div>
           </div>
         )}
       </div>
@@ -70,45 +72,16 @@ function PairStep({ step }) {
 }
 
 // ---- claude / codex / git — the shared setup components ------------
-// (web/src/components/setup/*): the same OAuthCodeStep/TokenStep the chat's
-// SetupCard renders. The wizard only adds the step's copy + "done" line.
-const ENGINE_STEP = {
-  claude: { key: 'wizard.claude', install: 'npm i -g @anthropic-ai/claude-code', flow: 'pkce', other: 'codex' },
-  codex: { key: 'wizard.codex', install: 'npm i -g @openai/codex', flow: 'codex', other: 'claude' },
-};
-
-// claude / codex: one connected engine is enough; the other reads 'skipped'.
-function EngineStep({ step, refresh, onOther }) {
-  const t = useT();
-  const e = ENGINE_STEP[step.id];
-  const other = onOther && step.status !== 'skipped' && (
-    <button type="button" className="mt-3 block cursor-pointer text-[11px] text-fgdim underline hover:text-fg" onClick={onOther}>{t(`wizard.${e.other}.instead`)}</button>
-  );
-  if (step.status === 'ok')
-    return (
-      <>
-        <p className={BODY}>{t(`${e.key}.body`)}</p>
-        <OkLine>{t(`${e.key}.connected`)}</OkLine>
-      </>
-    );
-  if (step.status === 'skipped')
-    return <p className={BODY}>{t(`${e.key}.optional`)}</p>;
-  if (!step.data?.cli)
-    return (
-      <>
-        <p className={BODY}>{t(`${e.key}.noCli`)}</p>
-        <code className="mt-2 block rounded-[6px] border border-hair bg-bg px-2 py-1.5 font-mono text-[11px] select-all">{e.install}</code>
-        <button type="button" className={`${BTN2} mt-3`} onClick={refresh}><Icon icon={faRotateRight} /> {t('wizard.recheck')}</button>
-        {other}
-      </>
-    );
-  return (
-    <>
-      <p className={`${BODY} mb-4`}>{t(`${e.key}.body`)}</p>
-      <OAuthCodeStep capability={step.id} manual={{ kind: 'oauth', flow: e.flow, token: true }} onDone={refresh} />
-      {other}
-    </>
-  );
+// (web/src/components/setup/*): the same EngineConnect the chat's SetupCard and
+// the Setup screen render. Claude and Codex are two equal choices side by side;
+// either one satisfies both wizard steps (the server marks the other 'skipped').
+function EngineStep({ steps, refresh }) {
+  const engines = {};
+  for (const id of ['claude', 'codex']) {
+    const s = steps.find((x) => x.id === id);
+    engines[id] = { ok: !!(s?.data?.cli && s?.data?.authed), data: { cli: s?.data?.cli !== false } };
+  }
+  return <EngineConnect engines={engines} onChanged={refresh} />;
 }
 
 function GitStep({ step, refresh }) {
@@ -160,10 +133,10 @@ function ProfileStep({ step, refresh, onSkip }) {
 
   return (
     <>
-      <p className="text-[12.5px] leading-relaxed text-fgdim">{t('wizard.profile.body')}</p>
-      {step.status === 'ok' && <div className="mt-3 text-[12.5px] font-semibold text-[#2f7d4f]"><Icon icon={faCheck} /> {t('wizard.profile.applied', { name: step.data?.applied })}</div>}
-      {bundles === null && <div className="mt-3 text-[12px] text-fgdim">{t('wizard.loading')}</div>}
-      {bundles && bundles.length === 0 && <div className="mt-3 text-[12px] text-fgdim">{t('wizard.profile.none')}</div>}
+      <p className="text-sm leading-relaxed text-fgdim">{t('wizard.profile.body')}</p>
+      {step.status === 'ok' && <div className="mt-3 text-sm font-medium text-ok"><Icon icon={faCheck} /> {t('wizard.profile.applied', { name: step.data?.applied })}</div>}
+      {bundles === null && <div className="mt-3 text-xs text-fgdim">{t('wizard.loading')}</div>}
+      {bundles && bundles.length === 0 && <div className="mt-3 text-xs text-fgdim">{t('wizard.profile.none')}</div>}
       <div className="mt-3 grid gap-2 sm:grid-cols-2">
         {(bundles || []).map((b) => {
           const isPending = pending && (pending.name === b.name || pending.source === b.name);
@@ -173,22 +146,23 @@ function ProfileStep({ step, refresh, onSkip }) {
               key={b.name}
               type="button"
               onClick={() => setSelected(b.name)}
-              className={`text-start rounded-[12px] border-[1.5px] px-3 py-2.5 ${sel ? 'border-ink bg-brand/40' : 'border-border bg-panel hover:border-ink'}`}
+              aria-pressed={sel}
+              className={`cursor-pointer rounded-lg border px-3 py-2.5 text-start outline-none transition-colors focus-visible:outline-2 focus-visible:outline-ring ${sel ? 'border-foreground/50 bg-muted' : 'border-hair bg-panel hover:bg-muted'}`}
             >
               <div className="flex items-center gap-2">
-                <span className="text-[12.5px] font-bold text-fg">{b.title || b.name}</span>
-                <span className="rounded-full border border-hair px-1.5 text-[11px] md:text-[9px] uppercase text-fgdim">{b.trusted ? t('wizard.profile.trusted') : 'ext'}</span>
-                {isPending && <span className="rounded-full border border-[#e7d3a8] bg-[#FBF3E0] px-1.5 text-[11px] md:text-[9px] uppercase text-[#8a6d1f]">{t('wizard.profile.pending')}</span>}
+                <span className="text-sm font-medium text-fg">{b.title || b.name}</span>
+                <Badge status={b.trusted ? 'ok' : 'idle'}>{b.trusted ? t('wizard.profile.trusted') : 'ext'}</Badge>
+                {isPending && <Badge status="warn">{t('wizard.profile.pending')}</Badge>}
               </div>
-              {b.description && <div className="mt-0.5 text-[11px] leading-snug text-fgdim">{b.description}</div>}
-              <div className="mt-1 font-mono text-[11.5px] md:text-[10px] text-fgdim">{(b.skills || []).length} skills · {b.cron || 0} cron{b.hasMemorySeed ? ' · memory' : ''}</div>
+              {b.description && <div className="mt-0.5 text-xs leading-snug text-fgdim">{b.description}</div>}
+              <div dir="ltr" className="mt-1 text-xs text-fgdim tabular-nums">{(b.skills || []).length} skills · {b.cron || 0} cron{b.hasMemorySeed ? ' · memory' : ''}</div>
             </button>
           );
         })}
       </div>
       <div className="mt-3 flex flex-col gap-2">
-        <input className={INPUT} value={url} onChange={(e) => { setUrl(e.target.value); if (e.target.value) setSelected(null); }} placeholder={t('wizard.profile.urlPlaceholder')} spellCheck={false} />
-        {url && <div className="text-[11.5px] md:text-[10.5px] text-fgdim">{t('wizard.profile.external')}</div>}
+        <input className={INPUT} value={url} onChange={(e) => { setUrl(e.target.value); if (e.target.value) setSelected(null); }} placeholder={t('wizard.profile.urlPlaceholder')} dir="ltr" spellCheck={false} />
+        {url && <div className="text-xs text-fgdim">{t('wizard.profile.external')}</div>}
         <div className="flex flex-wrap gap-2">
           <button type="button" className={BTN} disabled={busy || !(selected || url.trim())} onClick={() => apply(url.trim() || selected)}>
             {busy ? t('wizard.profile.applying') : t('wizard.profile.apply')}
@@ -207,8 +181,8 @@ function IntegrationsStep({ step, refresh }) {
   const t = useT();
   const Row = ({ title, hint, children }) => (
     <div className={`${CARD} px-4 py-3`}>
-      <div className="text-[12.5px] font-bold text-fg">{title}</div>
-      <div className="text-[11px] text-fgdim">{hint}</div>
+      <div className="text-sm font-medium text-fg">{title}</div>
+      <div className="mt-0.5 text-xs text-fgdim">{hint}</div>
       <div className="mt-2">{children}</div>
     </div>
   );
@@ -218,7 +192,7 @@ function IntegrationsStep({ step, refresh }) {
       <p className={BODY}>{t('wizard.integrations.body')}</p>
       <div className="mt-3 flex flex-col gap-3">
         <Row title={t('wizard.integrations.composio')} hint={t('wizard.integrations.composioHint')}>
-          {composioSet ? <div className="text-[12px] text-[#2f7d4f]"><Icon icon={faCheck} /> {t('wizard.integrations.composioSet')}</div> : <TokenStep capability="composio" onDone={refresh} />}
+          {composioSet ? <div className="text-xs text-ok"><Icon icon={faCheck} /> {t('wizard.integrations.composioSet')}</div> : <TokenStep capability="composio" onDone={refresh} />}
         </Row>
         <Row title={t('wizard.integrations.whatsapp')} hint={t('wizard.integrations.whatsappHint')}>
           <QrStep capability="whatsapp" onDone={refresh} />
@@ -237,7 +211,7 @@ function WizardRepoStep({ step, refresh }) {
   return (
     <>
       <p className={BODY}>{t('wizard.repo.body')}</p>
-      <RepoStep capability="repo" have={step.data?.repos || []} onDone={refresh} />
+      <RepoStep capability="repo" onDone={refresh} />
     </>
   );
 }
@@ -257,19 +231,19 @@ function TelemetryStep({ step, refresh }) {
   return (
     <>
       <p className={BODY}>{t('wizard.telemetry.body')}</p>
-      <ul className="mt-2 list-disc ps-5 text-[12px] leading-relaxed text-fgdim">
+      <ul className="mt-2 list-disc ps-5 text-xs leading-relaxed text-fgdim">
         <li>{t('wizard.telemetry.sends')}</li>
         <li>{t('wizard.telemetry.never')}</li>
         <li>{t('wizard.telemetry.control')}</li>
       </ul>
-      {reason === 'dnt' && <div className="mt-3 text-[12px] text-fgdim">{t('telemetry.dnt')}</div>}
-      {reason === 'env' && <div className="mt-3 text-[12px] text-fgdim">{t('telemetry.env', { state: enabled ? 'on' : 'off' })}</div>}
+      {reason === 'dnt' && <div className="mt-3 text-xs text-fgdim">{t('telemetry.dnt')}</div>}
+      {reason === 'env' && <div className="mt-3 text-xs text-fgdim">{t('telemetry.env', { state: enabled ? 'on' : 'off' })}</div>}
       <div className="mt-3">
         <ToggleStep key={String(enabled)} capability="telemetry" enabled={enabled} pinned={pinned} onDone={refresh} />
       </div>
       <button type="button" className={`${BTN2} mt-2`} onClick={show}>{preview ? t('telemetry.hidePreview') : t('telemetry.preview')}</button>
       {preview && (
-        <pre dir="ltr" className="mt-3 max-h-[240px] overflow-auto rounded-[8px] border border-hair bg-bg p-3 font-mono text-[11.5px] md:text-[10.5px] leading-snug text-fg">{JSON.stringify(preview, null, 2)}</pre>
+        <pre dir="ltr" className="mt-3 max-h-[240px] overflow-auto rounded-md border border-hair bg-muted p-3 font-mono text-xs leading-snug text-fg">{JSON.stringify(preview, null, 2)}</pre>
       )}
       <ErrorBox err={err} />
     </>
@@ -277,7 +251,7 @@ function TelemetryStep({ step, refresh }) {
 }
 
 // ---- step 8: health --------------------------------------------------------
-function HealthStep({ step, refresh, onOpen }) {
+function HealthStep({ step, refresh }) {
   const t = useT();
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
@@ -297,7 +271,7 @@ function HealthStep({ step, refresh, onOpen }) {
   const running = busy || step.status === 'running';
   return (
     <>
-      <p className="text-[12.5px] leading-relaxed text-fgdim">{t('wizard.health.body')}</p>
+      <p className="text-sm leading-relaxed text-fgdim">{t('wizard.health.body')}</p>
       <div className="mt-3 flex flex-wrap gap-2">
         <button type="button" className={BTN2} disabled={running} onClick={run}>
           {running ? <Spinner>{t('wizard.health.running')}</Spinner> : <><Icon icon={faRotateRight} /> {t('wizard.health.run')}</>}
@@ -307,31 +281,28 @@ function HealthStep({ step, refresh, onOpen }) {
         <div className={`${CARD} mt-3 overflow-hidden`}>
           {health.checks.map((c) => (
             <div key={c.id} className="flex items-center gap-2.5 border-b border-hair px-3 py-2 last:border-0">
-              <span className={`w-[52px] shrink-0 rounded-full border px-2 py-px text-center text-[11px] md:text-[9.5px] font-bold uppercase ${c.ok ? PILL.ok : c.required ? PILL.error : PILL.blocked}`}>
+              <Badge status={c.ok ? 'ok' : c.required ? 'err' : 'idle'} className="min-w-[4.5rem] shrink-0 justify-start">
                 {c.ok ? t('wizard.health.pass') : c.required ? t('wizard.health.fail') : t('wizard.health.optional')}
-              </span>
+              </Badge>
               <div className="min-w-0 flex-1">
-                <div className="text-[12px] font-semibold text-fg">{t(`wizard.health.check.${c.id}`)}</div>
-                <div className="truncate font-mono text-[11.5px] md:text-[10px] text-fgdim">{c.detail}</div>
+                <div className="text-sm font-medium text-fg">{t(`wizard.health.check.${c.id}`)}</div>
+                <div dir="auto" className="truncate text-start font-mono text-xs text-fgdim">{serverText(c.detail)}</div>
               </div>
             </div>
           ))}
-          <div className={`px-3 py-2 text-[11.5px] ${health.ok ? 'text-[#2f7d4f]' : 'text-[#8a6d1f]'}`}>
+          <div className={`px-3 py-2 text-xs ${health.ok ? 'text-ok' : 'text-warn'}`}>
             {health.ok ? t('wizard.health.allGood') : t('wizard.health.someFailed')}
           </div>
         </div>
       )}
       <ErrorBox err={err} />
-      {health && (
-        <button type="button" className={`${BTN} mt-4`} onClick={onOpen}>{t('wizard.openCockpit')} <Icon icon={faArrowRight} /></button>
-      )}
     </>
   );
 }
 
 const STEP_TITLE = {
   pair: 'wizard.pair.title',
-  claude: 'wizard.claude.title',
+  claude: 'setup.engine.title', // one step for both engines (Claude and Codex are equal choices)
   codex: 'wizard.codex.title',
   git: 'wizard.git.title',
   profile: 'wizard.profile.title',
@@ -373,9 +344,16 @@ export default function Wizard({ onDone, onExit, onStart }) {
 
   // F8: in minimal mode only the required steps (pair, claude, codex) are listed;
   // once done we show a Start panel instead of jumping back to step 1.
-  const steps = (view?.steps || []).filter((s) => view?.mode === 'full' || !Array.isArray(view?.required) || view.required.includes(s.id));
+  // Claude and Codex are ONE step ("connect an engine", both cards side by side): either one connected settles it.
+  const rawSteps = view?.steps || [];
+  const engineOk = rawSteps.some((s) => (s.id === 'claude' || s.id === 'codex') && s.status === 'ok');
+  const steps = rawSteps
+    .filter((s) => s.id !== 'codex')
+    .filter((s) => view?.mode === 'full' || !Array.isArray(view?.required) || view.required.includes(s.id) || s.id === 'claude')
+    .map((s) => (s.id === 'claude' ? { ...s, status: engineOk ? 'ok' : s.status === 'skipped' ? 'todo' : s.status, skippable: false } : s));
   const finished = !!view?.done && idx === null;
-  const cur = idx ?? Math.max(0, steps.findIndex((s) => s.id === view?.current));
+  const curId = view?.current === 'codex' ? 'claude' : view?.current;
+  const cur = idx ?? Math.max(0, steps.findIndex((s) => s.id === curId));
   const step = finished ? null : steps[cur];
   const [starting, setStarting] = useState(false);
   const start = async () => {
@@ -405,6 +383,12 @@ export default function Wizard({ onDone, onExit, onStart }) {
 
   const settled = step && (step.status === 'ok' || step.status === 'skipped');
   const canNext = step && (settled || step.id === 'integrations');
+  // The first step that must be finished (not skippable, not done): nothing after it can be jumped to.
+  const gateIdx = steps.findIndex((s) => !s.skippable && s.status !== 'ok' && s.status !== 'skipped');
+  const locked = (i) => gateIdx !== -1 && i > gateIdx;
+  const gateHint = step && !canNext ? t(step.id === 'claude' ? 'wizard.gate.engine' : step.id === 'profile' ? 'wizard.gate.profile' : step.skippable ? 'wizard.gate.skip' : 'wizard.gate.required') : '';
+  const healthFailed = step?.id === 'health' && step.data?.health && !step.data.health.ok;
+  const toEngine = () => { const i = steps.findIndex((x) => x.id === 'claude'); if (i >= 0) setIdx(i); };
 
   return (
     <div dir={LANGS[lang]?.dir || 'ltr'} className="flex min-h-screen flex-col items-center bg-bg p-4 text-fg sm:p-8">
@@ -413,78 +397,96 @@ export default function Wizard({ onDone, onExit, onStart }) {
           <span className="flex items-end gap-0.5" aria-hidden="true">
             {[10, 16, 12, 19].map((h, i) => <span key={i} className="inline-block w-1 bg-brand" style={{ height: h }} />)}
           </span>
-          <span className="text-[18px] font-bold">{t('wizard.title')}</span>
-          <button type="button" onClick={toggleLang} className="ms-auto rounded-[6px] border border-border px-2 py-0.5 text-[11px] text-fgdim hover:border-ink hover:text-fg">{t('wizard.lang')}</button>
-          <button type="button" onClick={onExit} title={t('wizard.exitHint')} className="cursor-pointer px-1 text-[15px] text-fgdim hover:text-fg"><Icon icon={faXmark} /></button>
+          <span className="text-base font-medium">{t('wizard.title')}</span>
+          <Button variant="outline" size="sm" onClick={toggleLang} className="ms-auto">{t('wizard.lang')}</Button>
+          <Tip label={t('wizard.exitHint')}>
+            <Button variant="ghost" size="icon" onClick={onExit} aria-label={t('wizard.exit')}><Icon icon={faXmark} /></Button>
+          </Tip>
         </div>
-        <p className="mb-4 text-[12px] text-fgdim">{t('wizard.subtitle', { n: steps.length })}</p>
+        <p className="mb-4 text-xs text-fgdim">{t('wizard.subtitle', { n: steps.length })}</p>
 
-        {/* stepper rail */}
-        <ol className="mb-4 flex flex-wrap gap-1.5">
+        {/* stepper: a segmented progress bar on a phone (nothing to mis-tap), numbered pills with names from sm up.
+            A pill past the first unfinished required step is disabled — the gate is the same everywhere. */}
+        <div className="mb-4 flex gap-1 sm:hidden" role="progressbar" aria-valuemin={1} aria-valuemax={steps.length} aria-valuenow={cur + 1}>
+          {steps.map((s, i) => (
+            <span key={s.id} className={`h-1 flex-1 rounded-full ${i === cur ? 'bg-foreground' : s.status === 'ok' ? 'bg-ok' : 'bg-chip'}`} />
+          ))}
+        </div>
+        <ol className="mb-4 hidden flex-wrap gap-1.5 sm:flex">
           {steps.map((s, i) => (
             <li key={s.id}>
+              <Tip label={locked(i) ? t(steps[gateIdx]?.id === 'claude' ? 'wizard.gate.engine' : 'wizard.gate.required') : undefined}>
               <button
                 type="button"
+                disabled={locked(i)}
+                aria-current={i === cur ? 'step' : undefined}
                 onClick={() => setIdx(i)}
-                className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] ${i === cur ? 'border-ink bg-brand font-bold' : 'border-border bg-panel text-fgdim hover:border-ink'}`}
+                className={`flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs outline-none focus-visible:outline-2 focus-visible:outline-ring disabled:cursor-not-allowed disabled:opacity-50 coarse:min-h-11 ${i === cur ? 'border-input bg-muted font-medium text-foreground' : s.status === 'skipped' ? 'border-dashed border-input text-fgdim' : 'border-hair text-fgdim hover:bg-muted hover:text-foreground'}`}
               >
-                <span className={`inline-flex h-4 w-4 items-center justify-center rounded-full text-[11px] md:text-[9px] ${s.status === 'ok' ? 'bg-[#2f7d4f] text-white' : s.status === 'skipped' ? 'bg-chip text-fgdim' : 'bg-bg text-fg border border-border'}`}>
-                  {s.status === 'ok' ? <Icon icon={faCheck} /> : i + 1}
+                <span className={`inline-flex size-4 items-center justify-center rounded-full text-2xs ${s.status === 'ok' ? 'bg-ok text-white' : s.status === 'skipped' ? 'bg-chip text-fgdim' : 'border border-input bg-bg text-fg'}`}>
+                  {s.status === 'ok' ? <Icon icon={faCheck} /> : s.status === 'skipped' ? <Icon icon={faMinus} /> : i + 1}
                 </span>
-                <span className="hidden sm:inline">{t(STEP_TITLE[s.id])}</span>
+                <span>{t(STEP_TITLE[s.id])}</span>
               </button>
+              </Tip>
             </li>
           ))}
         </ol>
 
         {err && <ErrorBox err={err} />}
-        {!view && !err && <div className="text-[12px] text-fgdim">{t('wizard.loading')}</div>}
+        {!view && !err && <div className="text-xs text-fgdim">{t('wizard.loading')}</div>}
 
         {step && (
           <div className={`${CARD} px-5 py-5`}>
             <div className="mb-1 flex items-center gap-2">
-              <span className="font-mono text-[11.5px] md:text-[10px] uppercase tracking-[0.08em] text-fgdim">{t('wizard.stepOf', { n: cur + 1, total: steps.length })}</span>
-              <Pill status={step.status} />
+              <span className="text-xs text-fgdim tabular-nums">{t('wizard.stepOf', { n: cur + 1, total: steps.length })}</span>
+              <StepPill status={step.status} />
             </div>
-            <h2 className="mb-2 text-[16px] font-bold">{t(STEP_TITLE[step.id])}</h2>
+            <h2 className="mb-3 text-base font-medium">{t(STEP_TITLE[step.id])}</h2>
 
             {step.id === 'pair' && <PairStep step={step} />}
-            {(step.id === 'claude' || step.id === 'codex') && <EngineStep step={step} refresh={refresh} onOther={() => { const i = steps.findIndex((x) => x.id === ENGINE_STEP[step.id].other); if (i >= 0) setIdx(i); }} />}
+            {(step.id === 'claude' || step.id === 'codex') && <EngineStep steps={view.steps} refresh={refresh} />}
             {step.id === 'git' && <GitStep step={step} refresh={refresh} />}
             {step.id === 'profile' && <ProfileStep step={step} refresh={refresh} onSkip={() => act('skip')} />}
             {step.id === 'integrations' && <IntegrationsStep step={step} refresh={refresh} />}
             {step.id === 'repo' && <WizardRepoStep step={step} refresh={refresh} />}
             {step.id === 'telemetry' && <TelemetryStep step={step} refresh={refresh} />}
-            {step.id === 'health' && <HealthStep step={step} refresh={refresh} onOpen={finish} />}
+            {step.id === 'health' && <HealthStep step={step} refresh={refresh} />}
 
             <div className="mt-6 flex flex-wrap items-center gap-2 border-t border-hair pt-4">
-              <button type="button" className={BTN2} disabled={cur === 0} onClick={() => setIdx(cur - 1)}><Icon icon={faArrowLeft} /> {t('wizard.back')}</button>
+              <button type="button" className={BTN2} disabled={cur === 0} onClick={() => setIdx(cur - 1)}><Icon icon={faArrowLeft} className="mirror-rtl" /> {t('wizard.back')}</button>
               <span className="ms-auto" />
-              {step.skippable && !settled && step.id !== 'profile' && (
+              {step.skippable && !settled && step.id !== 'profile' && !healthFailed && (
                 <button type="button" className={BTN2} onClick={() => act('skip')}>{t('wizard.skip')}</button>
               )}
               {cur < steps.length - 1 ? (
                 <button type="button" className={BTN} disabled={!canNext} onClick={next}>
-                  {step.id === 'integrations' && !settled ? t('wizard.integrations.continue') : t('wizard.next')} <Icon icon={faArrowRight} />
+                  {step.id === 'integrations' && !settled ? t('wizard.integrations.continue') : t('wizard.next')} <Icon icon={faArrowRight} className="mirror-rtl" />
                 </button>
+              ) : healthFailed ? (
+                <>
+                  <button type="button" className={BTN2} onClick={finish}>{t('wizard.health.openAnyway')}</button>
+                  <button type="button" className={BTN} onClick={toEngine}>{t('wizard.health.fix')}</button>
+                </>
               ) : (
-                <button type="button" className={BTN} onClick={finish}>{t('wizard.openCockpit')} <Icon icon={faArrowRight} /></button>
+                <button type="button" className={BTN} disabled={!step.skippable && !settled} onClick={finish}>{t('wizard.openCockpit')} <Icon icon={faArrowRight} className="mirror-rtl" /></button>
               )}
             </div>
+            {gateHint && <p role="status" className="mt-2 text-end text-xs text-warn">{gateHint}</p>}
           </div>
         )}
         {finished && (
           <div className={`${CARD} px-5 py-5 text-center`}>
-            <div className="text-[13px] font-bold text-[#2f7d4f]"><Icon icon={faCheck} /> {t('wizard.done')}</div>
-            <p className="mt-1 text-[12px] text-fgdim">{t('setup.minimal.startBody')}</p>
+            <div className="text-sm font-medium text-ok"><Icon icon={faCheck} /> {t('wizard.done')}</div>
+            <p className="mt-1 text-xs text-fgdim">{t('setup.minimal.startBody')}</p>
             <button type="button" className={`${BTN} mt-3`} disabled={starting || !onStart} onClick={start}>
-              {starting ? t('launcher.setup.starting') : t('setup.minimal.startBtn')} <Icon icon={faArrowRight} />
+              {starting ? t('launcher.setup.starting') : t('setup.minimal.startBtn')} <Icon icon={faArrowRight} className="mirror-rtl" />
             </button>
-            <div className="mt-3"><button type="button" onClick={() => setIdx(0)} className="cursor-pointer text-[11px] text-fgdim underline hover:text-fg">{t('wizard.reviewSteps')}</button></div>
+            <div className="mt-3"><button type="button" onClick={() => setIdx(0)} className="cursor-pointer text-xs text-fgdim underline hover:text-fg">{t('wizard.reviewSteps')}</button></div>
           </div>
         )}
         {view?.done && !finished && (
-          <div className="mt-3 text-center text-[12px] text-[#2f7d4f]"><Icon icon={faCheck} /> {t('wizard.done')} · <button type="button" onClick={() => setIdx(null)} className="cursor-pointer underline">{t('setup.minimal.startBtn')}</button></div>
+          <div className="mt-3 text-center text-xs text-ok"><Icon icon={faCheck} /> {t('wizard.done')} · <button type="button" onClick={() => setIdx(null)} className="cursor-pointer underline">{t('setup.minimal.startBtn')}</button></div>
         )}
       </div>
     </div>

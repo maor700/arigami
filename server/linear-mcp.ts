@@ -21,6 +21,7 @@ import type {
   OAuthTokens,
 } from '@modelcontextprotocol/sdk/shared/auth.js';
 import { cfg } from './state.js';
+import * as mcpGrants from './lib/mcp-grants.js';
 
 const SERVER_URL = 'https://mcp.linear.app/mcp';
 const STORE = path.join(
@@ -169,9 +170,18 @@ async function connect(): Promise<Client> {
   return connecting;
 }
 
+// Prefer the host-held `linear` grant (Settings › Connections, the one every session uses);
+// this module's own grant is only the fallback when that one is not live.
+type Call = (tool: string, args: Record<string, unknown>) => Promise<any>;
+async function caller(): Promise<Call> {
+  if (mcpGrants.isLive('linear')) return (tool, args) => mcpGrants.callTool('linear', tool, args);
+  const c = await connect();
+  return (tool, args) => c.callTool({ name: tool, arguments: args });
+}
+
 // ---- public API ------------------------------------------------------------
 export function status(): { connected: boolean; needsAuth: boolean; authUrl: string | null } {
-  return { connected: !!load().tokens, needsAuth: false, authUrl: null };
+  return { connected: mcpGrants.isLive('linear') || !!load().tokens, needsAuth: false, authUrl: null };
 }
 
 // Kick off (or confirm) the OAuth flow. `origin` is the scheme://host[:port]
@@ -227,12 +237,14 @@ export function disconnect(): void {
 
 // Extract a usable array/object payload from an MCP tool result.
 function parseToolResult(res: any): any {
-  if (res?.structuredContent !== undefined) return res.structuredContent;
+  if (res?.structuredContent !== undefined && !res?.isError) return res.structuredContent;
   const text = (res?.content || [])
     .filter((b: any) => b?.type === 'text')
     .map((b: any) => b.text)
     .join('\n')
     .trim();
+  // A tool error is not a payload: returned as a string it read as "entity not found".
+  if (res?.isError) throw new Error(text || 'Linear tool call failed');
   if (!text) return null;
   try {
     return JSON.parse(text);
@@ -281,8 +293,8 @@ function buildArgs(f: Facets): Record<string, any> {
 }
 
 export async function listIssues(facets: Facets = {}): Promise<any[]> {
-  const c = await connect();
-  const res = await c.callTool({ name: 'list_issues', arguments: buildArgs(facets) });
+  const call = await caller();
+  const res = await call('list_issues', buildArgs(facets));
   return arrayFrom(parseToolResult(res));
 }
 
@@ -340,9 +352,9 @@ export async function listIssuesByFacets(facets: Facets = {}): Promise<any[]> {
 
 // Team name/ID keys — labels and statuses are both team-scoped, so we enumerate
 // teams and fan out per team (plus the workspace level) to get the full set.
-async function teamKeys(c: Client): Promise<string[]> {
+async function teamKeys(call: Call): Promise<string[]> {
   try {
-    const res = await c.callTool({ name: 'list_teams', arguments: { limit: 100 } });
+    const res = await call('list_teams', { limit: 100 });
     return arrayFrom(parseToolResult(res))
       .map((t: any) => t?.id || t?.key || t?.name)
       .filter(Boolean)
@@ -355,7 +367,7 @@ async function teamKeys(c: Client): Promise<string[]> {
 // All label names — workspace-level PLUS each team's labels (Linear labels can be
 // team-scoped, so the bare call misses most of them).
 export async function listLabels(): Promise<string[]> {
-  const c = await connect();
+  const call = await caller();
   const names = new Set<string>();
   const add = (payload: any) => {
     for (const l of arrayFrom(payload)) {
@@ -364,11 +376,11 @@ export async function listLabels(): Promise<string[]> {
     }
   };
   try {
-    add(parseToolResult(await c.callTool({ name: 'list_issue_labels', arguments: { limit: 250 } })));
+    add(parseToolResult(await call('list_issue_labels', { limit: 250 })));
   } catch {}
-  for (const team of await teamKeys(c)) {
+  for (const team of await teamKeys(call)) {
     try {
-      add(parseToolResult(await c.callTool({ name: 'list_issue_labels', arguments: { team, limit: 250 } })));
+      add(parseToolResult(await call('list_issue_labels', { team, limit: 250 })));
     } catch {}
   }
   return [...names].sort();
@@ -381,11 +393,11 @@ export async function listLabels(): Promise<string[]> {
 const STATE_TYPE_ORDER = ['triage', 'backlog', 'unstarted', 'started', 'completed', 'canceled'];
 
 export async function listStatuses(): Promise<{ name: string; type: string }[]> {
-  const c = await connect();
+  const call = await caller();
   const byName = new Map<string, string>(); // name -> type
-  for (const team of await teamKeys(c)) {
+  for (const team of await teamKeys(call)) {
     try {
-      const res = await c.callTool({ name: 'list_issue_statuses', arguments: { team } });
+      const res = await call('list_issue_statuses', { team });
       for (const s of arrayFrom(parseToolResult(res))) {
         const name = typeof s === 'string' ? s : s?.name;
         const type = typeof s === 'object' ? s?.type || '' : '';
@@ -405,17 +417,61 @@ export async function listStatuses(): Promise<{ name: string; type: string }[]> 
     });
 }
 
+// ---- the ticket tab's actions (server/api.ts /__api/linear/issues/:id/*, owner only) ---------------------------------
+
+/** What the ticket tab's pickers offer for an issue of `team`: its statuses, its members, and the labels it can take. */
+export async function teamOptions(team: string): Promise<{ statuses: { name: string; type: string; color?: string }[]; users: { id: string; name: string; email?: string; handle: string }[]; labels: { name: string; color?: string }[] }> {
+  const call = await caller();
+  const safe = async (name: string, args: Record<string, unknown>) => { try { return arrayFrom(parseToolResult(await call(name, args))); } catch { return []; } };
+  const [st, us, tl, wl] = await Promise.all([
+    safe('list_issue_statuses', { team }),
+    safe('list_users', { team, limit: 250 }),
+    safe('list_issue_labels', { team, limit: 250 }),
+    safe('list_issue_labels', { limit: 250 }),
+  ]);
+  const statuses = st
+    .map((x: any) => ({ name: String(x?.name || x || ''), type: String(x?.type || ''), color: x?.color }))
+    .filter((x) => x.name)
+    .sort((a, b) => (STATE_TYPE_ORDER.indexOf(a.type) + 1 || 99) - (STATE_TYPE_ORDER.indexOf(b.type) + 1 || 99));
+  const users = us
+    .filter((x: any) => x && x.active !== false && !x.isGuest)
+    .map((x: any) => ({ id: String(x.id || ''), name: String(x.name || x.displayName || x.email || ''), email: x.email, handle: String(x.displayName || (x.email ? String(x.email).split('@')[0] : x.name) || '') }))
+    .filter((x) => x.id && x.name)
+    .sort((a, b) => a.name.localeCompare(b.name));
+  const seen = new Set<string>();
+  const labels: { name: string; color?: string }[] = [];
+  for (const l of [...tl, ...wl] as any[]) {
+    const name = typeof l === 'string' ? l : l?.name;
+    if (!name || seen.has(name) || l?.isGroup || l?.retiredAt) continue;
+    seen.add(name);
+    labels.push({ name, color: l?.color });
+  }
+  labels.sort((a, b) => a.name.localeCompare(b.name));
+  return { statuses, users, labels };
+}
+
+export async function addComment(issueId: string, body: string, parentId?: string): Promise<any> {
+  const call = await caller();
+  return parseToolResult(await call('save_comment', parentId ? { body, parentId } : { body, issueId }));
+}
+
+export interface IssuePatch { state?: string; assignee?: string | null; priority?: number; addLabels?: string[]; removeLabels?: string[] }
+export async function updateIssue(id: string, patch: IssuePatch): Promise<any> {
+  const call = await caller();
+  return parseToolResult(await call('save_issue', { id, ...patch }));
+}
+
 export async function getIssue(id: string): Promise<any> {
-  const c = await connect();
-  const res = await c.callTool({ name: 'get_issue', arguments: { id } });
+  const call = await caller();
+  const res = await call('get_issue', { id });
   return parseToolResult(res);
 }
 
 // Comments for an issue (newest last) — used by the linear-issue listener poll.
 // Accepts the ENG-XXXX identifier or the UUID.
 export async function listComments(issueId: string): Promise<any[]> {
-  const c = await connect();
-  const res = await c.callTool({ name: 'list_comments', arguments: { issueId } });
+  const call = await caller();
+  const res = await call('list_comments', { issueId });
   return arrayFrom(parseToolResult(res));
 }
 
@@ -426,8 +482,8 @@ export async function listComments(issueId: string): Promise<any[]> {
 let viewerIdCache: string | null = null;
 export async function viewerId(): Promise<string | null> {
   if (viewerIdCache) return viewerIdCache;
-  const c = await connect();
-  const res = await c.callTool({ name: 'get_user', arguments: { query: 'me' } });
+  const call = await caller();
+  const res = await call('get_user', { query: 'me' });
   const user = parseToolResult(res);
   const id = (Array.isArray(user) ? user[0]?.id : user?.id) || null;
   if (id) viewerIdCache = id;

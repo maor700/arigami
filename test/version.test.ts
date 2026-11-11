@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { parseLeftRight, getVersion, invalidateVersion } from '../server/version.ts';
+import { tmpDir } from './_tmp.js';
 
 test('parseLeftRight', () => {
   expect(parseLeftRight(null)).toEqual({ behind: null, ahead: null });
@@ -14,7 +15,7 @@ test('parseLeftRight', () => {
 });
 
 test('getVersion on a repo with an upstream that is 2 commits ahead', async () => {
-  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-ver-'));
+  const base = tmpDir('arigami-ver-');
   const up = path.join(base, 'up');
   const local = path.join(base, 'local');
   const g = (cwd: string, ...a: string[]) => {
@@ -58,7 +59,7 @@ import { isolate } from './_isolate.js';
 isolate(); // restore globalThis/process.env after this file (bun test shares them)
 
 test('currentVersion: VERSION file over package.json; compareVersions', () => {
-  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-cv-'));
+  const d = tmpDir('arigami-cv-');
   fs.writeFileSync(path.join(d, 'package.json'), JSON.stringify({ version: '1.0.0' }));
   expect(currentVersion(d)).toBe('1.0.0');
   fs.writeFileSync(path.join(d, 'VERSION'), '1.0.1\n');
@@ -74,7 +75,7 @@ test('currentVersion: VERSION file over package.json; compareVersions', () => {
 
 test('getVersion: available version/tag from upstream, sharedBase false once the histories diverge without a base', async () => {
   process.env.ARIGAMI_NO_RELEASE_CHECK = '1';
-  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-ver2-'));
+  const base = tmpDir('arigami-ver2-');
   const up = path.join(base, 'up');
   const local = path.join(base, 'local');
   const g = (cwd: string, ...a: string[]) => {

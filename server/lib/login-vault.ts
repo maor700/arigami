@@ -12,6 +12,9 @@
 //     and never return a cookie value — only which sites have a login
 //   - `transfer()` carries ONE site into a session's running browser
 //   - `saveToVault()` carries one site back, and only after the owner said yes
+//   - the owner's everyday Chrome (owner-chrome.ts), when the host has one, is a
+//     second, READ-ONLY source: detected from its disk the same way, transferred
+//     from a snapshot copy — never driven, never written
 //
 // The vault Chrome is driven headless when nobody has it open; when the owner
 // has "my browser" open, the same running instance is used over its DevTools
@@ -20,12 +23,13 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
-import { CHROME_BASE_DIR, chromeBin, chromeExtraFlags, openChrome, isChromeRunning } from './chrome.js';
+import { CHROME_BASE_DIR, chromeBin, chromeEnv, chromeExtraFlags, chromeSessionDir, openChrome, isChromeRunning } from './chrome.js';
 import { cdpPort } from './chrome-cdp.js';
 import { pidAlive } from './platform.js';
 import { supervise, killTree } from './children.js';
 import * as sites from './login-sites.js';
-import { Cdp, exportSite, importSite, landing, type SiteState } from './site-state.js';
+import { Cdp, exportSite, idbNames, importSite, landing, type SiteState } from './site-state.js';
+import * as owner from './owner-chrome.js';
 
 export const VAULT_DIR = CHROME_BASE_DIR;
 
@@ -39,11 +43,18 @@ interface CookieRow {
   expires_utc: bigint | number;
   is_httponly: number;
   is_secure: number;
+  /** The first bytes of the encrypted value: 'v10' = the basic store's fixed key (readable), 'v11' = a keyring's. */
+  tag: string;
 }
 
 /** Non-expired cookie rows of the vault, read from a copy (Chrome locks the live db). */
 export function vaultCookies(dir = VAULT_DIR): CookieRow[] {
-  const src = path.join(dir, 'Default', 'Cookies');
+  return profileCookies(path.join(dir, 'Default'));
+}
+
+/** Non-expired cookie rows of one profile dir (…/Default, …/Profile 1). */
+export function profileCookies(profilePath: string): CookieRow[] {
+  const src = path.join(profilePath, 'Cookies');
   if (!fs.existsSync(src)) return [];
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-vault-'));
   try {
@@ -54,7 +65,7 @@ export function vaultCookies(dir = VAULT_DIR): CookieRow[] {
     const db = new Database(copy, { readonly: true, safeIntegers: true });
     try {
       const now = nowChromeUs();
-      const rows = db.query('select host_key, name, expires_utc, is_httponly, is_secure from cookies').all() as CookieRow[];
+      const rows = db.query("select host_key, name, expires_utc, is_httponly, is_secure, cast(substr(encrypted_value, 1, 3) as text) as tag from cookies").all() as CookieRow[];
       // expires_utc 0 = a session cookie (lives until the browser closes).
       return rows.filter((r) => BigInt(r.expires_utc) === 0n || BigInt(r.expires_utc) > now);
     } finally {
@@ -73,9 +84,13 @@ export function vaultCookies(dir = VAULT_DIR): CookieRow[] {
 
 /** Origins that have IndexedDB in the vault, from the on-disk directory names. */
 export function vaultIdbOrigins(dir = VAULT_DIR): string[] {
+  return profileIdbOrigins(path.join(dir, 'Default'));
+}
+
+export function profileIdbOrigins(profilePath: string): string[] {
   try {
     return fs
-      .readdirSync(path.join(dir, 'Default', 'IndexedDB'))
+      .readdirSync(path.join(profilePath, 'IndexedDB'))
       .map((n) => /^(https?)_(.+)_(\d+)\.indexeddb\.leveldb$/.exec(n))
       .filter((m): m is RegExpExecArray => !!m)
       .map((m) => `${m[1]}://${m[2]}${m[3] === '0' ? '' : ':' + m[3]}`);
@@ -83,6 +98,9 @@ export function vaultIdbOrigins(dir = VAULT_DIR): string[] {
     return [];
   }
 }
+
+/** Where a login can come from: "My browser" (the vault) or the owner's everyday Chrome (read-only). */
+export type LoginSource = 'vault' | 'chrome';
 
 export interface Detection {
   site: sites.SiteDef;
@@ -92,35 +110,108 @@ export interface Detection {
   authCookies: number;
   /** Origins of the site that hold IndexedDB. */
   storageOrigins: string[];
+  /** A real SESSION is there (sessionIndicator) — never just a visitor cookie like Facebook's `datr`. */
   present: boolean;
+  /** What made it a session (cookie names), or why not. Names only. */
+  by?: string;
+  why?: string;
+  /** The sources that hold it, in the order a transfer tries them (the vault first: it can be checked live). */
+  sources: LoginSource[];
+  /** Which of the owner's Chrome profiles hold it (dir names) — two = two accounts of the same site. */
+  profiles?: string[];
 }
 
-/** Does the vault hold a login for `input`? Reads disk only; never returns a value. */
-export function detect(input: string, dir = VAULT_DIR): Detection {
-  const site = sites.resolve(input);
-  const rows = vaultCookies(dir).filter((r) => sites.cookieBelongs(r.host_key, site));
-  const storageOrigins = vaultIdbOrigins(dir).filter((o) => sites.cookieBelongs(new URL(o).hostname, site));
+type One = Omit<Detection, 'site' | 'sources' | 'profiles'>;
+
+/**
+ * Pure: one profile's share of a site → is a session there? Cookies by sessionIndicator. Storage alone counts only for
+ * a site the host knows keeps its session in storage (`copy` with no session-cookie list: Linear) — an unknown site's
+ * IndexedDB is as likely a cache as a login.
+ */
+export function judge(site: sites.SiteDef, rows: Pick<CookieRow, 'name' | 'is_httponly' | 'is_secure'>[], storageOrigins: string[], o: { weak?: boolean } = {}): One {
   const authCookies = rows.filter((r) => Number(r.is_httponly) === 1 && Number(r.is_secure) === 1).length;
-  return { site, cookies: rows.length, authCookies, storageOrigins, present: authCookies > 0 || storageOrigins.length > 0 };
+  const v = sites.sessionIndicator(site, rows, o);
+  if (v.signedIn) return { cookies: rows.length, authCookies, storageOrigins, present: true, by: v.by };
+  if (storageOrigins.length && site.known && site.policy === 'copy' && !site.sessionCookies?.length)
+    return { cookies: rows.length, authCookies, storageOrigins, present: true, by: 'site storage' };
+  return { cookies: rows.length, authCookies, storageOrigins, present: false, why: v.why };
+}
+
+function detectAt(site: sites.SiteDef, profilePath: string, readableOnly: boolean, o: { weak?: boolean } = {}): One {
+  // A keyring-encrypted cookie (v11) cannot be read without the owner's keyring: not a login we can offer.
+  const rows = profileCookies(profilePath).filter((r) => sites.cookieBelongs(r.host_key, site) && (!readableOnly || !r.tag || r.tag === 'v10'));
+  const storageOrigins = profileIdbOrigins(profilePath).filter((o) => sites.cookieBelongs(new URL(o).hostname, site));
+  return judge(site, rows, storageOrigins, o);
+}
+
+const asList = (own: owner.OwnerProfile | owner.OwnerProfile[] | null | undefined): owner.OwnerProfile[] => (!own ? [] : Array.isArray(own) ? own : [own]);
+
+/**
+ * Does the vault (or one of the owner's Chrome profiles) hold a signed-in session for `input`? Reads disk only; never
+ * returns a value. `own` defaults to every profile of the owner's Chrome.
+ */
+export function detect(input: string, dir = VAULT_DIR, own: owner.OwnerProfile | owner.OwnerProfile[] | null = owner.ownerProfiles(), o: { weak?: boolean } = {}): Detection {
+  const site = sites.resolve(input);
+  const v = detectAt(site, path.join(dir, 'Default'), false, o);
+  const per = asList(own).map((p) => ({ p, d: detectAt(site, p.profilePath, true, o) }));
+  const hit = per.filter((x) => x.d.present);
+  const sources: LoginSource[] = [...(v.present ? (['vault'] as const) : []), ...(hit.length ? (['chrome'] as const) : [])];
+  const first = v.present || !hit.length ? v : hit[0].d;
+  return { site, ...first, sources, ...(hit.length ? { profiles: hit.map((x) => x.p.profileDir) } : {}) };
+}
+
+/** The httpOnly cookie NAMES a profile holds for `input` (never a value) — sign_in diffs them across a sign-in. */
+export function sessionCookieNames(input: string, p: owner.OwnerProfile): string[] {
+  const site = sites.resolve(input);
+  return profileCookies(p.profilePath).filter((r) => sites.cookieBelongs(r.host_key, site) && Number(r.is_httponly) === 1).map((r) => String(r.name));
+}
+
+/** Is `input` signed in in this ONE profile of the owner's Chrome? */
+export function detectProfile(input: string, p: owner.OwnerProfile, o: { weak?: boolean } = {}): One {
+  return detectAt(sites.resolve(input), p.profilePath, true, o);
+}
+
+/** One source's detection, for the transfer from it. */
+function detectIn(site: sites.SiteDef, src: LoginSource, dir: string, own: owner.OwnerProfile | null): One {
+  return src === 'vault' ? detectAt(site, path.join(dir, 'Default'), false) : detectAt(site, own!.profilePath, true);
+}
+
+/** The sites one profile holds a SESSION for (sessionIndicator per site), by site id. */
+function loginSites(profilePath: string, readableOnly: boolean): sites.SiteDef[] {
+  const rows = profileCookies(profilePath).filter((r) => !readableOnly || !r.tag || r.tag === 'v10');
+  const idb = profileIdbOrigins(profilePath);
+  const by = new Map<string, { site: sites.SiteDef; rows: CookieRow[]; storage: string[] }>();
+  const at = (host: string) => {
+    const s = sites.resolve(host.replace(/^\./, ''));
+    if (!by.has(s.id)) by.set(s.id, { site: s, rows: [], storage: [] });
+    return by.get(s.id)!;
+  };
+  for (const r of rows) at(r.host_key).rows.push(r);
+  for (const o of idb) at(new URL(o).hostname).storage.push(o);
+  return [...by.values()].filter((x) => !(x.site.known === false && sites.TRACKERS.has(x.site.id)) && judge(x.site, x.rows, x.storage).present).map((x) => x.site);
 }
 
 /**
- * The sites the vault has a login for — names only. Known sites by name; any
- * other registrable domain only when it has an httpOnly+secure cookie or its
- * own storage, so ad and analytics cookies don't show up as "logins".
+ * The sites the vault (and the owner's Chrome) is signed in to — names only. A site counts only with a SESSION
+ * indicator (sessionIndicator): ad, analytics and visitor cookies (Facebook's datr) don't make it a "login".
  */
-export function list(dir = VAULT_DIR): { id: string; label: string; known: boolean; policy: sites.LoginPolicy }[] {
-  const rows = vaultCookies(dir);
-  const idb = vaultIdbOrigins(dir).map((o) => new URL(o).hostname);
-  const hosts = new Set<string>([...rows.filter((r) => Number(r.is_httponly) === 1 && Number(r.is_secure) === 1).map((r) => r.host_key), ...idb]);
-  const seen = new Map<string, sites.SiteDef>();
-  for (const h of hosts) {
-    const s = sites.resolve(h.replace(/^\./, ''));
-    if (!s.known && sites.TRACKERS.has(s.id)) continue;
-    if (!seen.has(s.id)) seen.set(s.id, s);
-  }
+export function list(
+  dir = VAULT_DIR,
+  own: owner.OwnerProfile | owner.OwnerProfile[] | null = owner.ownerProfiles()
+): { id: string; label: string; known: boolean; policy: sites.LoginPolicy; sources: LoginSource[]; profiles?: string[] }[] {
+  const seen = new Map<string, { site: sites.SiteDef; sources: Set<LoginSource>; profiles: string[] }>();
+  const add = (found: sites.SiteDef[], src: LoginSource, profile?: string) => {
+    for (const s of found) {
+      if (!seen.has(s.id)) seen.set(s.id, { site: s, sources: new Set(), profiles: [] });
+      const e = seen.get(s.id)!;
+      e.sources.add(src);
+      if (profile) e.profiles.push(profile);
+    }
+  };
+  add(loginSites(path.join(dir, 'Default'), false), 'vault');
+  for (const p of asList(own)) add(loginSites(p.profilePath, true), 'chrome', p.profileDir);
   return [...seen.values()]
-    .map((s) => ({ id: s.id, label: s.label, known: s.known, policy: sites.decide(s).policy }))
+    .map(({ site: s, sources, profiles }) => ({ id: s.id, label: s.label, known: s.known, policy: sites.decide(s).policy, sources: [...sources].sort() as LoginSource[], ...(profiles.length ? { profiles } : {}) }))
     .sort((a, b) => Number(b.known) - Number(a.known) || a.id.localeCompare(b.id));
 }
 
@@ -181,31 +272,56 @@ export async function withVault<T>(fn: (cdp: Cdp) => Promise<T>, dir = VAULT_DIR
         cdp.close();
       }
     }
-    try {
-      fs.rmSync(path.join(dir, 'DevToolsActivePort'), { force: true });
-    } catch {
-      /* none */
-    }
-    const proc = spawn(chromeBin(), chromeExtraFlags().concat(vaultArgs(dir, true), ['about:blank']), { stdio: 'ignore' });
-    supervise(proc, 'browser:vault-headless');
-    try {
-      const port = await waitPort(dir, proc);
-      const cdp = await Cdp.connect(port);
-      try {
-        return await fn(cdp);
-      } finally {
-        // A clean exit flushes cookies and storage to disk before we return.
-        await cdp.send('Browser.close').catch(() => {});
-        cdp.close();
-      }
-    } finally {
-      const t0 = Date.now();
-      while (proc.exitCode === null && Date.now() - t0 < 5000) await new Promise((r) => setTimeout(r, 100));
-      if (proc.exitCode === null && proc.pid && pidAlive(proc.pid)) killTree(proc.pid);
-    }
+    return withHeadless(dir, fn, 'browser:vault-headless');
   };
   const p = busy.then(run, run);
   busy = p.catch(() => {});
+  return p;
+}
+
+/** A headless Chrome on `dir` for one job, stopped (cleanly: cookies and storage flushed) after. */
+async function withHeadless<T>(dir: string, fn: (cdp: Cdp) => Promise<T>, label: string): Promise<T> {
+  try {
+    fs.rmSync(path.join(dir, 'DevToolsActivePort'), { force: true });
+  } catch {
+    /* none */
+  }
+  const proc = spawn(chromeBin(), chromeExtraFlags().concat(vaultArgs(dir, true), ['about:blank']), { env: chromeEnv(), stdio: 'ignore' });
+  supervise(proc, label);
+  try {
+    const port = await waitPort(dir, proc);
+    const cdp = await Cdp.connect(port);
+    try {
+      return await fn(cdp);
+    } finally {
+      // A clean exit flushes cookies and storage to disk before we return.
+      await cdp.send('Browser.close').catch(() => {});
+      cdp.close();
+    }
+  } finally {
+    const t0 = Date.now();
+    while (proc.exitCode === null && Date.now() - t0 < 5000) await new Promise((r) => setTimeout(r, 100));
+    if (proc.exitCode === null && proc.pid && pidAlive(proc.pid)) killTree(proc.pid);
+  }
+}
+
+let ownerBusy: Promise<unknown> = Promise.resolve();
+
+/**
+ * Run `fn` against a snapshot of the owner's everyday Chrome (owner-chrome.ts): the site's files copied to a temp
+ * profile, a headless Chrome of our own on it, the copy deleted after. The owner's Chrome is never touched.
+ */
+export async function withOwnerChrome<T>(own: owner.OwnerProfile, idbOrigins: string[], withLocal: boolean, fn: (cdp: Cdp) => Promise<T>): Promise<T> {
+  const run = async () => {
+    const root = owner.snapshot(own, idbOrigins, withLocal);
+    try {
+      return await withHeadless(root, fn, 'browser:owner-chrome-snapshot');
+    } finally {
+      owner.removeSnapshot(root);
+    }
+  };
+  const p = ownerBusy.then(run, run);
+  ownerBusy = p.catch(() => {});
   return p;
 }
 
@@ -218,7 +334,7 @@ export async function openVisible(env: NodeJS.ProcessEnv, url?: string, dir = VA
   if (visible && visible.exitCode === null) return { pid: visible.pid!, alreadyOpen: true };
   await busy; // never race a headless job for the profile lock
   fs.mkdirSync(dir, { recursive: true });
-  const proc = spawn(chromeBin(), chromeExtraFlags().concat(vaultArgs(dir, false), url ? [url] : []), { env, stdio: 'ignore' });
+  const proc = spawn(chromeBin(), chromeExtraFlags().concat(vaultArgs(dir, false), url ? [url] : []), { env: chromeEnv(env), stdio: 'ignore' });
   supervise(proc, 'browser:vault');
   proc.on('exit', () => {
     if (visible === proc) visible = null;
@@ -229,6 +345,12 @@ export async function openVisible(env: NodeJS.ProcessEnv, url?: string, dir = VA
 
 export function isVisibleOpen(): boolean {
   return !!(visible && visible.exitCode === null);
+}
+
+/** SSO1: the DevTools port of the visible "my browser", once it listens (sso.ts drives one tab of it). */
+export async function visiblePort(dir = VAULT_DIR): Promise<number> {
+  if (!visible || visible.exitCode !== null) throw new Error('my browser is not open');
+  return waitPort(dir, visible);
 }
 
 // ---- moving one site ---------------------------------------------------------
@@ -256,44 +378,75 @@ function originsFor(site: sites.SiteDef, storageOrigins: string[]): string[] {
 
 export interface TransferResult {
   ok: boolean;
+  /** The owner's Chrome profile it came from (source 'chrome'). */
+  profile?: string;
   site: string;
   policy: sites.LoginPolicy;
   moved?: { cookies: number; dbs: number; rows: number; local: number };
   /** Where a check url landed, when there was one to check. */
   check?: { url: string; loggedIn: boolean } | null;
+  /** Which browser the login came from. */
+  source?: LoginSource;
   error?: string;
 }
 
-/** Carry ONE site's login from the vault into a session's browser. */
-export async function transfer(sessionId: string, input: string, dir = VAULT_DIR): Promise<TransferResult> {
-  const d = detect(input, dir);
+/** Carry ONE site's login from the vault — or, failing that, the owner's Chrome — into a session's browser. */
+export async function transfer(sessionId: string, input: string, dir = VAULT_DIR, ownIn: owner.OwnerProfile | owner.OwnerProfile[] | null = owner.ownerProfiles(), o: { weak?: boolean; force?: boolean } = {}): Promise<TransferResult> {
+  // force: sign_in just watched the sign-in land in this one profile (a new session cookie) — copy from it
+  const d0 = detect(input, dir, ownIn, o);
+  const only = asList(ownIn);
+  const d = o.force && !d0.present && only.length === 1 ? { ...d0, present: true, sources: ['chrome' as LoginSource], profiles: [only[0].profileDir] } : d0;
+  // ONE profile is the source — the first that holds a session (sign_in passes the one the owner's account is in).
+  const own = asList(ownIn).find((p) => d.profiles?.includes(p.profileDir)) || null;
   const site = d.site;
-  // Before the vault is opened we only know THAT the site has storage, not the
+  const decision0 = sites.decide(site, d.storageOrigins.length ? ['(unread)'] : []);
+  if (decision0.policy === 'never') return { ok: false, site: site.id, policy: 'never', error: decision0.reason || 'this site must not be copied — sign in fresh' };
+  if (!d.present) return { ok: false, site: site.id, policy: decision0.policy, error: 'there is no login for this site in your browser' };
+  let last: TransferResult | null = null;
+  for (let i = 0; i < d.sources.length; i++) {
+    const src = d.sources[i];
+    const r = await transferFrom(sessionId, site, src, dir, own, i === d.sources.length - 1);
+    if (r.ok || r.policy === 'never') return r;
+    last = r;
+  }
+  return last!;
+}
+
+async function transferFrom(
+  sessionId: string,
+  site: sites.SiteDef,
+  src: LoginSource,
+  dir: string,
+  own: owner.OwnerProfile | null,
+  lastTry: boolean
+): Promise<TransferResult> {
+  const d = detectIn(site, src, dir, own);
+  // Before the profile is opened we only know THAT the site has storage, not the
   // database names; decide() refines once they are read (see dbNames below).
   let decision = sites.decide(site, d.storageOrigins.length ? ['(unread)'] : []);
-  if (decision.policy === 'never') return { ok: false, site: site.id, policy: 'never', error: decision.reason || 'this site must not be copied — sign in fresh' };
-  if (!d.present) return { ok: false, site: site.id, policy: decision.policy, error: 'there is no login for this site in your browser' };
-
+  const origins = decision.policy === 'copy' ? originsFor(site, d.storageOrigins) : [];
+  const read = async (cdp: Cdp) => {
+    // Name the databases first: a Firebase database narrows the copy to it.
+    if (origins.length && !site.known) {
+      const names = await dbNames(cdp, origins);
+      decision = sites.decide(site, names);
+    }
+    return exportSite(cdp, (dom) => sites.cookieBelongs(dom, site), decision.policy === 'copy' ? origins : [], decision.authDbs || null);
+  };
   let state: SiteState;
   try {
-    state = await withVault(async (cdp) => {
-      // Name the databases first: a Firebase database narrows the copy to it.
-      const origins = decision.policy === 'copy' ? originsFor(site, d.storageOrigins) : [];
-      if (origins.length && !site.known) {
-        const names = await dbNames(cdp, origins);
-        decision = sites.decide(site, names);
-      }
-      return exportSite(cdp, (dom) => sites.cookieBelongs(dom, site), decision.policy === 'copy' ? origins : [], decision.authDbs || null);
-    }, dir);
+    state = src === 'vault' ? await withVault(read, dir) : await withOwnerChrome(own!, d.storageOrigins, origins.length > 0, read);
   } catch (e) {
     const msg = (e as Error).message;
     if (/DEVICE_BOUND/.test(msg)) {
       sites.learn(site.id, 'never', 'holds a key that cannot leave the browser — the session is tied to this device');
-      return { ok: false, site: site.id, policy: 'never', error: 'this site ties its session to your browser (a key that cannot be exported) — sign in fresh' };
+      return { ok: false, site: site.id, policy: 'never', source: src, error: 'this site ties its session to your browser (a key that cannot be exported) — sign in fresh' };
     }
-    if (/TOO_LARGE/.test(msg)) return { ok: false, site: site.id, policy: decision.policy, error: "this site's browser storage is too large to copy — sign in fresh" };
-    return { ok: false, site: site.id, policy: decision.policy, error: `reading your browser failed: ${msg}` };
+    if (/TOO_LARGE/.test(msg)) return { ok: false, site: site.id, policy: decision.policy, source: src, error: "this site's browser storage is too large to copy — sign in fresh" };
+    return { ok: false, site: site.id, policy: decision.policy, source: src, error: `reading your browser failed: ${msg}` };
   }
+  if (src === 'chrome' && !state.cookies.length && !state.origins.length)
+    return { ok: false, site: site.id, policy: decision.policy, source: src, error: 'your Chrome holds nothing readable for this site (its cookies may be tied to a keyring)' };
 
   const cdp = await sessionCdp(sessionId);
   try {
@@ -303,10 +456,20 @@ export async function transfer(sessionId: string, input: string, dir = VAULT_DIR
       const l = await landing(cdp, site.checkUrl, site.loggedOut).catch(() => null);
       if (l) {
         check = { url: l.url, loggedIn: !l.loggedOut };
-        if (l.loggedOut) sites.learn(site.id, 'never', `a copied login landed on ${l.url} — the site did not accept it`);
+        // Only when no other source is left to try: a stale vault copy says nothing about the owner's Chrome.
+        if (l.loggedOut && lastTry) sites.learn(site.id, 'never', `a copied login landed on ${l.url} — the site did not accept it`);
       }
     }
-    return { ok: check ? check.loggedIn : true, site: site.id, policy: decision.policy, moved, check, ...(check && !check.loggedIn ? { error: 'the site did not accept the copied login — sign in fresh' } : {}) };
+    return {
+      ok: check ? check.loggedIn : true,
+      site: site.id,
+      policy: decision.policy,
+      source: src,
+      ...(src === 'chrome' && own ? { profile: own.profileDir } : {}),
+      moved,
+      check,
+      ...(check && !check.loggedIn ? { error: 'the site did not accept the copied login — sign in fresh' } : {}),
+    };
   } finally {
     cdp.close();
   }
@@ -316,8 +479,7 @@ async function dbNames(cdp: Cdp, origins: string[]): Promise<string[]> {
   const out: string[] = [];
   for (const o of origins) {
     try {
-      const r = await cdp.send('IndexedDB.requestDatabaseNames', { securityOrigin: o });
-      out.push(...(r?.databaseNames || []));
+      out.push(...(await idbNames(cdp, o)));
     } catch {
       /* origin without storage */
     }
@@ -330,10 +492,13 @@ async function dbNames(cdp: Cdp, origins: string[]): Promise<string[]> {
  * transfer, look at the vault again; if the owner lost the login, stop offering
  * this site. Returns null when there is nothing to check against.
  */
-export async function vaultStillLoggedIn(input: string, dir = VAULT_DIR): Promise<boolean | null> {
+export async function vaultStillLoggedIn(input: string, dir = VAULT_DIR, source: LoginSource = 'vault', ownIn: owner.OwnerProfile | owner.OwnerProfile[] | null = owner.ownerProfiles()): Promise<boolean | null> {
+  const own = asList(ownIn).find((p) => detectProfile(input, p).present) || asList(ownIn)[0] || null;
   const site = sites.resolve(input);
   if (!site.checkUrl) return null;
-  const l = await withVault((cdp) => landing(cdp, site.checkUrl!, site.loggedOut), dir).catch(() => null);
+  const look = (cdp: Cdp) => landing(cdp, site.checkUrl!, site.loggedOut);
+  // The owner's Chrome is never driven: a fresh snapshot of it shows whether the site still takes its session.
+  const l = await (source === 'chrome' ? (own ? withOwnerChrome(own, [], false, look) : Promise.resolve(null)) : withVault(look, dir)).catch(() => null);
   if (!l) return null;
   if (l.loggedOut) sites.learn(site.id, 'never', 'copying this login logged the original out — the site allows one session');
   return !l.loggedOut;
@@ -342,12 +507,21 @@ export async function vaultStillLoggedIn(input: string, dir = VAULT_DIR): Promis
 /** Carry one site back from a session's browser into the vault — only after the owner approved. */
 export async function saveToVault(sessionId: string, input: string, dir = VAULT_DIR): Promise<TransferResult> {
   const site = sites.resolve(input);
-  const decision = sites.decide(site);
+  // The session's storage of the site, from its disk (app.example.com keeps it on a subdomain the bare domain never
+  // shows): without it an unknown site was saved as cookies only — and a login that lives in IndexedDB/localStorage
+  // (any.do) was saved as nothing that signs in.
+  const storageOrigins = profileIdbOrigins(path.join(chromeSessionDir(sessionId), 'Default')).filter((o) => sites.cookieBelongs(new URL(o).hostname, site));
+  let decision = sites.decide(site, storageOrigins.length ? ['(unread)'] : []);
   if (decision.policy === 'never') return { ok: false, site: site.id, policy: 'never', error: decision.reason || 'this site must not be copied' };
   const cdp = await sessionCdp(sessionId);
   let state: SiteState;
   try {
-    const origins = decision.policy === 'copy' ? (site.origins?.length ? site.origins : site.domains.map((d) => `https://${d.replace(/^\./, '')}`)) : [];
+    let origins = decision.policy === 'copy' ? originsFor(site, storageOrigins) : [];
+    if (decision.policy === 'copy' && !origins.length) origins = site.domains.map((d) => `https://${d.replace(/^\./, '')}`);
+    if (origins.length && !site.known) {
+      decision = sites.decide(site, await dbNames(cdp, origins));
+      if (decision.policy !== 'copy') origins = [];
+    }
     state = await exportSite(cdp, (dom) => sites.cookieBelongs(dom, site), origins, decision.authDbs || null);
   } catch (e) {
     return { ok: false, site: site.id, policy: decision.policy, error: (e as Error).message };

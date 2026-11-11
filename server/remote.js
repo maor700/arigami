@@ -6,7 +6,9 @@
 // every failure is returned as a message for the UI rather than thrown.
 import { cfg } from './lib/config.js';
 
+// ARIGAMI_TAILSCALE_BIN: an explicit CLI (tests point it at a stub).
 const CANDIDATES = [
+  ...(process.env.ARIGAMI_TAILSCALE_BIN ? [process.env.ARIGAMI_TAILSCALE_BIN] : []),
   'tailscale',
   // macOS
   '/opt/homebrew/bin/tailscale',
@@ -17,12 +19,20 @@ const CANDIDATES = [
   'C:\\Program Files (x86)\\Tailscale\\tailscale.exe',
 ];
 
+// Every call is synchronous, so every call has a deadline. A tailscale command
+// that waits for something — `tailscale funnel --bg …` on a tailnet where Funnel
+// is not enabled prints a link and waits for an admin FOREVER — would otherwise
+// freeze the whole host: Bun's spawnSync runs its own loop, the server stops
+// accepting connections and even SIGTERM goes unanswered (seen twice in a
+// morning, each time until systemd killed the host).
+const CLI_TIMEOUT_MS = Number(process.env.ARIGAMI_TAILSCALE_TIMEOUT_MS) || 15_000;
+
 let cliPath = null;
 function findCli() {
   if (cliPath) return cliPath;
   for (const c of CANDIDATES) {
     try {
-      if (Bun.spawnSync([c, 'version']).exitCode === 0) { cliPath = c; return c; }
+      if (Bun.spawnSync([c, 'version'], { timeout: 5_000, stdin: 'ignore' }).exitCode === 0) { cliPath = c; return c; }
     } catch {}
   }
   return null;
@@ -32,13 +42,12 @@ function run(args) {
   const cli = findCli();
   if (!cli) return { ok: false, code: 127, out: '', err: 'tailscale CLI not found' };
   try {
-    const r = Bun.spawnSync([cli, ...args]);
-    return {
-      ok: r.exitCode === 0,
-      code: r.exitCode,
-      out: new TextDecoder().decode(r.stdout),
-      err: new TextDecoder().decode(r.stderr),
-    };
+    const r = Bun.spawnSync([cli, ...args], { timeout: CLI_TIMEOUT_MS, killSignal: 'SIGKILL', stdin: 'ignore' });
+    const out = new TextDecoder().decode(r.stdout);
+    let err = new TextDecoder().decode(r.stderr);
+    // killed at the deadline: say so, keeping whatever it printed (Funnel's "not enabled … visit <link>")
+    if (r.exitCode === null || r.signalCode) err = `${err}${err ? ' — ' : ''}tailscale ${args[0]} did not finish within ${Math.round(CLI_TIMEOUT_MS / 1000)}s`;
+    return { ok: r.exitCode === 0, code: r.exitCode, out, err };
   } catch (e) {
     return { ok: false, code: -1, out: '', err: e.message };
   }

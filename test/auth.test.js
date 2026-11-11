@@ -12,8 +12,9 @@ import { createAuth, emailAllowed, generatePairingCode, parseCookies, COOKIE } f
 import { validateAuthBind, isLoopbackBind } from '../server/lib/config.ts';
 import { rewriteSetCookie } from '../server/proxy.ts';
 import { runInChild } from './_child.js';
+import { tmpDir } from './_tmp.js';
 
-const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-auth-'));
+const tmp = () => tmpDir('arigami-auth-');
 const mk = (over = {}) =>
   createAuth({ dir: tmp(), auth: { mode: 'pairing', cookieDays: 30 }, log: () => {}, ...over });
 
@@ -245,13 +246,15 @@ describe('gate', () => {
     expect((await get('/__api/sessions/sess_a/attachments')).status).toBe(401);
   });
   test('public allowlist passes without a credential and carries no principal', async () => {
-    for (const p of ['/__api/auth/me', '/__api/config', '/__host/', '/__host/index.js', '/', '/__health', '/__poc-sw.js', '/__api/sms/inbound?body=x', '/__api/webhooks/sms', '/__api/webhooks/slack', '/__api/webhooks/github', '/__api/webhooks/custom/my-hook']) {
+    for (const p of ['/__api/auth/me', '/__api/config', '/__host/', '/__host/index.js', '/', '/__health', '/__poc-sw.js', '/__api/webhooks/sms', '/__api/webhooks/slack', '/__api/webhooks/github', '/__api/webhooks/custom/my-hook', '/__api/webhooks/twilio/voice', '/__api/webhooks/twilio/status']) {
       const r = await get(p);
       expect([p, r.status]).toEqual([p, 200]);
       expect((await r.json()).principal).toBeNull();
     }
     // C3: only the inbound webhook routes are public; admin/unknown ones are gated.
-    for (const p of ['/__api/webhooks/x', '/__api/webhooks/token', '/__api/webhooks/config', '/__api/webhooks/events', '/__api/webhooks/custom/', '/__api/webhooks/custom/a/b'])
+    // the pre-C3 SMS webhook used to be open to everyone; it is a normal gated route now
+    expect((await get('/__api/sms/inbound?body=x')).status).toBe(401);
+    for (const p of ['/__api/webhooks/x', '/__api/webhooks/token', '/__api/webhooks/config', '/__api/webhooks/events', '/__api/webhooks/custom/', '/__api/webhooks/custom/a/b', '/__api/webhooks/twilio', '/__api/webhooks/twilio/stream'])
       expect([p, (await get(p)).status]).toEqual([p, 401]);
   });
   test('cookie passes; bogus cookie does not', async () => {

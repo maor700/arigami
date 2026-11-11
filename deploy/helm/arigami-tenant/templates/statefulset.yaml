@@ -35,6 +35,17 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . | quote }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: arigami
           image: {{ include "arigami-tenant.imageRef" . | quote }}
@@ -66,6 +77,10 @@ spec:
               value: "0.0.0.0"
             - name: ARIGAMI_PUBLIC_URL
               value: {{ include "arigami-tenant.publicUrl" . | quote }}
+            # A pod has no unprivileged user namespaces, so Chrome's sandbox cannot start; containerd pods also lack
+            # /.dockerenv, which older images used to detect "in a container" — be explicit.
+            - name: CHROME_NO_SANDBOX
+              value: "1"
             # The ingress controller is not a loopback peer of this pod (same
             # reasoning as docker-compose.yml's caddy/tls profile) — trusting
             # X-Forwarded-* here would let anyone spoof it. TLS is terminated
@@ -78,6 +93,25 @@ spec:
             {{- if .Values.env.ARIGAMI_BUNDLE }}
             - name: ARIGAMI_BUNDLE
               value: {{ .Values.env.ARIGAMI_BUNDLE | quote }}
+            {{- end }}
+            {{- if .Values.env.ARIGAMI_BUNDLE_REF }}
+            - name: ARIGAMI_BUNDLE_REF
+              value: {{ .Values.env.ARIGAMI_BUNDLE_REF | quote }}
+            {{- end }}
+            {{- if .Values.env.ARIGAMI_SSO_URL }}
+            - name: ARIGAMI_SSO_URL
+              value: {{ .Values.env.ARIGAMI_SSO_URL | quote }}
+            {{- end }}
+            {{- if .Values.sharedWorkspace }}
+            # Several org members sign in here (control-plane shared workspace): handoffs must name a role and
+            # sessions are short-lived (server/org-access.ts).
+            - name: ARIGAMI_SHARED_WORKSPACE
+              value: "1"
+            {{- end }}
+            {{- if .Values.orgHost }}
+            # The organisation host: registers `scope: org` cron jobs from the profile (profiles/README.md).
+            - name: ARIGAMI_ORG_HOST
+              value: "1"
             {{- end }}
             {{- range .Values.extraEnv }}
             - name: {{ .name }}

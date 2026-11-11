@@ -21,7 +21,7 @@ and the human's request maps onto one or two of them:
 | "before every merge, run…", "when a merge finishes, notify…" | `hooks` — events, a `merge.before` gate, notification channels | `templates/hooks` |
 | "a webhook endpoint for …" | `webhooks[]` routed into a listener | `templates/listener` |
 
-**The contract is `sdk/README.md` in the Arigami repo — read it before you write a
+**The contract is `$ARIGAMI_DOCS/../sdk/README.md` — read it before you write a
 manifest.** For a tab, also read `reference/browser-sdk.md` next to this file: a tab
 runs sandboxed and **cannot** call `/__api`; everything goes through `window.arigami`.
 
@@ -42,6 +42,11 @@ runs sandboxed and **cannot** call `/__api`; everything goes through `window.ari
   `ctx.secrets` / env. Put a `settings.schema` in the manifest instead of a constant.
 * Extension code runs **in the host process with the host's privileges** — say this to
   the human at the end (step 7), plainly, once.
+* **Need an npm package?** Declare it in the extension's own `package.json`, run
+  `bun install --ignore-scripts` in the extension directory, and keep the `bun.lock` it
+  writes — never `node_modules` (it is not copied, committed or exported). Another host
+  installs from that lockfile once an admin allows it (`bin/host ext deps <name>`); until
+  then `GET /__api/extensions` shows `"dependencies missing: …"`. `$ARIGAMI_DOCS/EXTENSIONS.md` §6.1.
 
 ---
 
@@ -88,7 +93,7 @@ readable.
 
 **Combining kinds**: copy one template, then paste the extra manifest block and file
 from another. One directory may hold a tab *and* a tool *and* hooks — `hello` in the
-Arigami repo (`examples/extensions/hello`) is exactly that, and is worth reading once.
+Arigami repo (`$ARIGAMI_DOCS/../examples/extensions/hello`) is exactly that, and is worth reading once.
 
 ---
 
@@ -215,10 +220,10 @@ Keep the loop tight: change one thing, show it, ask "Like this?" (in the human's
 
 ## Reference
 
-* `sdk/README.md` (Arigami repo) — the full contract: every manifest field, the
+* `$ARIGAMI_DOCS/../sdk/README.md` — the full contract: every manifest field, the
   `ListenerProvider` rules, hooks/gates/channels, tools, tabs.
 * `reference/browser-sdk.md` (next to this file) — **read before writing a tab**: the
   `window.arigami` surface and the permissions each call needs.
-* `docs/EXTENSIONS.md` (Arigami repo) — the operator's view: layout, what reloads vs
+* `$ARIGAMI_DOCS/EXTENSIONS.md` — the operator's view: layout, what reloads vs
   what needs a new session, the security model, REST/CLI.
-* `examples/extensions/hello` (Arigami repo) — one working example of every kind.
+* `$ARIGAMI_DOCS/../examples/extensions/hello` — one working example of every kind.

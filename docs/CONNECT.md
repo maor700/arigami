@@ -29,23 +29,24 @@ agent: request_setup({capability, why})          ← blocks; Setup card + push
 agent calls the original tool again
 ```
 
-The card's default is **automatic** when a Google identity is connected in the
-session Chrome and the capability is auto-capable; otherwise **manual**. The
+The card's default is **automatic** when a sign-in identity (Google, Microsoft or Apple) is connected — signed in in
+the owner's own Chrome on the shared desktop — and the capability is auto-capable; otherwise **manual**. The
 human can flip it. Nothing runs automatically without that click.
 
 ## Playbooks
 
 | Capability | Skill | Automated by the agent | Human needed when |
 |---|---|---|---|
-| `identity` | `connect-identity` | open the Google account page, detect state, sync the login to the shared Chrome base profile, register the email with the host | **always the first time** — the password/2FA are typed by the human in Take-over |
+| `identity` | `connect-identity` | `sign_in` to the owner's account provider (Google, Microsoft or Apple) in their own Chrome on the shared desktop — the host types the password from the vault — read the account, register email + provider + Chrome profile with the host | **the first time**: approving the vault fill once, and the provider's 2FA push on their phone |
 | `mcp:<service>` | `connect-mcp` | start `claude mcp login <grant> --no-browser` on the host, open the vendor's own authorize URL, approve with the connected identity, let the loopback callback land (or paste the redirect URL back), poll until the grant is live | vendor login page / 2FA, a workspace or org the card did not name, an admin-approval wall |
 | `composio:<toolkit>` | `connect-composio` | fetch the Composio redirect URL, open it, pick the identity account, "unverified app → Advanced → continue", Allow, poll until ACTIVE | provider login page (Slack/Notion/Linear), any password/2FA, redirect outside the allowlist |
 | `claude` | `connect-claude` | mint the PKCE authorize URL, click Authorize when claude.ai is signed in, read the code from the callback URL, POST it for exchange | claude.ai login (password / email code) |
 | `codex` | `connect-codex` | start `codex login` on the host, open the ChatGPT authorize URL, approve with the signed-in account, the loopback callback lands on the host by itself | OpenAI login (password / 2FA / email code) |
-| `remote` | `connect-tailscale` | `tailscale login` URL, Google SSO with the identity account, Connect device, enable `serve` via REST | password/2FA, non-Google SSO, `sudo`, tailnet without HTTPS certs, admin approval |
+| `remote` | `connect-tailscale` | `tailscale login` URL, SSO with the identity's provider (in the owner's Chrome, `sign_in({site, url})`), Connect device, enable `serve` via REST | 2FA, a provider the identity is not, `sudo`, tailnet without HTTPS certs, admin approval |
 | `git` | `connect-github` | `gh auth login --web` under the host pty-bridge, open the device page, type the one-time device code, Authorize, poll gh | GitHub login page, org SSO |
 | `whatsapp` | — (manual only) | — | the QR is scanned by the human on the phone; the card shows it |
 | `repo:<name>` | — (manual only) | — | the human picks/enters the repo on the card |
+| `voice:<openai\|elevenlabs\|cartesia\|deepgram>`, `telephony:twilio` | — (manual only) | — | the human pastes the vendor key (Twilio: SID + token) on the card or in Settings → Connections → Voice & phone; docs/VOICE.md |
 
 All playbooks share `skills/_lib/connect.sh` (open in the session Chrome with
 an allowlist check, `wait-url`, screenshot, click/type, REST, report). Screen-
@@ -58,15 +59,16 @@ of the front **tab**, not a scrot of the whole desktop/root window. Only `key`
 `skills/_lib/xinput.py` (XTEST), and only when the session actually has a
 desktop (`$DISPLAY` set) — none of the playbooks below call it today.
 They all follow `skills/machine-work/SKILL.md` for narration, the four
-screenshot moments and the hand-over protocol.
+screenshot moments and the hand-over protocol. A step that needs the owner's identity provider ("Continue with Google /
+Microsoft / Apple") is finished in the owner's own Chrome on the shared desktop, where it is signed in:
+`sign_in({site, url:<the consent page>})` (docs/LOGIN.md).
 
 ## Security model
 
-1. **The agent never types secrets.** Passwords, 2FA codes, OTPs, recovery codes,
-   CAPTCHA answers, card numbers — every screen that asks for one is the
-   *take-over boundary*: the agent calls `request_screen`, the human drives the
-   session desktop through the cockpit, clicks Done, and the agent verifies the
-   result. The only strings the agent types are URLs and one-time *device* codes
+1. **The agent never types secrets.** A password, a TOTP code: the HOST types it from the owner's vault into the field
+   the agent clicked (`sign_in({fill})`, docs/LOGIN.md) — the agent never sees it. A 2FA push, an SMS code, a CAPTCHA,
+   a card number — every screen only the human can do is the *take-over boundary*: `sign_in({human})` /
+   `request_screen`, the human acts, clicks Done, and the agent verifies the result. The only strings the agent types are URLs and one-time *device* codes
    a CLI printed for it (GitHub `XXXX-XXXX`), which are single-use and public by
    design. `bin/host`/the card's audit line records `human:true|false` per
    connection so this is checkable after the fact.
@@ -75,7 +77,9 @@ screenshot moments and the hand-over protocol.
    any other host (a domain matches itself and its subdomains — `evil.example.com.attacker.net`
    does not). A redirect that leaves the list is a hand-over, never followed by
    the agent. The union across playbooks is: `accounts.google.com`,
-   `myaccount.google.com`, `google.com`, `claude.ai`, `claude.com`,
+   `myaccount.google.com`, `google.com`, the other identity providers' sign-in and account pages
+   (`login.microsoftonline.com`, `login.live.com`, `account.microsoft.com`, `myaccount.microsoft.com`,
+   `appleid.apple.com`, `account.apple.com`), `claude.ai`, `claude.com`,
    `platform.claude.com`, `console.anthropic.com`, `auth.openai.com`, `openai.com`, `chatgpt.com`, `backend.composio.dev`,
    `composio.dev`, `login.tailscale.com`, `tailscale.com`, `github.com`, plus the
    provider domain of a non-Google Composio toolkit (`slack.com`, `linear.app`,
@@ -91,9 +95,8 @@ screenshot moments and the hand-over protocol.
    account X"); the agent only runs after the human clicks *Connect
    automatically*. It never starts a login flow on its own initiative, never
    adds scopes, never touches ACLs/keys/exit nodes/PATs.
-4. **Least persistence.** Browser state lives only in the session's Chrome
-   profile and the shared base profile it syncs to (`chrome-base/`, the existing
-   T8 mechanism — cookies, saved logins, local storage). Tokens are stored by
+4. **Least persistence.** The identity's sign-in lives in the owner's own Chrome profile on the shared desktop (one
+   profile per account); sessions get one site's login copied from there, nothing is written back. Tokens are stored by
    the host in its usual places (`accounts.json`, config) via the same REST
    endpoints the UI uses; the agent only relays codes and never writes them to
    files, artifacts, memory or chat. `identity.json` holds the email only.
@@ -101,9 +104,9 @@ screenshot moments and the hand-over protocol.
    and the card switches to manual with the reason. Every run ends with one
    screenshot published as an artifact and referenced from the audit line in
    `$ARIGAMI_DIR/connections.log` (`{at, sessionId, capability, mode, result, evidence, human}`).
-6. **Own desktop, own browser.** Each session drives *its* Xvfb display and
-   Chrome profile (`skills/_lib/chrome.sh`); no session touches another's
-   browser, and nothing is ever `pkill`ed.
+6. **Own desktop, own browser — except a sign-in.** Each session drives *its* Xvfb display and Chrome profile
+   (`skills/_lib/chrome.sh`); a sign-in step runs in the owner's Chrome on the shared desktop, one session at a time
+   under the host's lease (docs/DESKTOP-CONTROL.md). Nothing is ever `pkill`ed.
 
 ## What the human sees
 
@@ -123,3 +126,42 @@ screenshot moments and the hand-over protocol.
    `report_setup`, retro (`skill_propose`).
 3. Register `playbook: 'connect-<provider>'` and `autoCapable: true` in
    `server/capabilities.ts`.
+
+## WhatsApp: one linked device per host
+
+Native install and update run `scripts/install-whatsapp.sh`; the Docker image
+runs that same pinned-source installer at build time. Existing native installs
+can run it from the Arigami checkout after installing Node >=22 and npm. It
+preserves `auth_info` and `data`, and retries an incomplete dependency install.
+No package download is needed when the bridge starts.
+
+All authorized sessions use the host's single managed bridge and pairing, not a
+separate browser login. Native pairing lives in
+`~/.local/lib/whatsapp-mcp/auth_info`; Docker links it to
+`$ARIGAMI_DIR/whatsapp/auth_info` on the persistent volume. Do not remove that
+volume during upgrades. Revoked/logged-out devices still need a new scan.
+The setup card displays a local QR PNG and reports missing-install/crash reasons.
+
+`whatsapp` tool `download_media` takes `{chat_jid, message_id}` from message
+history and returns `{path, mime_type, bytes}`. It supports received/synced
+images (including those without captions), video, audio, stickers and documents.
+Metadata is stored in the shared message database; files land in its `media/`
+directory with private permissions. Downloads are explicit and capped at 50 MiB;
+expired/unavailable WhatsApp media can fail even when metadata is retained.
+Incoming voice notes are transcribed inside the bridge (`src/arigami-transcribe.ts`,
+injected by `scripts/prepare-whatsapp.mjs`) with the host's Groq Whisper key
+(`groqApiKey`, language `voiceLang`, both passed by env at spawn) and stored as
+`[Audio] <text>`, so listeners and the `whatsapp` tool read the text. No key →
+the row stays `[Audio]`. Notes over 25 MB, or slower than 90 s to fetch+transcribe,
+stay `[Audio]` too; the audio is never written to disk. An existing checkout gets
+the hook when `scripts/install-whatsapp.sh` re-runs and the bridge restarts.
+
+Historical messages without stored media metadata cannot be downloaded until
+WhatsApp syncs them again. Use `publish_artifact` to show a downloaded file to
+the human; don't expose a server-local filesystem path as a web link.
+
+Validation: `bun test test/whatsapp-install.test.ts test/whatsapp-media.test.ts
+test/bugs1-whatsapp.test.ts test/setup-web.test.js test/install.test.ts` covers
+repair/idempotence, preserved pairing/data, process restart, media scope/limits,
+and QR/error presentation. A real QR scan and a Docker-volume restart remain
+release smoke checks requiring a linked test device and a Docker runtime.

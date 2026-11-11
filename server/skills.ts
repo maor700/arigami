@@ -109,15 +109,18 @@ export function isSkillDir(dir: string): boolean {
 }
 
 function listSupporting(full: string): { name: string; size: number }[] {
-  try {
-    return fs
-      .readdirSync(full)
-      .filter((f) => f !== 'SKILL.md')
-      .filter((f) => fs.statSync(path.join(full, f)).isFile())
-      .map((f) => ({ name: f, size: fs.statSync(path.join(full, f)).size }));
-  } catch {
-    return [];
-  }
+  const files: { name: string; size: number }[] = [];
+  const visit = (dir: string, prefix = ''): void => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const name = prefix + entry.name;
+      if (name === 'SKILL.md' || entry.isSymbolicLink()) continue;
+      const file = path.join(dir, entry.name);
+      if (entry.isDirectory()) visit(file, name + '/');
+      else if (entry.isFile()) files.push({ name, size: fs.statSync(file).size });
+    }
+  };
+  try { visit(full); } catch { return []; }
+  return files;
 }
 
 export interface SkillSummary {
@@ -258,6 +261,7 @@ export function writeSkill(
     // first override of a shipped skill: bring its supporting files along
     for (const f of listSupporting(path.join(SKILLS_DIR, name))) {
       const to = path.join(dest, f.name);
+      fs.mkdirSync(path.dirname(to), { recursive: true });
       if (!fs.existsSync(to)) fs.copyFileSync(path.join(SKILLS_DIR, name, f.name), to);
     }
   }

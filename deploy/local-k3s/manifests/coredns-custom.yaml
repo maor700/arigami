@@ -1,0 +1,14 @@
+# In-cluster name resolution for the local names. *.localtest.me resolves to 127.0.0.1 everywhere — inside a pod
+# that is the pod itself — so the org domain and the IdP are rewritten to the ingress controller's Service. The
+# control plane then reaches the IdP (discovery, token, JWKS) at exactly the URL the browser uses.
+# k3s/k3d import this ConfigMap into their Corefile (`import /etc/coredns/custom/*.override`); on kind and other
+# clusters up.sh splices the same two lines into the coredns ConfigMap instead. Cloud: real DNS, delete this.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: coredns-custom
+  namespace: kube-system
+data:
+  arigami-local.override: |
+    rewrite stop name regex ^(.+\.)?arigami\.localtest\.me\.$ ingress-nginx-controller.ingress-nginx.svc.cluster.local. answer auto
+    rewrite stop name regex ^idp\.localtest\.me\.$ ingress-nginx-controller.ingress-nginx.svc.cluster.local. answer auto

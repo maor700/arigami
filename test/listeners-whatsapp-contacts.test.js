@@ -4,9 +4,9 @@
 // Imports the pure module only (no state singleton, no bridge).
 import { test, expect } from 'bun:test';
 import { DatabaseSync } from 'node:sqlite';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { rmSync } from 'node:fs';
 import { join } from 'node:path';
+import { tmpDir } from './_tmp.js';
 
 const wa = await import('../server/listeners-whatsapp.ts');
 const {
@@ -69,7 +69,7 @@ test('contactJidSet flattens + dedups; phoneJid/isJid classify entries', () => {
 // ---- resolution against a stubbed whatsapp.db --------------------------------
 
 function stubDb() {
-  const dir = mkdtempSync(join(tmpdir(), 'wafilt1-'));
+  const dir = tmpDir('wafilt1-');
   const path = join(dir, 'whatsapp.db');
   const db = new DatabaseSync(path);
   db.exec(`

@@ -26,6 +26,7 @@ import '../components/setup/SetupCard.jsx';
 import '../components/QuestionCard.jsx';
 import '../components/PermissionCard.jsx';
 import '../components/ScreenRequestCard.jsx';
+import '../components/CredentialCard.jsx';
 
 const warned = new Set();
 /** Render host component `name` with `props` (an event + sessionId etc.). Unknown / non-host name → nothing. */

@@ -18,8 +18,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { runInChild } from './_child.js';
 import { MCP_CATALOG, MCP_SLUG_RE, grantName, parseGrantName, grantToolPattern, mcpSpec, connectableMcp } from '../server/mcp-catalog.ts';
+import { tmpDir } from './_tmp.js';
 
-const fresh = (): string => fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-m1-'));
+const fresh = (): string => tmpDir('arigami-m1-');
 const env = (dir: string) => ({
   ARIGAMI_DIR: dir,
   ARIGAMI_FUNNEL_QUIET: '1',

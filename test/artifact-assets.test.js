@@ -7,8 +7,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { runInChild } from './_child.js';
+import { tmpDir } from './_tmp.js';
 
-const tmp = (p) => fs.mkdtempSync(path.join(os.tmpdir(), p));
+const tmp = (p) => tmpDir(p);
 
 function makeSite(root) {
   fs.mkdirSync(path.join(root, 'img'), { recursive: true });
@@ -77,7 +78,7 @@ const BODY = (src) => `
   srv.close();emit(out);
 `;
 
-test('F5: authenticated entry gets a tokenized <base>; assets load cookie-less; token scoped to that artifact; forged/expired/other → 401; traversal 403', () => {
+test('F5: authenticated entry gets a tokenized <base>; assets load cookie-less; token scoped to that artifact; forged/expired/other → 401; traversal 400', () => {
   const src = tmp('f5-src-');
   makeSite(src);
   const dir = tmp('f5-home-');
@@ -106,8 +107,8 @@ test('F5: authenticated entry gets a tokenized <base>; assets load cookie-less; 
   expect(o.otherArtQ).toBe(401);
   expect(o.forged).toBe(401);
   expect(o.garbage).toBe(401);
-  expect(o.traversal).toBe(403);
-  expect(o.traversalEnc).toBe(403);
+  expect(o.traversal).toBe(400); // refused by the gate before any routing (path tricks are ambiguous)
+  expect(o.traversalEnc).toBe(400);
   expect(o.expired).toBe(401);
   expect(o.listed).toBe(1);                      // share list shows the share link only
   expect(o.adminList).toBe(1);

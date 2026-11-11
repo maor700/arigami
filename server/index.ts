@@ -5,10 +5,12 @@ import './lib/platform.js';
 import http, { IncomingMessage, ServerResponse } from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
+import { COMPRESS_MIN, compress, compressibleType, pickEncoding } from './lib/http-compress.js';
 import { resourceRoot } from './lib/resource-root.js';
 import { cfg, ensureConfigFile, flushState } from './state.js';
 import * as api from './api.js';
 import * as bus from './bus.js';
+import { trackSocket } from './org-access.js';
 import * as vnc from './vnc.js';
 import * as screencast from './screencast.js';
 import { killAll, kickAutoPlayAll } from './claude.js';
@@ -28,7 +30,7 @@ import * as artifacts from './artifacts.js';
 import * as extServe from './ext-serve.js';
 import { setDrainHandler, healthBody } from './host-control.js';
 import { validateAuthBind } from './lib/config.js';
-import { auth } from './auth.js';
+import { auth, requestPath } from './auth.js';
 // K2: share-token gate for cookie-less artifact links (see auth.ts ShareGate).
 auth.setShareGate(artifacts.shareGate);
 // EXT3: the same gate for an extension tab's own assets — the sandboxed page
@@ -123,7 +125,9 @@ let hasTarget: (req: IncomingMessage) => boolean = (): boolean => false;
 
 try {
   const mod = (await import('./proxy.js')) as ProxyModule;
-  proxy = mod.createProxy({ cfg });
+  // proxy.sites: the sibling origins extensions declare for a proxied site (docs/EXTENSIONS.md)
+  const extMod = await import('./extensions.js');
+  proxy = mod.createProxy({ cfg, sites: () => extMod.proxySites() } as any);
   if (typeof mod.hasTarget === 'function')
     hasTarget = (req: IncomingMessage) => mod.hasTarget!(req);
   else if (typeof proxy?.hasTarget === 'function')
@@ -146,7 +150,9 @@ try {
   mod.setLiveTicketFetcher?.(async (id: string) => {
     const mcp = (await import('./linear-mcp.js')) as any;
     if (!mcp.status().connected) return null;
-    return await mcp.getIssue(id);
+    // get_issue carries no comments: fetch them alongside (a failure there still shows the ticket)
+    const [issue, comments] = await Promise.all([mcp.getIssue(id), mcp.listComments(id).catch(() => [])]);
+    return issue && typeof issue === 'object' ? { ...issue, comments } : issue;
   });
 } catch (e) {
   const error = e instanceof Error ? e : new Error(String(e));
@@ -205,15 +211,45 @@ function serveHost(pathname: string, res: ServerResponse): void {
     );
     return;
   }
-  res.writeHead(200, {
-    'content-type': MIME[path.extname(file)] || 'application/octet-stream',
-  });
+  const type = MIME[path.extname(file)] || 'application/octet-stream';
+  // RESUME: the bundle is ~2.5MB of JS — on a phone link that is the cold load.
+  // Text assets go out gzip/br (packed once per file version, kept in memory).
+  const enc = compressibleType(type) ? pickEncoding((res as any).req?.headers?.['accept-encoding']) : null;
+  const packed = enc ? packedAsset(file, enc) : null;
+  if (packed) {
+    res.writeHead(200, { 'content-type': type, 'content-encoding': enc!, 'content-length': packed.length, vary: 'Accept-Encoding' });
+    res.end(packed);
+    return;
+  }
+  res.writeHead(200, { 'content-type': type, ...(compressibleType(type) ? { vary: 'Accept-Encoding' } : {}) });
   fs.createReadStream(file).pipe(res);
+}
+
+const assetCache = new Map<string, { key: string; body: Buffer | null }>();
+function packedAsset(file: string, enc: 'br' | 'gzip'): Buffer | null {
+  try {
+    const st = fs.statSync(file);
+    if (st.size < COMPRESS_MIN || st.size > 20e6) return null;
+    const key = `${st.mtimeMs}:${st.size}`;
+    const id = `${enc}:${file}`;
+    const hit = assetCache.get(id);
+    if (hit && hit.key === key) return hit.body;
+    const body = compress(fs.readFileSync(file), enc, 'max');
+    if (assetCache.size > 400) assetCache.clear();
+    assetCache.set(id, { key, body });
+    return body;
+  } catch {
+    return null;
+  }
 }
 
 const server = http.createServer(
   (req: IncomingMessage, res: ServerResponse) => {
-    const pathname = (req.url || '/').split('?')[0];
+    // Baseline hardening headers on every response of this origin (artifacts add their own CSP on top).
+    res.setHeader('x-content-type-options', 'nosniff');
+    res.setHeader('referrer-policy', 'same-origin');
+    res.setHeader('x-frame-options', 'SAMEORIGIN');
+    const pathname = requestPath(req.url).path;
     // C1: auth gate before ANY routing. Sets req.auth (the principal) and
     // answers 401/302 itself for everything outside the small public allowlist
     // (auth.ts isPublicPath). The proxy, host pages and /__artifacts (A1/K2)
@@ -283,11 +319,25 @@ const server = http.createServer(
       try {
         pinned = !!hasTarget(req);
       } catch {}
+      // `/` is public so a fresh visitor reaches the login. A pinned proxy target (?__target= / X-Poc-Target) makes the
+      // host fetch an arbitrary URL for the caller — that is for a signed-in user only, never anonymous (SSRF).
+      if (pinned && !(req as any).auth) {
+        res.writeHead(401, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+        res.end(JSON.stringify({ error: 'unauthorized', login: '/__host/' }));
+        return;
+      }
       if (!pinned) {
         res.writeHead(302, { location: '/__host/' });
         res.end();
         return;
       }
+    }
+    // Past this point is the dev-server proxy / host pages: never for an anonymous caller (the only public path
+    // that may reach here is the service-worker script itself).
+    if (!(req as any).auth && pathname !== '/__poc-sw.js') {
+      res.writeHead(401, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+      res.end(JSON.stringify({ error: 'unauthorized', login: '/__host/' }));
+      return;
     }
     try {
       if (handlePage(req, res)) return;
@@ -312,11 +362,16 @@ server.on(
     // A throw in this handler is an uncaught exception on the 'upgrade' event
     // and kills the process (with it, every running Claude session). Guard it.
     try {
-      const pathname = (req.url || '').split('?')[0];
+      const pathname = requestPath(req.url).path;
+      // Stage 2 phone: Twilio's media stream carries no cookie; its `start` must present the one-time token (voice-phone-bridge.ts).
+      if (api.phoneStreamUpgrade(req, socket, head)) return;
       // C1: /__ws, /__vnc, /__screencast and the SW proxy's websockets all
       // need the cookie (or an internal bearer) — an anonymous upgrade is
       // answered 401 + closed.
       if (auth.gateUpgrade(req, socket)) return;
+      // Shared workspaces: remember whose socket this is, so revoking a member closes it (server/org-access.ts).
+      const who = (req as any).auth;
+      if (who?.kind === 'user' && who.user?.id) trackSocket(who.user.id, socket);
       if (pathname === '/__ws') return bus.handleUpgrade(req, socket, head);
       if (pathname === '/__vnc') return vnc.handleUpgrade(req, socket, head);
       // native-window's live view (no VNC server to bridge to there) — see screencast.ts.
@@ -375,13 +430,13 @@ try {
 // config (it stops the host's entry from connecting) — clear any left over.
 setTimeout(() => void import('./api.js').then((a: any) => a.sweepCliTwins()).catch(() => {}), 5_000).unref?.();
 
-// A session's idle Chrome closes after ARIGAMI_BROWSER_IDLE_MS (10 min) and
-// reopens on its next browser step — unless a human may be looking at it.
+// A session's idle Chrome closes after screen.browserIdleMs / ARIGAMI_BROWSER_IDLE_MS (10 min) and
+// reopens on its next browser step — unless a human may be looking at it or a DevTools client drives it.
 {
   const chromeMod = await import('./lib/chrome.js');
   const cdpMod = await import('./lib/chrome-cdp.js');
   const apiMod = await import('./api.js');
-  chromeMod.startIdleCloser((id) => apiMod.hasOpenScreenRequest(id), (id) => cdpMod.cdpPort(id), (m) => console.log(m));
+  chromeMod.startIdleCloser((id) => apiMod.hasOpenScreenRequest(id), (id) => cdpMod.cdpPort(id));
 }
 
 // A bind failure is the single most confusing way for the host to die — say what
@@ -429,7 +484,7 @@ server.listen(cfg.port, cfg.bind, () => {
       m.initAccounts(); // seed from keychain + any inherited .env token
       // B3: `install.sh --unattended` → pre-complete every skippable wizard step
       // so the wizard is done the moment pairing lands (no UI on a headless box).
-      import('./onboarding.js').then((ob) => { try { ob.unattendedPrecomplete(); } catch {} }).catch(() => {});
+      import('./onboarding.js').then((ob) => { try { ob.registerEngineReadiness(); ob.unattendedPrecomplete(); } catch {} }).catch(() => {});
       // K5/D3: `install` = the first boot of this data dir; then arm the
       // opt-in telemetry shipper (a no-op timer until someone opts in).
       import('./funnel.js').then((f) => { try { f.firstTime('install'); } catch {} }).catch(() => {});
@@ -504,8 +559,9 @@ server.listen(cfg.port, cfg.bind, () => {
   // Shared :99 desktop (spec §7.3): default instance only, no-op when the
   // display is already up (legacy unit) or Xvfb/x11vnc are missing.
   import('./lib/desktops.js')
-    .then((m: any) => m.ensureGlobalDesktop())
+    .then((m: any) => { m.startShmSweeper(); return m.ensureGlobalDesktop(); })
     .then((r: any) => console.log(r?.started ? `[host] global desktop up on ${r.display} (vnc :${r.vncPort})` : `[host] global desktop not started: ${r?.reason}`))
+    .then(() => seedOwnerChrome())
     .catch((e: any) => console.error('[host] global desktop failed:', e?.message));
 });
 
@@ -581,4 +637,33 @@ if (process.env.ARIGAMI_SUPERVISOR === 'self' && process.platform !== 'win32' &&
   }, 2000);
   // Never hold the process open on our own account.
   (watch as unknown as { unref?: () => void }).unref?.();
+}
+
+/**
+ * sign_in signs new sites in to the owner's everyday Chrome on the shared desktop (docs/LOGIN.md). A fresh install has
+ * Chrome and the display but no profile until someone opens it: open it once, as a person would (no DevTools port), so
+ * the profile exists and Chrome stays there on the screen. Only on the instance the shared desktop belongs to (the
+ * default one, or a container's own via ARIGAMI_GLOBAL_DESKTOP=1 — its ARIGAMI_DIR makes it non-default), and only
+ * when nothing is there yet.
+ */
+async function seedOwnerChrome(): Promise<void> {
+  const { IS_DEFAULT_INSTANCE } = await import('./lib/instance.js');
+  const oc = await import('./lib/owner-chrome.js');
+  if (!oc.ownsSharedDesktop(IS_DEFAULT_INSTANCE, process.env)) return;
+  const si = await import('./lib/sign-in.js');
+  const os = await import('node:os');
+  const fs = await import('node:fs');
+  const display = String(cfg.screen?.display || ':99');
+  const n = Number(display.replace(/^:/, ''));
+  const userDataDir = (await import('node:path')).join(os.homedir(), '.config', 'google-chrome');
+  const d = oc.shouldSeedOwnerChrome({
+    platform: process.platform, inContainer: oc.ownerChromeInContainer(), desktop: oc.ownerChromeDesktopHere(), config: (cfg as any).ownerChrome ?? null, env: process.env,
+    hasProfile: !!oc.ownerProfile(), displayUp: Number.isFinite(n) && fs.existsSync(`/tmp/.X11-unix/X${n}`), chromeRunning: si.ownerChromePids(userDataDir).length > 0,
+  });
+  if (!d.seed) return;
+  const chrome = await import('./lib/chrome.js');
+  const { spawn } = await import('node:child_process');
+  const p = spawn(chrome.chromeBin(), oc.ownerChromeLaunchFlags(), { env: chrome.chromeEnv({ ...process.env, DISPLAY: display }), detached: true, stdio: 'ignore' });
+  p.unref();
+  console.log(`[host] opened the owner's everyday Chrome on ${display} once, so sign_in has a profile to sign sites in to (pid ${p.pid})`);
 }

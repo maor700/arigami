@@ -1,48 +1,56 @@
-import { useEffect, useRef, useState } from 'react';
+import { Suspense, lazy, useEffect, useRef, useState } from 'react';
+import VaultAutoFill from './components/VaultAutoFill.jsx';
 import { api } from './lib/api.js';
-import { useStore, loadChat, setAttentionHandler, needsAttention, interruptSession, restartSession, getState, screenPanelOpen, closeScreenTakeover } from './lib/store.js';
+import { useStore, loadChat, setOpenSession, setAttentionHandler, needsAttention, hasOpenScreenRequest, interruptSession, restartSession, getState, screenPanelOpen, closeScreenTakeover } from './lib/store.js';
 import { usePrefs, setPrefs, getPrefs, setTermOverride } from './lib/prefs.js';
 import { useIsDesktop } from './lib/useMedia.js';
 import { isVncInputTarget } from './lib/useScreenConnection.js';
-import { stopRecording, hotkeyPress, composerFocused, matchesHotkey, setSelectedContext } from './lib/voice.js';
+import { poolCap, touchPool } from './lib/sessionPool.js';
+import { stopRecording, hotkeyPress, composerFocused, matchesHotkey, setSelectedContext, setVoiceAvailable } from './lib/voice.js';
 import { setCommandHandlers } from './lib/commands.js';
-import { useT } from './lib/i18n.js';
+import { useT, currentLang, t as tNow } from './lib/i18n.js';
+import { toast, dismissToast } from './lib/toast.js';
+import { ESC_INTERRUPT_MS, escInterruptStep, overlayOpen } from './lib/esc-interrupt.js';
 import { Icon } from './lib/icons.js';
-import {
-  faBars,
-  faBoxArchive,
-  faBrain,
-  faCircleHalfStroke,
-  faCircleUser,
-  faGear,
-  faHouse,
-  faPen,
-  faPlus,
-  faPlusMinus,
-  faPuzzlePiece,
-  faQuestion,
-  faTrash,
-} from '@fortawesome/free-solid-svg-icons';
 import Rail from './components/Rail.jsx';
 import SessionView, { resolveTabs, CHANGES_TAB_ID } from './components/SessionView.jsx';
 import ScreenSidePanel from './components/ScreenSidePanel.jsx';
-import ScreenModal from './components/ScreenModal.jsx';
-import Launcher, { buildTicketPayload } from './components/Launcher.jsx';
 import FirstRun from './components/FirstRun.jsx';
-import Settings from './components/Settings.jsx';
+import { EngineToggle } from './components/EngineToggle.jsx';
 import { parseHash, parseLocation, routeFromState, sessionFromSearch } from './lib/route.js';
-import SkillsView from './components/SkillsView.jsx';
-import BrainView from './components/BrainView.jsx';
-import AgentView from './components/AgentView.jsx';
-import Setup from './components/Setup.jsx';
-import Wizard from './components/Wizard.jsx';
 import VoiceHUD from './components/VoiceHUD.jsx';
-import QuickSwitcher from './components/QuickSwitcher.jsx';
-import ShortcutsHelp from './components/ShortcutsHelp.jsx';
+import { installReadAloud } from './lib/speak.js';
 import Toaster from './components/Toaster.jsx';
 import Login from './components/Login.jsx';
 import ConfirmHost from './components/ConfirmHost.jsx';
-import { ArchiveDialog, DeleteDialog, EditSessionDialog } from './components/Dialogs.jsx';
+import { Archive, Bell, Brain, ChevronDown, ChevronUp, CircleHelp, CircleUser, Contrast, Diff, House, Languages, Menu, Pencil, Plus, Puzzle, Settings as SettingsIcon, Trash2, X } from 'lucide-react';
+import { Button } from './components/ui/button.jsx';
+import { Badge } from './components/ui/badge.jsx';
+import { Tip } from './components/ui/tooltip.jsx';
+import { Input, Textarea } from './components/ui/input.jsx';
+import { Sheet, SheetContent, SheetDescription, SheetTitle } from './components/ui/sheet.jsx';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './components/ui/select.jsx';
+
+// Whole screens and dialogs that are not on the first paint load on demand: the
+// first view (rail + session) ships without Settings, the launcher, setup, skills,
+// brain, agents, the palette, shortcuts and the dialogs. The fallbacks hold the
+// same space (a flexible empty pane / nothing for overlays), so nothing shifts.
+const lazyNamed = (load, name) => lazy(() => load().then((m) => ({ default: m[name] })));
+const Settings = lazy(() => import('./components/Settings.jsx'));
+const SkillsView = lazy(() => import('./components/SkillsView.jsx'));
+const BrainView = lazy(() => import('./components/BrainView.jsx'));
+const AgentView = lazy(() => import('./components/AgentView.jsx'));
+const Setup = lazy(() => import('./components/Setup.jsx'));
+const Wizard = lazy(() => import('./components/Wizard.jsx'));
+const Launcher = lazy(() => import('./components/Launcher.jsx'));
+const SessionOptionsPicker = lazyNamed(() => import('./components/Launcher.jsx'), 'SessionOptionsPicker');
+const QuickSwitcher = lazy(() => import('./components/QuickSwitcher.jsx'));
+const ShortcutsHelp = lazy(() => import('./components/ShortcutsHelp.jsx'));
+const ScreenModal = lazy(() => import('./components/ScreenModal.jsx'));
+const ArchiveDialog = lazyNamed(() => import('./components/Dialogs.jsx'), 'ArchiveDialog');
+const DeleteDialog = lazyNamed(() => import('./components/Dialogs.jsx'), 'DeleteDialog');
+const EditSessionDialog = lazyNamed(() => import('./components/Dialogs.jsx'), 'EditSessionDialog');
+const ViewFallback = () => <div className="min-h-0 flex-1" aria-busy="true" />;
 
 // matchesHotkey (the "Cmd+Shift+V" parser) lives in lib/voice.js (VOICE2).
 
@@ -93,11 +101,158 @@ function isTyping(e) {
   return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el?.isContentEditable || isVncInputTarget(el);
 }
 
-// Full-pane preview of a pending (not-yet-a-session) ticket — the same
-// /__ticket/<id> host page a ticket session opens as a tab, shown standalone
-// since there's no session yet. "Start session" promotes it via the queue.
-function TicketPreview({ ticket, fallbackTitle, onClose, onStart }) {
+// ---- editing a queued item ----------------------------------------------------------------------
+// What a pending item starts with, editable before it starts. A Linear ticket keeps its identity (title,
+// ticket id, cwd come from the ticket); a plain item (a queued PR review, a deferred session) can change
+// everything, including its title, working dir, permissions and prompt.
+import { fieldBase } from './components/ui/input.jsx';
+const FIELD = `${fieldBase} h-8 coarse:h-11 text-sm`;
+const draftOf = (item) => ({
+  title: item?.title || '',
+  prompt: item?.prompt || '',
+  cwd: item?.cwd || '',
+  permissionMode: item?.permissionMode || '',
+  engine: item?.engine || '',
+  skill: item?.skill || '',
+  model: item?.model || '',
+  effort: item?.effort || '',
+  folderName: item?.folderName || '',
+});
+
+function usePendingDraft(item) {
+  const [draft, setDraft] = useState(() => draftOf(item));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+  useEffect(() => { setDraft(draftOf(item)); setError(null); }, [item?.id]);
+  const base = draftOf(item);
+  const dirty = !!item && Object.keys(base).some((k) => (draft[k] || '') !== (base[k] || ''));
+  // Persist the edits, then run `then` (start) — an unsaved edit must never be silently dropped.
+  const save = async () => {
+    if (!item || !dirty) return true;
+    setSaving(true);
+    setError(null);
+    try {
+      const body = { ...draft };
+      if (item.kind !== 'empty') { delete body.title; delete body.cwd; delete body.permissionMode; }
+      await api.patch(`/pending/${item.id}`, body);
+      setSaving(false);
+      return true;
+    } catch (e) {
+      setError(String(e?.message || e));
+      setSaving(false);
+      return false;
+    }
+  };
+  return { draft, setDraft, dirty, saving, error, save };
+}
+
+function PendingOptionsForm({ item, draft, setDraft }) {
   const t = useT();
+  const plain = item.kind === 'empty';
+  const set = (patch) => setDraft((d) => ({ ...d, ...patch }));
+  return (
+    <div className="flex flex-col gap-4 text-sm" data-pending-form>
+      {plain && (
+        <label className="flex flex-col gap-1.5"><span className="text-xs font-medium text-muted-foreground">{t('chrome.pending.titleField')}</span>
+          <Input value={draft.title} onChange={(e) => set({ title: e.target.value })} /></label>
+      )}
+      <div className="flex flex-col gap-1.5"><span className="text-xs font-medium text-muted-foreground">{t('chrome.pending.engine')}</span>
+        <EngineToggle options={draft} onChange={(o) => setDraft((d) => ({ ...d, ...o }))} /></div>
+      <div className="flex flex-col gap-1.5"><span className="text-xs font-medium text-muted-foreground">{t('chrome.pending.runWith')}</span>
+        <SessionOptionsPicker options={draft} onChange={(o) => setDraft((d) => ({ ...d, ...o }))} /></div>
+      {plain && (
+        <div className="grid gap-4 md:grid-cols-2">
+          <label className="flex flex-col gap-1.5"><span className="text-xs font-medium text-muted-foreground">{t('chrome.pending.cwd')}</span>
+            <Input dir="ltr" value={draft.cwd} onChange={(e) => set({ cwd: e.target.value })} className="font-mono text-xs" /></label>
+          <label className="flex flex-col gap-1.5"><span className="text-xs font-medium text-muted-foreground">{t('chrome.pending.permissions')}</span>
+            <select value={draft.permissionMode} onChange={(e) => set({ permissionMode: e.target.value })} className={FIELD}>
+              <option value="">—</option>
+              <option value="bypassPermissions">Bypass</option>
+              <option value="acceptEdits">Accept edits</option>
+              <option value="plan">Plan</option>
+              <option value="default">Ask</option>
+            </select></label>
+        </div>
+      )}
+      <label className="flex flex-col gap-1.5"><span className="text-xs font-medium text-muted-foreground">{plain ? t('chrome.pending.prompt') : t('chrome.pending.extraPrompt')}</span>
+        <Textarea value={draft.prompt} onChange={(e) => set({ prompt: e.target.value })} rows={plain ? 12 : 5} className="leading-relaxed" placeholder={t('chrome.pending.noPrompt')} /></label>
+    </div>
+  );
+}
+
+// Header shared by both previews. Wraps on a phone: the title and × on top, the actions on their own full-width row.
+function PendingHeader({ title, chip, dirty, saving, onSave, onStart, onDismiss, onClose, extra }) {
+  const t = useT();
+  return (
+    <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border px-4 py-2" data-pending-header>
+      <span className="min-w-0 flex-1 basis-[10rem] truncate text-sm font-medium">{title}</span>
+      <Badge variant="outline">{chip}</Badge>
+      <Tip label={t('chrome.ticket.closePreview')}>
+        <Button variant="ghost" size="icon-sm" onClick={onClose} aria-label={t('chrome.ticket.closePreview')} className="order-2 text-muted-foreground md:order-last"><X /></Button>
+      </Tip>
+      <div className="order-last flex w-full items-center gap-2 md:order-none md:ms-auto md:w-auto">
+        {extra}
+        {dirty && (
+          <Button variant="outline" onClick={onSave} disabled={saving} data-pending-save>
+            {saving ? t('chrome.pending.saving') : t('chrome.pending.save')}
+          </Button>
+        )}
+        {onDismiss && (
+          <Button variant="outline" onClick={onDismiss} className="text-muted-foreground hover:text-destructive">{t('chrome.pending.dismiss')}</Button>
+        )}
+        <Button variant="primary" onClick={onStart} disabled={saving} data-pending-start className="min-w-0 flex-1 md:flex-none">
+          {t('chrome.ticket.startSession')}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// Full-pane details of a pending item that is NOT a Linear ticket (a PR review queued by a trigger, a
+// deferred plain session): where it came from, and everything it starts with — all of it editable.
+function PendingPreview({ item, onClose, onStart, onDismiss }) {
+  const t = useT();
+  const { draft, setDraft, dirty, saving, error, save } = usePendingDraft(item);
+  if (!item)
+    return (
+      <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 bg-bg text-fg">
+        <div className="text-sm text-muted-foreground">{t('chrome.pending.gone')}</div>
+        <Button variant="outline" onClick={onClose}>{t('chrome.pending.close')}</Button>
+      </div>
+    );
+  const pr = /https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+/.exec(draft.prompt || item.prompt || '')?.[0] || null;
+  return (
+    <div className="flex min-h-0 flex-1 flex-col bg-bg text-fg">
+      <PendingHeader
+        title={draft.title || item.title}
+        chip={t('chrome.ticket.pending')}
+        dirty={dirty}
+        saving={saving}
+        onSave={save}
+        onStart={async () => { if (await save()) onStart(); }}
+        onDismiss={onDismiss}
+        onClose={onClose}
+      />
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 md:px-6 md:py-5" data-pending-preview>
+        <div className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+          <span>{t('chrome.pending.source')}: <span className="text-foreground">{item.triggerName || t('chrome.pending.manual')}</span></span>
+          <span>{t('chrome.pending.queued')}: <span className="tabular-nums text-foreground">{item.addedAt ? new Date(item.addedAt).toLocaleString() : '—'}</span></span>
+          {pr && <a href={pr} target="_blank" rel="noreferrer" dir="ltr" className="text-foreground underline underline-offset-4 hover:decoration-2">{pr} ↗</a>}
+        </div>
+        {error && <div className="mb-3 rounded-md border border-[var(--hb-err-line)] bg-[var(--hb-err-bg)] px-3 py-2 text-xs text-destructive">{error}</div>}
+        <div className="max-w-[760px]"><PendingOptionsForm item={item} draft={draft} setDraft={setDraft} /></div>
+      </div>
+    </div>
+  );
+}
+
+// Full-pane preview of a pending (not-yet-a-session) Linear ticket — the same /__ticket/<id> host page a
+// ticket session opens as a tab, shown standalone since there's no session yet. "Options" edits what the
+// session starts with (engine, model, effort, skill, folder, extra instructions) before Start promotes it.
+function TicketPreview({ ticket, item, fallbackTitle, onClose, onStart, onDismiss }) {
+  const t = useT();
+  const [optionsOpen, setOptionsOpen] = useState(false);
+  const { draft, setDraft, dirty, saving, error, save } = usePendingDraft(item);
   // The pending item already carries a title from trigger time — pass it
   // through so the card can show *something* if the live Linear fetch fails
   // (e.g. no API key configured, or the ticket was never cached) instead of
@@ -107,27 +262,27 @@ function TicketPreview({ ticket, fallbackTitle, onClose, onStart }) {
     : `/__ticket/${ticket}`;
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-bg text-fg">
-      <div className="flex h-11 shrink-0 items-center gap-2.5 border-b border-hair px-4">
-        <span className="font-mono text-[12.5px] font-bold">{ticket}</span>
-        <span className="rounded-[5px] border border-border px-[7px] py-px text-[10px] text-fgdim">
-          {t('chrome.ticket.pending')}
-        </span>
-        <button
-          type="button"
-          onClick={onStart}
-          className="ml-auto cursor-pointer rounded-[8px] border-[1.5px] border-ink bg-brand px-3 py-1 text-[11.5px] font-bold text-fg"
-        >
-          {t('chrome.ticket.startSession')}
-        </button>
-        <button
-          type="button"
-          onClick={onClose}
-          title={t('chrome.ticket.closePreview')}
-          className="cursor-pointer px-1 text-[15px] text-fgdim hover:text-fg"
-        >
-          ×
-        </button>
-      </div>
+      <PendingHeader
+        title={ticket}
+        chip={t('chrome.ticket.pending')}
+        dirty={dirty}
+        saving={saving}
+        onSave={save}
+        onStart={async () => { if (await save()) onStart(); }}
+        onDismiss={item ? onDismiss : null}
+        onClose={onClose}
+        extra={item ? (
+          <Button variant="outline" onClick={() => setOptionsOpen((v) => !v)} aria-expanded={optionsOpen} data-pending-options className="text-muted-foreground">
+            {t('chrome.pending.options')} {optionsOpen ? <ChevronUp /> : <ChevronDown />}
+          </Button>
+        ) : null}
+      />
+      {item && optionsOpen && (
+        <div className="max-h-[55%] shrink-0 overflow-y-auto border-b border-border bg-card px-4 py-3" data-pending-preview>
+          {error && <div className="mb-3 rounded-md border border-[var(--hb-err-line)] bg-[var(--hb-err-bg)] px-3 py-2 text-xs text-destructive">{error}</div>}
+          <div className="max-w-[760px]"><PendingOptionsForm item={item} draft={draft} setDraft={setDraft} /></div>
+        </div>
+      )}
       <iframe
         title={t('chrome.ticket.iframeTitle', { id: ticket })}
         src={src}
@@ -156,13 +311,18 @@ function Cockpit() {
   // NOTE: this can't be an early `return` here — every hook below still has
   // to run on every render (Rules of Hooks), so the branch happens at the
   // bottom, right before the final JSX return.
-  const { sessions, chats, chatLoaded, conn, reconnecting, config, pending } = storeState;
+  const { sessions, chats, chatLoaded, conn, reconnecting, syncing, config, pending } = storeState;
   const prefs = usePrefs();
   // Seed each view flag from the URL hash so a deep link / refresh lands on the
   // right page. The two sync effects below keep hash ↔ state aligned thereafter.
   // B11: the host's `/__host/?session=<id>` links resolve like `#/session/<id>`.
   const initial = parseLocation(window.location);
-  const [selectedId, setSelectedId] = useState(initial.view === 'session' ? initial.id : null);
+  const [selectedId, setSelectedId] = useState(() => {
+    const id = initial.view === 'session' ? initial.id : null;
+    setOpenSession(id); // RESUME: known before the first replay lands (deep link)
+    return id;
+  });
+  useEffect(() => { setOpenSession(selectedId); }, [selectedId]);
   const [launcher, setLauncher] = useState(initial.view === 'launcher' ? { mode: initial.mode } : null); // null | {mode:'ticket'|'empty'|'trigger'}
   const [previewTicket, setPreviewTicket] = useState(initial.view === 'ticket' ? initial.id : null); // ticket id shown full-pane (pending preview)
   const [settingsOpen, setSettingsOpen] = useState(initial.view === 'settings');
@@ -203,6 +363,11 @@ function Cockpit() {
   const [railOpen, setRailOpen] = useState(false); // mobile drawer
   // B27: any navigation (row tap, hash change, deep link, ⌘K) closes the drawer.
   useEffect(() => { setRailOpen(false); }, [selectedId, settingsOpen, skillsOpen, brainOpen, agentOpen, setupOpen, launcher, previewTicket]);
+  // The machine modal opened from the drawer's footer: the drawer is a modal
+  // sheet too and would otherwise sit on top, swallowing every tap meant for
+  // Take control / close.
+  const screenModalOpen = !!storeState.screen.modal;
+  useEffect(() => { if (screenModalOpen) setRailOpen(false); }, [screenModalOpen]);
   const [quickSwitcherOpen, setQuickSwitcherOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const searchRef = useRef(null);
@@ -218,6 +383,15 @@ function Cockpit() {
     .filter((s) => !s.archived && !s.metadata?.agentHome)
     .sort((a, b) => (a.sortOrder ?? 1e9) - (b.sortOrder ?? 1e9));
   const selected = sessions.find((s) => s.id === selectedId) || null;
+  // Recently visited sessions stay mounted (hidden) so their tabs don't reload
+  // on the way back — see lib/sessionPool.js for the cap and eviction rule.
+  const poolRef = useRef([]);
+  poolRef.current = touchPool(
+    poolRef.current,
+    selected?.id || null,
+    poolCap({ isDesktop, deviceMemory: typeof navigator !== 'undefined' ? navigator.deviceMemory : undefined }),
+    new Set(sessions.map((s) => s.id)),
+  );
 
   // Apply a parsed route to the view flags (one active, others cleared).
   const applyRoute = (r) => {
@@ -228,6 +402,7 @@ function Cockpit() {
     setAgentOpen(r.view === 'agent' ? r.slug : null);
     if (r.view === 'agent') setAgentTab(r.tab || 'home');
     setSetupOpen(r.view === 'setup');
+    setWizardOpen((w) => (r.wizard ? true : w === true ? false : w)); // navigating away closes the first-run overlay
     setLauncher(r.view === 'launcher' ? { mode: r.mode } : null);
     setPreviewTicket(r.view === 'ticket' ? r.id : null);
     if (r.view === 'session') setSelectedId(r.id);
@@ -326,6 +501,13 @@ function Cockpit() {
   useEffect(() => {
     setSelectedContext(selectedId);
   }, [selectedId]);
+
+  // No Groq key on the host → the hotkey opens the HUD's "no key" card, not the mic.
+  useEffect(() => {
+    setVoiceAvailable(config ? !!config.voiceEnabled : null);
+  }, [config]);
+  // Stage 1b: read-aloud taps the chat store; it stays inert until a TTS source and the pref exist.
+  useEffect(() => { installReadAloud(); }, []);
 
   // Auto-compact is now a real `claude --autocompact <tokens>` spawn flag
   // (server/claude.js setAutoCompact), applied per-session from the context
@@ -455,9 +637,37 @@ function Cockpit() {
     return () => setCommandHandlers({});
   }, []);
 
+  // D13: jump to the next session (after the current one, wrapping) that is
+  // waiting on the human — a question, a permission, a take-over request.
+  // Reads the live store, so the keyboard handler and the palette share it.
+  const goToNextNeedingMe = () => {
+    const st = getState();
+    const list = st.sessions
+      .filter((s) => !s.archived && !s.metadata?.agentHome)
+      .sort((a, b) => (a.sortOrder ?? 1e9) - (b.sortOrder ?? 1e9));
+    const waiting = (s) => needsAttention(s) || hasOpenScreenRequest(s);
+    const cur = list.findIndex((s) => s.id === keyCtx.current.selected?.id);
+    for (let step = 1; step <= list.length; step++) {
+      const cand = list[(Math.max(cur, -1) + step) % list.length];
+      if (cand && cand.id !== keyCtx.current.selected?.id && waiting(cand)) {
+        setSelectedId(cand.id);
+        setLauncher(null);
+        setPreviewTicket(null);
+        setSettingsOpen(false);
+        setSkillsOpen(false);
+        setBrainOpen(false);
+        setAgentOpen(null);
+        setSetupOpen(false);
+        return true;
+      }
+    }
+    return false;
+  };
+
   // keyboard: '/' search, cmd+1..9 sessions, cmd+t tab popover, esc closes
   const keyCtx = useRef({});
-  keyCtx.current = { active, dialog, launcher, selected, settingsOpen, addTabOpen, railOpen, sessionCount: sessions.length };
+  keyCtx.current = { active, dialog, launcher, selected, settingsOpen, addTabOpen, railOpen, quickSwitcherOpen, shortcutsOpen, sessionCount: sessions.length };
+  const escArm = useRef(null); // the first Esc of an Esc-Esc interrupt: {id, at, toast}
   const pttActive = useRef(false); // push-to-talk: recording while the hotkey is held
   useEffect(() => {
     const onKey = (e) => {
@@ -465,14 +675,21 @@ function Cockpit() {
       if (e.key === 'Escape') {
         // B27: the mobile drawer is the top-most thing when open.
         if (ctx.railOpen) { e.preventDefault(); setRailOpen(false); return; }
-        // dialogs/popovers/settings handle their own esc via capture listeners.
-        // Esc-to-interrupt: only when there's nothing to close AND the selected
-        // session is working AND the user isn't typing in an input.
+        // dialogs/popovers/menus/the palette handle their own Esc first (Radix
+        // layers mark it defaultPrevented when they close) — that Esc is spent.
+        // Esc-to-interrupt: only when there's nothing to close, the selected
+        // session is working, the user isn't typing — and it takes a SECOND
+        // Esc within ESC_INTERRUPT_MS; the first one only shows the hint.
         const nothingOpen =
-          !ctx.dialog && !ctx.launcher && !ctx.settingsOpen && !ctx.addTabOpen;
+          !e.defaultPrevented && !ctx.dialog && !ctx.launcher && !ctx.settingsOpen && !ctx.addTabOpen &&
+          !ctx.quickSwitcherOpen && !ctx.shortcutsOpen && !overlayOpen();
         if (nothingOpen && !isTyping(e) && ctx.selected?.claude?.state === 'working') {
           e.preventDefault();
-          interruptSession(ctx.selected.id);
+          const prev = escArm.current;
+          if (prev) dismissToast(prev.toast);
+          const { fire, arm } = escInterruptStep(prev, ctx.selected.id, Date.now());
+          escArm.current = arm && { ...arm, toast: toast(tNow('chat.escAgainToInterrupt'), { ttl: ESC_INTERRUPT_MS }) };
+          if (fire) interruptSession(ctx.selected.id);
           return;
         }
         // Match the ✕ button's predicate (any session, incl. archived) so Esc
@@ -553,6 +770,12 @@ function Cockpit() {
         }
       }
       if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey) {
+        // D13: ⌘J — the next session that needs me (works from the composer too).
+        if (e.key.toLowerCase() === 'j') {
+          e.preventDefault();
+          goToNextNeedingMe();
+          return;
+        }
         if (e.key >= '1' && e.key <= '9') {
           const idx = Number(e.key) - 1;
           const target = ctx.active[idx];
@@ -706,24 +929,26 @@ function Cockpit() {
     );
   };
   const paletteActions = [
-    { id: 'new-empty', label: t('chrome.palette.newEmpty'), keywords: t('chrome.palette.newEmpty.kw'), icon: faPlus, run: () => {
+    { id: 'new-empty', label: t('chrome.palette.newEmpty'), keywords: t('chrome.palette.newEmpty.kw'), icon: Plus, run: () => {
       const cfg = getState().config;
       api.post('/sessions', { title: scratchName(getState().sessions), cwd: cfg?.reposDir || cfg?.defaultCwd || undefined })
         .then((s) => { if (s?.id) { setSelectedId(s.id); setLauncher(null); } }).catch(() => {});
     } },
-    { id: 'new-ticket', label: t('chrome.palette.newTicket'), keywords: t('chrome.palette.newTicket.kw'), icon: faPlus, run: () => setLauncher({ mode: 'ticket' }) },
-    { id: 'settings', label: t('chrome.palette.settings'), keywords: t('chrome.palette.settings.kw'), icon: faGear, run: () => setSettingsOpen(true) },
-    { id: 'skills', label: t('chrome.palette.skills'), keywords: t('chrome.palette.skills.kw'), icon: faPuzzlePiece, run: () => setSkillsOpen(true) },
-    { id: 'brain', label: t('chrome.palette.brain'), keywords: t('chrome.palette.brain.kw'), icon: faBrain, run: () => setBrainOpen(true) },
-    { id: 'accounts', label: t('chrome.palette.accounts'), keywords: t('chrome.palette.accounts.kw'), icon: faCircleUser, run: () => openSettings('connections', 'claude') },
-    { id: 'setup', label: t('chrome.palette.setup'), keywords: t('chrome.palette.setup.kw'), icon: faHouse, run: () => setSetupOpen(true) },
-    { id: 'shortcuts', label: t('chrome.palette.shortcuts'), keywords: t('chrome.palette.shortcuts.kw'), icon: faQuestion, run: () => setShortcutsOpen(true) },
-    { id: 'theme', label: t('chrome.palette.theme'), keywords: t('chrome.palette.theme.kw'), icon: faCircleHalfStroke, run: () => setPrefs({ theme: getPrefs().theme === 'dark' ? 'light' : 'dark' }) },
+    { id: 'new-ticket', label: t('chrome.palette.newTicket'), keywords: t('chrome.palette.newTicket.kw'), icon: Plus, run: () => setLauncher({ mode: 'ticket' }) },
+    { id: 'settings', label: t('chrome.palette.settings'), keywords: t('chrome.palette.settings.kw'), icon: SettingsIcon, run: () => setSettingsOpen(true) },
+    { id: 'skills', label: t('chrome.palette.skills'), keywords: t('chrome.palette.skills.kw'), icon: Puzzle, run: () => setSkillsOpen(true) },
+    { id: 'brain', label: t('chrome.palette.brain'), keywords: t('chrome.palette.brain.kw'), icon: Brain, run: () => setBrainOpen(true) },
+    { id: 'accounts', label: t('chrome.palette.accounts'), keywords: t('chrome.palette.accounts.kw'), icon: CircleUser, run: () => openSettings('connections', 'claude') },
+    { id: 'setup', label: t('chrome.palette.setup'), keywords: t('chrome.palette.setup.kw'), icon: House, run: () => setSetupOpen(true) },
+    { id: 'shortcuts', label: t('chrome.palette.shortcuts'), keywords: t('chrome.palette.shortcuts.kw'), icon: CircleHelp, run: () => setShortcutsOpen(true) },
+    { id: 'next-needs', label: t('chrome.palette.nextNeedsYou'), keywords: t('chrome.palette.nextNeedsYou.kw'), icon: Bell, shortcut: '⌘J', run: () => { goToNextNeedingMe(); } },
+    { id: 'language', label: t('chrome.palette.language'), keywords: t('chrome.palette.language.kw'), icon: Languages, run: () => setPrefs({ language: currentLang() === 'he' ? 'en' : 'he' }) },
+    { id: 'theme', label: t('chrome.palette.theme'), keywords: t('chrome.palette.theme.kw'), icon: Contrast, run: () => setPrefs({ theme: getPrefs().theme === 'dark' ? 'light' : 'dark' }) },
     ...(selected ? [
-      { id: 'changes', label: t('chrome.palette.changes'), keywords: t('chrome.palette.changes.kw'), icon: faPlusMinus, run: goToChanges },
-      { id: 'edit', label: t('chrome.palette.edit'), keywords: t('chrome.palette.edit.kw'), icon: faPen, run: () => setDialog({ type: 'edit', session: selected }) },
-      { id: 'archive', label: t('chrome.palette.archive'), keywords: t('chrome.palette.archive.kw'), icon: faBoxArchive, run: () => setDialog({ type: 'archive', session: selected }) },
-      { id: 'delete', label: t('chrome.palette.delete'), keywords: t('chrome.palette.delete.kw'), icon: faTrash, run: () => setDialog({ type: 'delete', session: selected }) },
+      { id: 'changes', label: t('chrome.palette.changes'), keywords: t('chrome.palette.changes.kw'), icon: Diff, run: goToChanges },
+      { id: 'edit', label: t('chrome.palette.edit'), keywords: t('chrome.palette.edit.kw'), icon: Pencil, run: () => setDialog({ type: 'edit', session: selected }) },
+      { id: 'archive', label: t('chrome.palette.archive'), keywords: t('chrome.palette.archive.kw'), icon: Archive, run: () => setDialog({ type: 'archive', session: selected }) },
+      { id: 'delete', label: t('chrome.palette.delete'), keywords: t('chrome.palette.delete.kw'), icon: Trash2, run: () => setDialog({ type: 'delete', session: selected }) },
     ] : []),
   ];
 
@@ -786,6 +1011,17 @@ function Cockpit() {
         onNeedsSetup={() => { setLauncher(null); setSetupOpen(true); }}
       />
     );
+  } else if (previewTicket && previewTicket.startsWith('pending:')) {
+    const pid = previewTicket.slice('pending:'.length);
+    const item = (pending || []).find((p) => p.id === pid) || null;
+    main = (
+      <PendingPreview
+        item={item}
+        onClose={() => setPreviewTicket(null)}
+        onStart={() => { if (item) api.post(`/pending/${item.id}/start`).catch(() => {}); setPreviewTicket(null); }}
+        onDismiss={() => { if (item) api.del(`/pending/${item.id}`).catch(() => {}); setPreviewTicket(null); }}
+      />
+    );
   } else if (previewTicket) {
     const previewItem = (pending || []).find(
       (p) => p.ticket?.toUpperCase() === previewTicket.toUpperCase(),
@@ -793,7 +1029,9 @@ function Cockpit() {
     main = (
       <TicketPreview
         ticket={previewTicket}
+        item={previewItem || null}
         fallbackTitle={previewItem?.title}
+        onDismiss={() => { if (previewItem) api.del(`/pending/${previewItem.id}`).catch(() => {}); setPreviewTicket(null); }}
         onClose={() => setPreviewTicket(null)}
         onStart={() => {
           const item = (pending || []).find(
@@ -805,24 +1043,9 @@ function Cockpit() {
       />
     );
   } else if (selected) {
-    // archived sessions render the same view (read-only peek; restore via ⋯ menu)
-    // The machine side panel docks to the right of the session (desktop only);
-    // it auto-opens while this session has an open request_screen, or via the
-    // header's 🖥 chip. See ScreenSidePanel.jsx.
-    main = (
-      <div className="flex min-h-0 flex-1">
-        <div className="flex min-w-0 flex-1 flex-col">
-          <SessionView
-            session={selected}
-            events={chats[selected.id] || []}
-            chatLoading={!chatLoaded[selected.id] && !(chats[selected.id]?.length)}
-            addTabOpen={addTabOpen}
-            setAddTabOpen={setAddTabOpen}
-          />
-        </div>
-        {screenPanelOpen(storeState, selected.id) && <ScreenSidePanel session={selected} />}
-      </div>
-    );
+    // The session itself renders from the keep-alive pool below (archived
+    // sessions render the same view: read-only peek; restore via ⋯ menu).
+    main = null;
   } else {
     main = (
       <FirstRun
@@ -830,88 +1053,131 @@ function Cockpit() {
         sessions={sessions}
         onCreated={onCreated}
         onOpenLauncher={() => setLauncher({ mode: 'empty' })}
+        onNeedsSetup={() => setSetupOpen(true)}
       />
     );
   }
 
   if (storeState.auth === null) return <Login info={storeState.authInfo} />;
 
+  const rail = (
+    <Rail
+      sessions={sessions}
+      selectedId={selected?.id}
+      agentOpen={agentOpen}
+      isDesktop={isDesktop}
+      onClose={() => setRailOpen(false)}
+      onSelect={(id) => {
+        setSelectedId(id);
+        setLauncher(null);
+        setPreviewTicket(null);
+        setSettingsOpen(false);
+        setSkillsOpen(false);
+        setBrainOpen(false);
+        setAgentOpen(null);
+        setSetupOpen(false);
+        setAddTabOpen(false);
+        setRailOpen(false);
+      }}
+      onNew={() => { setLauncher({ mode: 'ticket' }); setPreviewTicket(null); setSkillsOpen(false); setBrainOpen(false); setAgentOpen(null); setSetupOpen(false); setRailOpen(false); }}
+      onOpenSettings={() => { setSettingsOpen(true); setSkillsOpen(false); setBrainOpen(false); setAgentOpen(null); setSetupOpen(false); setRailOpen(false); }}
+      onOpenSkills={() => { setSkillsOpen(true); setSettingsOpen(false); setBrainOpen(false); setAgentOpen(null); setSetupOpen(false); setRailOpen(false); }}
+      onOpenBrain={() => { setBrainOpen(true); setSettingsOpen(false); setSkillsOpen(false); setSetupOpen(false); setRailOpen(false); }}
+      onOpenSetup={() => { setSetupOpen(true); setSkillsOpen(false); setBrainOpen(false); setAgentOpen(null); setSettingsOpen(false); setLauncher(null); setRailOpen(false); }}
+      onPreviewTicket={(t) => { setPreviewTicket(t); setLauncher(null); setSettingsOpen(false); setSkillsOpen(false); setBrainOpen(false); setAgentOpen(null); setSetupOpen(false); setRailOpen(false); }}
+      onOpenTriggers={() => { setLauncher({ mode: 'trigger' }); setPreviewTicket(null); setSettingsOpen(false); setSkillsOpen(false); setBrainOpen(false); setAgentOpen(null); setSetupOpen(false); setRailOpen(false); }}
+      onOpenShortcuts={() => setShortcutsOpen(true)}
+      onOpenAgent={(slug, tab) => { setAgentOpen(slug); setAgentTab(tab || 'home'); setAgentDraftName(''); setSelectedId(null); setSettingsOpen(false); setSkillsOpen(false); setBrainOpen(false); setSetupOpen(false); setLauncher(null); setPreviewTicket(null); setRailOpen(false); }}
+      searchRef={searchRef}
+      onArchive={(s) => setDialog({ type: 'archive', session: s })}
+      onEdit={(s) => setDialog({ type: 'edit', session: s })}
+      onRestore={(s) => api.patch(`/sessions/${s.id}`, { archived: false }).catch(() => {})}
+      onRestart={restartSession}
+      onDelete={(s) => setDialog({ type: 'delete', session: s })}
+      config={config}
+      conn={conn}
+    />
+  );
+
   // --app-height, not h-screen: 100vh ignores the mobile keyboard (lib/viewport.js)
   return (
     <div className="flex h-[var(--app-height)] overflow-hidden bg-bg font-sans text-fg">
-      {/* mobile drawer backdrop */}
-      {railOpen && (
-        <div
-          className="fixed inset-0 z-40 bg-black/40 md:hidden"
-          onClick={() => setRailOpen(false)}
-        />
+      {/* Desktop: the rail is a fixed column. Phone: the same rail inside a
+          start-edge Sheet (focus trap, Esc, backdrop tap, slides in from the
+          side the text starts on). */}
+      {isDesktop ? rail : (
+        <Sheet open={railOpen} onOpenChange={setRailOpen}>
+          <SheetContent side="start" showClose={false} className="w-[min(20rem,88vw)] gap-0 p-0" data-rail-drawer>
+            <SheetTitle className="sr-only">{t('chrome.topbar.openSessions')}</SheetTitle>
+            <SheetDescription className="sr-only">{t('chrome.topbar.openSessions')}</SheetDescription>
+            {rail}
+          </SheetContent>
+        </Sheet>
       )}
-      <Rail
-        sessions={sessions}
-        selectedId={selected?.id}
-        agentOpen={agentOpen}
-        isDesktop={isDesktop}
-        mobileOpen={railOpen}
-        onClose={() => setRailOpen(false)}
-        onSelect={(id) => {
-          setSelectedId(id);
-          setLauncher(null);
-          setPreviewTicket(null);
-          setSettingsOpen(false);
-          setSkillsOpen(false);
-          setBrainOpen(false);
-          setAgentOpen(null);
-          setSetupOpen(false);
-          setAddTabOpen(false);
-          setRailOpen(false);
-        }}
-        onNew={() => { setLauncher({ mode: 'ticket' }); setPreviewTicket(null); setSkillsOpen(false); setBrainOpen(false); setAgentOpen(null); setSetupOpen(false); setRailOpen(false); }}
-        onOpenSettings={() => { setSettingsOpen(true); setSkillsOpen(false); setBrainOpen(false); setAgentOpen(null); setSetupOpen(false); setRailOpen(false); }}
-        onOpenSkills={() => { setSkillsOpen(true); setSettingsOpen(false); setBrainOpen(false); setAgentOpen(null); setSetupOpen(false); setRailOpen(false); }}
-        onOpenBrain={() => { setBrainOpen(true); setSettingsOpen(false); setSkillsOpen(false); setSetupOpen(false); setRailOpen(false); }}
-        onOpenSetup={() => { setSetupOpen(true); setSkillsOpen(false); setBrainOpen(false); setAgentOpen(null); setSettingsOpen(false); setLauncher(null); setRailOpen(false); }}
-        onPreviewTicket={(t) => { setPreviewTicket(t); setLauncher(null); setSettingsOpen(false); setSkillsOpen(false); setBrainOpen(false); setAgentOpen(null); setSetupOpen(false); setRailOpen(false); }}
-        onOpenTriggers={() => { setLauncher({ mode: 'trigger' }); setPreviewTicket(null); setSettingsOpen(false); setSkillsOpen(false); setBrainOpen(false); setAgentOpen(null); setSetupOpen(false); setRailOpen(false); }}
-        onOpenShortcuts={() => setShortcutsOpen(true)}
-        onOpenAgent={(slug, tab) => { setAgentOpen(slug); setAgentTab(tab || 'home'); setAgentDraftName(''); setSelectedId(null); setSettingsOpen(false); setSkillsOpen(false); setBrainOpen(false); setSetupOpen(false); setLauncher(null); setPreviewTicket(null); setRailOpen(false); }}
-        searchRef={searchRef}
-        onArchive={(s) => setDialog({ type: 'archive', session: s })}
-        onEdit={(s) => setDialog({ type: 'edit', session: s })}
-        onRestore={(s) => api.patch(`/sessions/${s.id}`, { archived: false }).catch(() => {})}
-        onRestart={restartSession}
-        onDelete={(s) => setDialog({ type: 'delete', session: s })}
-        config={config}
-        conn={conn}
-      />
       <main className="relative flex min-w-0 flex-1 flex-col">
         {/* mobile top bar: hamburger + current view — not shown over a session,
             where the TabBar hosts the hamburger instead */}
         {!mainHasHamburger && (
-          <div className="flex shrink-0 items-center gap-2.5 border-b border-hair bg-panel px-3 py-2 md:hidden">
-            <button
-              type="button"
-              onClick={() => setRailOpen(true)}
-              aria-label={t('chrome.topbar.openSessions')}
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[8px] border-[1.5px] border-border bg-bg text-[15px] text-fg"
-            >
-              <Icon icon={faBars} />
-            </button>
-            <span className="min-w-0 flex-1 truncate text-[13px] font-bold text-fg">
+          <div className="flex min-h-11 shrink-0 items-center gap-2 border-b border-border bg-background px-2 md:hidden">
+            <Button variant="ghost" size="icon" onClick={() => setRailOpen(true)} aria-label={t('chrome.topbar.openSessions')} className="text-muted-foreground">
+              <Menu />
+            </Button>
+            <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
               {topBarTitle}
             </span>
           </div>
         )}
-        {conn !== 'open' && (
-          <div className="absolute top-2 right-3 z-40 rounded-full border border-[#e2c4c0] bg-[#FBECEA] px-2.5 py-1 font-mono text-[10px] text-[#9c3b33]">
+        {(conn !== 'open' || syncing) && (
+          <div className="absolute top-2 end-3 z-40 inline-flex items-center gap-1.5 rounded-md border border-border bg-popover px-2 py-1 text-xs text-muted-foreground shadow-pop" data-conn-state={conn !== 'open' ? conn : 'syncing'}>
+            <span className={`size-1.5 rounded-full ${conn === 'open' ? 'bg-warn' : 'bg-err'}`} aria-hidden="true" />
             {/* CHATWS: once the link was up, both the retry wait and the attempt read
                 "reconnecting…" — "host offline" is misleading when it is the PHONE
-                that lost its network. */}
-            {reconnecting ? t('chrome.conn.reconnecting') : conn === 'connecting' ? t('chrome.conn.connecting') : t('chrome.conn.offline')}
+                that lost its network. RESUME: the screen under it is the cached one;
+                the pill stays until the replay + the open chat's gap have landed. */}
+            {reconnecting || syncing ? t('chrome.conn.reconnecting') : conn === 'connecting' ? t('chrome.conn.connecting') : t('chrome.conn.offline')}
           </div>
         )}
-        {main}
+        {/* The keep-alive pool: the visible session plus the last few visited,
+            hidden. It renders under every view (settings, launcher…) so coming
+            back from one doesn't reload the session's tabs either. The machine
+            side panel docks to the right of the visible session (desktop only);
+            it auto-opens while this session has an open request_screen, or via
+            the header's 🖥 chip. See ScreenSidePanel.jsx. */}
+        {/* rendered in a STABLE order (by id), not most-recent-first: React
+            moves a keyed node to reorder it, and moving an iframe in the DOM
+            reloads it — exactly what the pool exists to prevent */}
+        {[...poolRef.current].sort().map((id) => {
+          const s = sessions.find((x) => x.id === id);
+          if (!s) return null;
+          const visible = main === null && s.id === selected?.id;
+          return (
+            <div
+              key={id}
+              data-pool-session={id}
+              className={visible ? 'flex min-h-0 flex-1' : 'kept-hidden absolute inset-0 flex'}
+              {...(visible ? {} : { inert: '', 'aria-hidden': 'true' })}
+            >
+              <div className="flex min-w-0 flex-1 flex-col">
+                <SessionView
+                  session={s}
+                  visible={visible}
+                  onEdit={(x) => setDialog({ type: 'edit', session: x })}
+                  onArchive={(x) => setDialog({ type: 'archive', session: x })}
+                  onRestore={(x) => api.patch(`/sessions/${x.id}`, { archived: false }).catch(() => {})}
+                  events={chats[s.id] || []}
+                  chatLoading={!chatLoaded[s.id] && !(chats[s.id]?.length)}
+                  addTabOpen={visible && addTabOpen}
+                  setAddTabOpen={setAddTabOpen}
+                />
+              </div>
+              {visible && screenPanelOpen(storeState, s.id) && <ScreenSidePanel session={s} />}
+            </div>
+          );
+        })}
+        <Suspense fallback={<ViewFallback />}>{main}</Suspense>
       </main>
       <VoiceHUD />
+      <Suspense fallback={null}>
       {quickSwitcherOpen && (
         <QuickSwitcher
           sessions={active}
@@ -945,8 +1211,10 @@ function Cockpit() {
           Take over on a request_screen card (same, plus the request
           context). Closing never answers the request. */}
       {storeState.screen.modal && <ScreenModal context={storeState.screen.modal} onClose={closeScreenTakeover} />}
+      </Suspense>
       <ConfirmHost />
       <Toaster />
+      <VaultAutoFill />
     </div>
   );
 }

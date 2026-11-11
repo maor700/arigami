@@ -15,12 +15,21 @@
 // (same, plus the Chrome profile copy — see chrome.ts). The global :99/5900
 // desktop is untouched — it's not something this module owns.
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import net from 'node:net';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { cfg } from './config.js';
 import { supervise, killTree } from './children.js';
 import { portFree } from './hostlock.js';
+import { ensureChromeLauncherFlags } from './chrome-launcher.js';
+import { ensureDesktopConfig } from './desktop-terminal.js';
+import { paintDesktop, SHARED_DESKTOP } from './desktop-wallpaper.js';
+import { subscribe } from '../bus.js';
+import { ARIGAMI_DIR } from './instance.js';
 import * as state from '../state.js';
+import { auth } from '../auth.js';
+import { sweepShm, shmHeadroom, reapShmOf, X11VNC_SHM_NEED } from './shm-sweep.js';
 
 export interface DesktopInfo {
   display: string; // ':100'
@@ -32,8 +41,32 @@ export interface DesktopInfo {
 // recorded in a session's metadata but absent here (e.g. after a host
 // restart) is treated as dead — its port is free to reallocate; any leftover
 // Xvfb/x11vnc pid was already caught by children.ts's startup sweep.
-const alive = new Map<string, { xvfb: ChildProcess; x11vnc: ChildProcess }>();
+const alive = new Map<string, { xvfb: ChildProcess; x11vnc: ChildProcess; extras: ChildProcess[] }>();
 const pending = new Map<string, Promise<DesktopInfo>>();
+
+// The wallpaper (desktop-wallpaper.ts) shows the session's color and title: repaint a live desktop when either
+// changes. `painted` holds what was last painted, so the metadata patches a desktop sees all the time cost nothing.
+const painted = new Map<string, string>();
+const repaintTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+function paintSession(sessionId: string): void {
+  const s = state.getSession(sessionId);
+  const display = (s?.metadata as any)?.screen?.display as string | undefined;
+  if (!s || !display || !alive.has(sessionId)) return;
+  const override = (s.metadata as any)?.wallpaper;
+  const key = JSON.stringify([display, s.title, s.color, override]);
+  if (painted.get(sessionId) === key) return;
+  painted.set(sessionId, key);
+  void paintDesktop({ display, color: s.color, title: s.title || sessionId, subtitle: `${sessionId} · ${display}`, seed: sessionId, override })
+    .then((r) => { if (!r.ok) console.warn(`[desktop] wallpaper for ${sessionId}: ${r.reason}`); });
+}
+
+subscribe((msg: any) => {
+  const id = msg?.type === 'session-updated' ? msg.session?.id : null;
+  if (!id || !alive.has(id)) return;
+  clearTimeout(repaintTimers.get(id));
+  repaintTimers.set(id, setTimeout(() => { repaintTimers.delete(id); paintSession(id); }, 500));
+});
 
 function usedPorts(): Set<number> {
   const used = new Set<number>();
@@ -128,6 +161,72 @@ export function desktopUnsupportedReason(platform: NodeJS.Platform = process.pla
   return `per-session desktop is unsupported on ${platform} — Xvfb/x11vnc only run on Linux, so screen-share and in-session browser features are unavailable on this host`;
 }
 
+/** Generated tint2/openbox configs + terminal launcher live here (see desktop-terminal.ts). */
+const DESKTOP_CONFIG_DIR = path.join(ARIGAMI_DIR, 'desktop');
+
+/**
+ * openbox + tint2 on `display`, when installed — so a desktop has a right-click menu and a panel, both of which open a
+ * terminal (desktop-terminal.ts). Shared by the global and the per-session desktops.
+ */
+function spawnShell(display: string, label: string, opts: { which: (bin: string) => string | null; spawnFn: typeof spawn; env: NodeJS.ProcessEnv; configDir: string; session?: boolean }): ChildProcess[] {
+  const procs: ChildProcess[] = [];
+  const conf = ensureDesktopConfig({ dir: opts.configDir, env: opts.env, session: opts.session });
+  const denv = { ...opts.env, DISPLAY: display };
+  const wm = opts.which('openbox');
+  if (wm) {
+    const p = opts.spawnFn(wm, conf.openboxArgs, { stdio: 'ignore', env: denv });
+    supervise(p, `desktop:${label}:wm`);
+    procs.push(p);
+  }
+  const panel = opts.which('tint2');
+  if (panel) {
+    ensureChromeLauncherFlags({ env: opts.env }); // the panel's Chrome icon must start in a pod too
+    conf.tint2Args.forEach((args, i) => {
+      const p = opts.spawnFn(panel, args, { stdio: 'ignore', env: denv });
+      supervise(p, `desktop:${label}:panel${i || ''}`);
+      procs.push(p);
+    });
+  }
+  return procs;
+}
+
+// ---- x11vnc and SysV shared memory (shm-sweep.ts) ----------------------------
+/** Room for x11vnc's MIT-SHM polling? When short, sweep the dead segments first; still short → poll without it. */
+function vncShmArgs(): string[] {
+  const room = shmHeadroom();
+  if (room === null || room >= X11VNC_SHM_NEED) return [];
+  sweepShm(60);
+  const after = shmHeadroom();
+  if (after === null || after >= X11VNC_SHM_NEED) return [];
+  console.warn(`[desktops] only ${after} shared-memory segments left (kernel.shmmni) — starting x11vnc with -noshm`);
+  return ['-noshm'];
+}
+
+/** The tail of a child's stderr: x11vnc says why it quit there, even with -quiet. */
+function stderrTail(p: ChildProcess): () => string {
+  let buf = '';
+  p.stderr?.on('data', (d) => { buf = (buf + String(d)).slice(-4000); });
+  return () => buf;
+}
+
+const SHM_FAILED = /shmget|No space left on device/i;
+
+/** A clear reason for an x11vnc that never listened, instead of the bare timeout. */
+function vncFailure(e: Error, tail: string): Error {
+  if (SHM_FAILED.test(tail)) return new Error(`x11vnc could not get shared memory (shmget failed: the SysV segment limit, kernel.shmmni, is used up) — ${e.message}`);
+  const last = tail.trim().split('\n').slice(-2).join(' ').slice(0, 300);
+  return new Error(last ? `${e.message} — x11vnc: ${last}` : e.message);
+}
+
+/** Start the periodic sweep of segments killed desktops left behind (Linux; once at boot, then every 15 minutes). */
+let sweeper: ReturnType<typeof setInterval> | null = null;
+export function startShmSweeper(): void {
+  if (sweeper || process.platform !== 'linux') return;
+  sweepShm();
+  sweeper = setInterval(() => sweepShm(), 15 * 60_000);
+  sweeper.unref?.();
+}
+
 async function spawnDesktop(sessionId: string): Promise<DesktopInfo> {
   const { display, vncPort } = await allocateFree();
   const displayNum = display.slice(1);
@@ -142,6 +241,13 @@ async function spawnDesktop(sessionId: string): Promise<DesktopInfo> {
     killTree(xvfb.pid);
     throw e;
   }
+  // The session's terminal opens in the session's working directory.
+  const s = state.getSession(sessionId);
+  // The dock's browser icon asks the host for this session's Chrome (desktop-terminal.ts chromeScript), so the desktop
+  // carries the session's host address and token, like the session's own engine process does.
+  const sessionEnv: NodeJS.ProcessEnv = { ...process.env, ARIGAMI_SESSION_ID: sessionId, ARIGAMI_URL: cfg.hostBase || '', ARIGAMI_TOKEN: auth.tokenForSession(sessionId) };
+  if (s?.cwd) sessionEnv.ARIGAMI_TERMINAL_CWD = s.cwd.replace(/^~(?=$|\/)/, os.homedir());
+  const extras = spawnShell(display, sessionId, { which, spawnFn: spawn, env: sessionEnv, configDir: DESKTOP_CONFIG_DIR, session: true });
 
   const vncArgs = [
     '-display', display,
@@ -149,22 +255,40 @@ async function spawnDesktop(sessionId: string): Promise<DesktopInfo> {
     '-localhost', '-shared', '-forever', '-noxdamage', '-quiet',
     ...(cfg.screen.vncPassword ? ['-passwd', cfg.screen.vncPassword] : ['-nopw']),
   ];
-  const x11vnc = spawn('x11vnc', vncArgs, { stdio: ['ignore', 'ignore', 'pipe'] });
-  supervise(x11vnc, `desktop:${sessionId}:x11vnc`);
-  try {
-    await waitForPort(vncPort, '127.0.0.1', 5000);
-  } catch (e) {
-    killTree(xvfb.pid);
-    killTree(x11vnc.pid);
-    throw e;
+  // Out of shared memory → x11vnc quits at once; one more try without MIT-SHM rather than no desktop.
+  let shm = vncShmArgs();
+  let x11vnc!: ChildProcess;
+  for (;;) {
+    x11vnc = spawn('x11vnc', [...vncArgs, ...shm], { stdio: ['ignore', 'ignore', 'pipe'] });
+    supervise(x11vnc, `desktop:${sessionId}:x11vnc`);
+    const tail = stderrTail(x11vnc);
+    try {
+      await waitForPort(vncPort, '127.0.0.1', 5000);
+      break;
+    } catch (e) {
+      killTree(x11vnc.pid);
+      reapShmOf(x11vnc.pid);
+      if (!shm.length && SHM_FAILED.test(tail())) {
+        console.warn(`[desktops] x11vnc for ${sessionId} found no shared memory — retrying with -noshm`);
+        sweepShm(60);
+        shm = ['-noshm'];
+        continue;
+      }
+      killTree(xvfb.pid);
+      for (const p of extras) killTree(p.pid);
+      throw vncFailure(e as Error, tail());
+    }
   }
 
   const forget = () => { const c = alive.get(sessionId); if (c?.xvfb === xvfb || c?.x11vnc === x11vnc) alive.delete(sessionId); };
   xvfb.on('exit', forget);
   x11vnc.on('exit', forget);
-  alive.set(sessionId, { xvfb, x11vnc });
+  // however it ends — released, crashed, OOM-killed — what it didn't free goes now, not at the next sweep
+  x11vnc.on('exit', () => reapShmOf(x11vnc.pid));
+  alive.set(sessionId, { xvfb, x11vnc, extras });
 
   state.patchSession(sessionId, { metadata: { screen: { display, vncPort } } });
+  paintSession(sessionId);
   return { display, vncHost: '127.0.0.1', vncPort };
 }
 
@@ -201,8 +325,13 @@ export function releaseDesktop(sessionId: string): void {
   if (procs) {
     killTree(procs.xvfb.pid);
     killTree(procs.x11vnc.pid);
+    reapShmOf(procs.x11vnc.pid);
+    for (const p of procs.extras) killTree(p.pid);
     alive.delete(sessionId);
   }
+  painted.delete(sessionId);
+  clearTimeout(repaintTimers.get(sessionId));
+  repaintTimers.delete(sessionId);
   const s = state.getSession(sessionId);
   if ((s?.metadata as any)?.screen) state.patchSession(sessionId, { metadata: { screen: null } });
 }
@@ -240,6 +369,7 @@ export interface GlobalDesktopOpts {
   portBusy?: (port: number) => Promise<boolean>;
   spawnFn?: typeof spawn;
   env?: NodeJS.ProcessEnv;
+  configDir?: string; // generated openbox/tint2/terminal files (default <ARIGAMI_DIR>/desktop)
   startTimeoutMs?: number; // how long to wait for the X socket / VNC port
 }
 
@@ -283,18 +413,7 @@ export async function ensureGlobalDesktop(opts: GlobalDesktopOpts = {}): Promise
     killTree(xvfb.pid);
     return { started: false, reason: `Xvfb did not come up: ${(e as Error).message}` };
   }
-  const denv = { ...env, DISPLAY: display };
-  const wm = w('openbox');
-  if (wm) {
-    const p = sp(wm, [], { stdio: 'ignore', env: denv });
-    supervise(p, 'desktop:global:wm');
-    globalProcs.push(p);
-    if (p.pid) pids.push(p.pid);
-  }
-  const panel = w('tint2');
-  if (panel) {
-    const p = sp(panel, [], { stdio: 'ignore', env: denv });
-    supervise(p, 'desktop:global:panel');
+  for (const p of spawnShell(display, 'global', { which: w, spawnFn: sp, env, configDir: opts.configDir || DESKTOP_CONFIG_DIR })) {
     globalProcs.push(p);
     if (p.pid) pids.push(p.pid);
   }
@@ -303,8 +422,11 @@ export async function ensureGlobalDesktop(opts: GlobalDesktopOpts = {}): Promise
     '-display', display, '-rfbport', String(vncPort),
     '-localhost', '-shared', '-forever', '-noxdamage', '-quiet',
     ...(pw ? ['-passwd', pw] : ['-nopw']),
+    ...(opts.spawnFn ? [] : vncShmArgs()),
   ], { stdio: ['ignore', 'ignore', 'pipe'] });
+  const vncTail = stderrTail(x11vnc);
   supervise(x11vnc, 'desktop:global:x11vnc');
+  x11vnc.on?.('exit', () => reapShmOf(x11vnc.pid));
   globalProcs.push(x11vnc);
   if (x11vnc.pid) pids.push(x11vnc.pid);
   try {
@@ -312,7 +434,12 @@ export async function ensureGlobalDesktop(opts: GlobalDesktopOpts = {}): Promise
   } catch (e) {
     for (const p of globalProcs) killTree(p.pid);
     globalProcs.length = 0;
-    return { started: false, reason: `x11vnc did not come up: ${(e as Error).message}` };
+    return { started: false, reason: `x11vnc did not come up: ${vncFailure(e as Error, vncTail()).message}` };
   }
+  // Only a desktop this process started gets a wallpaper (and never under a test's spawnFn): one somebody else runs
+  // keeps whatever background its owner gave it.
+  if (!opts.spawnFn)
+    void paintDesktop({ display, ...SHARED_DESKTOP, subtitle: display }, env)
+      .then((r) => { if (!r.ok) console.warn(`[desktop] shared wallpaper: ${r.reason}`); });
   return { started: true, display, vncPort, pids };
 }

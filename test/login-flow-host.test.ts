@@ -14,6 +14,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import * as ho from '../server/handoff.ts';
 import { runInChild } from './_child.js';
+import { tmpDir, tmpPath } from './_tmp.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SECRET = 'login-flow-host-test-secret-32chars';
@@ -71,7 +72,7 @@ function seedVault(vaultDir: string) {
 }
 
 beforeAll(async () => {
-  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-login-flow-'));
+  dir = tmpDir('arigami-login-flow-');
   seedVault(path.join(dir, 'chrome-base'));
   const port = await freePort();
   base = `http://127.0.0.1:${port}`;
@@ -125,9 +126,9 @@ setInterval(()=>{},1e6);
   let err = '';
   host.stderr!.on('data', (d) => {
     err += d;
-    fs.appendFileSync(path.join(os.tmpdir(), 'login-flow-host.log'), String(d));
+    fs.appendFileSync(tmpPath('login-flow-host.log'), String(d));
   });
-  host.stdout!.on('data', (d) => fs.appendFileSync(path.join(os.tmpdir(), 'login-flow-host.log'), String(d)));
+  host.stdout!.on('data', (d) => fs.appendFileSync(tmpPath('login-flow-host.log'), String(d)));
   await until(async () => {
     try {
       return (await fetch(base + '/__health', { signal: AbortSignal.timeout(2000) })).ok;
@@ -166,7 +167,8 @@ test('a linked-device site is refused outright, with what to do instead', async 
   const r = await call('POST', `/__api/sessions/${sid}/login-request`, 'session', { site: 'web.whatsapp.com' });
   expect(r.json.available).toBe(false);
   expect(r.json.policy).toBe('never');
-  expect(r.json.next).toMatch(/request_screen/);
+  expect(r.json.next).toMatch(/sign_in\(\{site\}\)/); // a fresh sign-in: sign_in, in the owner's Chrome
+  expect(r.json.next).toMatch(/QR code.*request_screen/); // a device link: the human's phone
 });
 
 test('a site with no login in the owner browser says so', async () => {
@@ -186,14 +188,14 @@ test('a site with a login puts a card up for the person, and the session waits',
 });
 
 test('the session cannot answer its own login card', async () => {
-  const r = await call('POST', `/__api/sessions/${sid}/action/answer`, 'session', { value: 'use' });
+  const r = await call('POST', `/__api/sessions/${sid}/action/answer`, 'session', { actionId: (await call('GET', `/__api/sessions/${sid}`, 'person')).json.action.id, value: 'use' });
   expect(r.status).toBe(403);
   const s = await call('GET', `/__api/sessions/${sid}`, 'person');
   expect(s.json.action?.kind).toBe('login'); // still waiting for a person
 });
 
 test("the person's refusal reaches the agent as a host line, and the card is gone", async () => {
-  const r = await call('POST', `/__api/sessions/${sid}/action/answer`, 'person', { value: 'deny' });
+  const r = await call('POST', `/__api/sessions/${sid}/action/answer`, 'person', { actionId: (await call('GET', `/__api/sessions/${sid}`, 'person')).json.action.id, value: 'deny' });
   expect(r.status).toBe(200);
   const s = await call('GET', `/__api/sessions/${sid}`, 'person');
   expect(s.json.action ?? null).toBe(null);
@@ -219,7 +221,7 @@ test("'my browser' is a person's: a session can neither list it nor open it", as
 });
 
 test("a plain session's browser profile starts empty; an agent's starts from the agent's own", () => {
-  const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'login-profile-'));
+  const sandbox = tmpDir('login-profile-');
   const r = runInChild(
     `const fs = await import('node:fs'); const path = await import('node:path');
      const state = await import('./server/state.js');
@@ -263,17 +265,99 @@ test('reading WhatsApp is not held — only sending is', async () => {
 });
 
 test('the agent cannot press Send on its own message', async () => {
-  const r = await call('POST', `/__api/sessions/${sid}/action/answer`, 'session', { value: 'send' });
+  const r = await call('POST', `/__api/sessions/${sid}/action/answer`, 'session', { actionId: (await call('GET', `/__api/sessions/${sid}`, 'person')).json.action.id, value: 'send' });
   expect(r.status).toBe(403);
   expect((await call('GET', `/__api/sessions/${sid}`, 'person')).json.action?.kind).toBe('outbound');
 });
 
 test("the owner's Don't send reaches the agent, and nothing went out", async () => {
-  const r = await call('POST', `/__api/sessions/${sid}/action/answer`, 'person', { value: 'deny' });
+  const r = await call('POST', `/__api/sessions/${sid}/action/answer`, 'person', { actionId: (await call('GET', `/__api/sessions/${sid}`, 'person')).json.action.id, value: 'deny' });
   expect(r.status).toBe(200);
   await until(async () => {
     const c = (await call('GET', `/__api/sessions/${sid}/chat`, 'person')).json as any[];
     return c.some((e) => JSON.stringify(e).includes('chose NOT to send the WhatsApp message to +15550001')) ? c : null;
   });
   expect((await call('GET', `/__api/sessions/${sid}`, 'person')).json.action ?? null).toBe(null);
+});
+
+test('stale and missing action IDs cannot answer or dismiss a replacement card', async () => {
+  const url = `/__api/sessions/${sid}/action`;
+  const first = (await call('POST', url, 'person', { prompt: 'Old request', buttons: [{ label: 'Send', value: 'send' }] })).json;
+  const next = (await call('POST', url, 'person', { prompt: 'Current request', buttons: [{ label: 'Send', value: 'send' }] })).json;
+  for (const suffix of ['answer', 'dismiss']) {
+    for (const actionId of [undefined, first.id]) {
+      const r = await call('POST', `${url}/${suffix}`, 'person', { actionId, value: 'send', autoApprove: true });
+      expect(r.status).toBe(409);
+      expect(r.json.error).toContain('expired');
+      expect((await call('GET', `/__api/sessions/${sid}`, 'person')).json.action.id).toBe(next.id);
+    }
+  }
+  expect((await call('POST', `${url}/answer`, 'person', { actionId: next.id, value: 'verified' })).status).toBe(400);
+  expect((await call('GET', `/__api/sessions/${sid}`, 'person')).json.metadata.review).toBeUndefined();
+  expect((await call('POST', `${url}/dismiss`, 'person', { actionId: next.id })).status).toBe(200);
+  expect((await call('POST', `${url}/answer`, 'person', { actionId: next.id, value: 'send' })).status).toBe(409);
+});
+
+test('verified on a generic card is not review approval; review cards require a person', async () => {
+  const repo = path.join(dir, 'review-repo');
+  fs.mkdirSync(repo);
+  const git = (...args: string[]) => {
+    const p = Bun.spawnSync(['git', '-C', repo, ...args]);
+    if (p.exitCode) throw new Error(Buffer.from(p.stderr).toString());
+    return Buffer.from(p.stdout).toString().trim();
+  };
+  git('init', '-q', '-b', 'master');
+  git('config', 'user.email', 'fixture@example.test'); git('config', 'user.name', 'Fixture');
+  git('commit', '--allow-empty', '-m', 'base'); git('checkout', '-b', 'child/review');
+  git('commit', '--allow-empty', '-m', 'reviewed');
+  await call('PATCH', `/__api/sessions/${sid}`, 'person', { metadata: { worktree: repo, branch: 'child/review', base: 'master' } });
+  const url = `/__api/sessions/${sid}/action`;
+  const generic = (await call('POST', url, 'person', { prompt: 'Verify a result', buttons: [{ label: 'Verified', value: 'verified' }] })).json;
+  expect((await call('POST', `${url}/answer`, 'person', { actionId: generic.id, value: 'verified' })).status).toBe(200);
+  expect((await call('GET', `/__api/sessions/${sid}`, 'person')).json.metadata.review).toBeUndefined();
+  const review = (await call('POST', url, 'person', { kind: 'review', prompt: 'Review', buttons: [{ label: 'Verified', value: 'verified' }] })).json;
+  expect(review.reviewCommit.sha).toBe(git('rev-parse', 'HEAD'));
+  expect((await call('POST', `${url}/answer`, 'session', { actionId: review.id, value: 'verified' })).status).toBe(403);
+  expect((await call('GET', `/__api/sessions/${sid}`, 'person')).json.action.id).toBe(review.id);
+  git('commit', '--allow-empty', '-m', 'unreviewed');
+  expect((await call('POST', `${url}/answer`, 'person', { actionId: review.id, value: 'verified' })).status).toBe(409);
+  expect((await call('GET', `/__api/sessions/${sid}`, 'person')).json.metadata.review).toBeUndefined();
+  const current = (await call('POST', url, 'person', { kind: 'review', prompt: 'New review', buttons: [{ label: 'Verified', value: 'verified' }] })).json;
+  expect(current.reviewCommit.sha).toBe(git('rev-parse', 'HEAD'));
+  expect(current.reviewCommit.sha).not.toBe(review.reviewCommit.sha);
+  expect((await call('POST', `${url}/answer`, 'person', { actionId: current.id, value: 'verified' })).status).toBe(200);
+  expect((await call('GET', `/__api/sessions/${sid}`, 'person')).json.metadata.review.sha).toBe(git('rev-parse', 'HEAD'));
+});
+
+// ---- sign_in: the same ladder, run by the host, one outcome back -------------------------------------------------------
+
+test('sign_in: a saved login waits on the owner card itself; "No" comes back as one blocked reason, not a [host] line', async () => {
+  const pending = call('POST', `/__api/sessions/${sid}/sign-in`, 'session', { site: 'github.com', reason: 'read a PR', browser: true });
+  const card = await until(async () => {
+    const s = await call('GET', `/__api/sessions/${sid}`, 'person');
+    return s.json.action?.kind === 'login' && s.json.action.signIn ? s.json.action : null;
+  });
+  expect(card.login.site).toBe('github.com');
+  // the session cannot answer its own card
+  expect((await call('POST', `/__api/sessions/${sid}/action/answer`, 'session', { actionId: card.id, value: 'use' })).status).toBe(403);
+  expect((await call('POST', `/__api/sessions/${sid}/action/answer`, 'person', { actionId: card.id, value: 'deny' })).status).toBe(200);
+  const r = await pending;
+  expect(r.json).toMatchObject({ status: 'blocked', site: 'github.com' });
+  expect(r.json.reason).toMatch(/refused/);
+  expect(JSON.stringify(r.json)).not.toMatch(/user_session|_octo/);
+});
+
+test('sign_in: no saved login and no shared desktop here = blocked with that one reason', async () => {
+  const r = await call('POST', `/__api/sessions/${sid}/sign-in`, 'session', { site: 'facebook.com', reason: 'comment' });
+  expect(r.status).toBe(200);
+  expect(r.json.status).toBe('blocked');
+  expect(r.json.reason).toMatch(/no shared desktop/);
+});
+
+test('sign_in: fill / done without a running sign-in say so, and type nothing', async () => {
+  const f = await call('POST', `/__api/sessions/${sid}/sign-in`, 'session', { site: 'facebook.com', fill: 'password' });
+  expect(f.json).toMatchObject({ status: 'blocked' });
+  expect(f.json.reason).toMatch(/no sign-in is running/);
+  const d = await call('POST', `/__api/sessions/${sid}/sign-in`, 'session', { site: 'facebook.com', done: true });
+  expect(d.json.reason).toMatch(/no sign-in is running/);
 });

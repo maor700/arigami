@@ -3,7 +3,9 @@
 B4-lite makes the host restartable from the cockpit: `POST /__api/host/restart`
 exits the process with code 0 and *relies on a supervisor to bring it back*.
 The supported supervisor on Linux is systemd (`Restart=always`), from the units
-in [`deploy/systemd/`](../deploy/systemd/README.md). macOS keeps launchd
+in [`deploy/systemd/`](../deploy/systemd/README.md), with a health watchdog next to it
+(`arigami-healthcheck.timer`: restarts a host that is up but has stopped answering
+`/__health` for ~3 minutes, which `Restart=always` alone never sees). macOS keeps launchd
 (`bin/host install`). pm2 also restarts on exit, so the endpoints already work
 under pm2 — but pm2 is an extra global dependency the repo doesn't own, and the
 `install.sh` of B1 targets the units, so migrate.

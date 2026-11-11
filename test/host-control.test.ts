@@ -8,12 +8,13 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { runInChild } from './_child.js';
 import { isolate } from './_isolate.js';
+import { tmpDir } from './_tmp.js';
 isolate(); // restore globalThis/process.env after this file (bun test shares them)
 
 // Importing host-control.ts pulls in state.js/config.js which bind their store
 // paths at import time — point them at a scratch dir so nothing touches a real
 // ~/.arigami.
-const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-hc-'));
+const scratch = tmpDir('arigami-hc-');
 process.env.ARIGAMI_DIR = scratch;
 process.env.ARIGAMI_STATE_FILE = path.join(scratch, 'state.json');
 const hc = await import('../server/host-control.ts');
@@ -152,15 +153,19 @@ test('isDirtyStatus: tracked changes are dirty, untracked-only is clean', () => 
   expect(isDirtyStatus('UU conflict.ts\n')).toBe(true);
 });
 
-test('upgradePlan: fetch → ancestry check → ff-only pull → frozen install → web build, in the right dirs', () => {
+test('upgradePlan: fetch → ancestry check → ff-only pull → frozen installs (root, web) → web build, in the right dirs', () => {
   const plan = upgradePlan('/r');
-  expect(plan.map((s) => s.name)).toEqual(['fetch', 'check', 'pull', 'install', 'build']);
+  expect(plan.map((s) => s.name)).toEqual(['fetch', 'check', 'pull', 'install', 'install-web', 'build']);
   expect(plan[0].cmd).not.toContain('--prune'); // VER1: pruning is how a rewritten remote loses its merge base
   expect(plan[1].cmd).toEqual(['git', 'merge-base', '--is-ancestor', 'HEAD', '@{u}']);
   expect(plan[1].failMessage).toBe(NOT_FF_ERROR);
   expect(plan[2].cmd).toContain('--ff-only');
   expect(plan[3].cmd).toContain('--frozen-lockfile');
+  expect(plan[3].cwd).toBe('/r');
+  // the cockpit's own packages (web/package.json): a new one there must be installed before the build
+  expect(plan[4].cmd).toEqual(['bun', 'install', '--frozen-lockfile']);
   expect(plan[4].cwd).toBe(path.join('/r', 'web'));
+  expect(plan[5].cwd).toBe(path.join('/r', 'web'));
 });
 
 // VER1: the dirty list the card shows — status code + path, untracked skipped.
@@ -173,14 +178,14 @@ test('dirtyFiles: "XY path" per tracked change, untracked dropped', () => {
 // End-to-end refusal: a real git repo with a modified tracked file. Runs in a
 // child so the module's cfg/manager come from a controlled env.
 test('startUpgrade refuses a dirty worktree (409) and never runs a step', () => {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-upg-'));
+  const repo = tmpDir('arigami-upg-');
   const g = (...a: string[]) => spawnSync('git', a, { cwd: repo, stdio: 'ignore' });
   g('init', '-q'); g('config', 'user.email', 'test@example.invalid'); g('config', 'user.name', 'test');
   fs.writeFileSync(path.join(repo, 'a.txt'), '1\n');
   g('add', 'a.txt'); g('commit', '-q', '-m', 'init');
   fs.writeFileSync(path.join(repo, 'a.txt'), '2\n'); // dirty (tracked)
   fs.writeFileSync(path.join(repo, 'untracked.txt'), 'x\n');
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-upg-dir-'));
+  const dir = tmpDir('arigami-upg-dir-');
   const r = runInChild(
     `
     const hc = await import('./server/host-control.ts');
@@ -201,7 +206,7 @@ test('startUpgrade refuses a dirty worktree (409) and never runs a step', () => 
 });
 
 test('startUpgrade: 409 without a supervisor, 403 when host.allowUpgrade=false — before touching git', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-upg-dir-'));
+  const dir = tmpDir('arigami-upg-dir-');
   fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({ host: { allowUpgrade: false } }));
   const r = runInChild(
     `
@@ -215,7 +220,7 @@ test('startUpgrade: 409 without a supervisor, 403 when host.allowUpgrade=false �
   if (!r.ok) throw new Error(r.error);
   expect(r.out[0].disabled).toBe(403);
 
-  const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-upg-dir-'));
+  const dir2 = tmpDir('arigami-upg-dir-');
   const r2 = runInChild(
     `
     const hc = await import('./server/host-control.ts');
@@ -245,12 +250,12 @@ test('healthBody: busySessions for loopback peers only', () => {
 // needsRestart, the upgrade-done event says so, and NO restart is requested —
 // the click on the card is what restarts. when='now' keeps the old one-shot.
 test('startUpgrade confirm mode: builds, then waits for the restart click; a failing check step reports NOT_FF_ERROR', () => {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-upg-'));
+  const repo = tmpDir('arigami-upg-');
   const g = (...a: string[]) => spawnSync('git', a, { cwd: repo, stdio: 'ignore' });
   g('init', '-q'); g('config', 'user.email', 'test@example.invalid'); g('config', 'user.name', 'test');
   fs.writeFileSync(path.join(repo, 'VERSION'), '1.2.3\n');
   g('add', 'VERSION'); g('commit', '-q', '-m', 'init');
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-upg-dir-'));
+  const dir = tmpDir('arigami-upg-dir-');
   const r = runInChild(
     `
     const hc = await import('./server/host-control.ts');

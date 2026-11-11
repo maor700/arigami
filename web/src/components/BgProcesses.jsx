@@ -8,8 +8,11 @@ import { Truncate } from './Truncate.jsx';
 import { Icon } from '../lib/icons.js';
 import { useT } from '../lib/i18n.js';
 import { faStop, faXmark } from '@fortawesome/free-solid-svg-icons';
+import { Button } from './ui/button.jsx';
+import { Tip } from './ui/tooltip.jsx';
+import { Dialog, DialogContent, DialogTitle } from './ui/dialog.jsx';
 
-const STATUS_COLOR = { running: '#3C9A4E', exited: '#9a9a9a', killed: '#B23B30' };
+const STATUS_COLOR = { running: 'var(--hb-ok)', exited: 'var(--color-fgdim)', killed: 'var(--hb-err)' };
 const fmtAgo = (ts) => {
   if (!ts) return '';
   const s = Math.max(0, Math.round((Date.now() - ts) / 1000));
@@ -28,16 +31,17 @@ export function ProcessChip({ session, onClick }) {
   if (!procs.length) return null;
   const running = bgRunningCount(session);
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      title={t('chat.bgChipTitle', { running, total: procs.length })}
-      className="flex shrink-0 items-center gap-1.5 rounded-full border-[1.5px] border-ink bg-bg px-2.5 py-[3px] font-mono text-[11.5px] md:text-[10.5px] text-fg hover:bg-chip"
-    >
-      <span className="text-[11px] leading-none">❯_</span>
-      <span className="font-bold">{running}</span>
-      {running > 0 && <span className="h-[6px] w-[6px] rounded-full bg-[#3C9A4E] pulse-green" />}
-    </button>
+    <Tip label={t('chat.bgChipTitle', { running, total: procs.length })}>
+      <button
+        type="button"
+        onClick={onClick}
+        className="flex h-7 shrink-0 cursor-pointer items-center gap-1.5 rounded-md border border-input bg-card px-2 text-xs text-fg outline-none hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring coarse:min-h-11"
+      >
+        <span className="text-xs leading-none">❯_</span>
+        <span className="font-medium tabular-nums">{running}</span>
+        {running > 0 && <span className="size-1.5 rounded-full pulse-green" style={{ background: 'var(--hb-ok)' }} />}
+      </button>
+    </Tip>
   );
 }
 
@@ -75,12 +79,6 @@ export function BgProcessesPanel({ session, onClose }) {
     if (el) el.scrollTop = el.scrollHeight;
   }, [detail?.output]);
 
-  useEffect(() => {
-    const onKey = (e) => e.key === 'Escape' && onClose();
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
-
   const kill = async (id) => {
     try { await api.post(`/sessions/${session.id}/bg/${id}/kill`); } catch { /* WS echo updates state */ }
   };
@@ -88,29 +86,26 @@ export function BgProcessesPanel({ session, onClose }) {
   const liveStatus = (p) => (p.id === sel?.id && detail ? detail.status : p.status);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-3 md:p-6" onMouseDown={onClose}>
-      <div
-        className="flex h-[78vh] w-[920px] max-w-full flex-col overflow-hidden rounded-[12px] border-[1.5px] border-ink bg-panel shadow-[4px_4px_0_rgba(0,0,0,0.25)]"
-        onMouseDown={(e) => e.stopPropagation()}
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent
+        showClose={false}
+        aria-describedby={undefined}
+        className="flex h-[78vh] w-[min(57.5rem,calc(100vw-1.5rem))] max-w-full flex-col gap-0 overflow-hidden p-0"
       >
         <div className="flex items-center gap-2.5 border-b border-hair px-4 py-3">
-          <span className="text-[13px] leading-none">❯_</span>
-          <span className="font-mono text-[13px] font-bold text-fg">{t('chat.backgroundProcesses')}</span>
-          <span className="font-mono text-[11.5px] md:text-[10.5px] text-fgdim">
+          <span className="text-sm leading-none">❯_</span>
+          <DialogTitle className="text-sm">{t('chat.backgroundProcesses')}</DialogTitle>
+          <span className="text-xs text-fgdim tabular-nums">
             {t('chat.bgRunningTotal', { running: bgRunningCount(session), total: procs.length })}
           </span>
-          <button
-            type="button"
-            onClick={onClose}
-            className="ml-auto flex h-7 w-7 cursor-pointer items-center justify-center rounded-md border border-hair text-fgdim hover:border-ink hover:text-fg"
-          >
+          <Button variant="ghost" size="icon-sm" onClick={onClose} aria-label={t('dialogs.close')} className="ms-auto">
             <Icon icon={faXmark} />
-          </button>
+          </Button>
         </div>
 
         <div className="flex min-h-0 flex-1 flex-col md:flex-row">
           {/* left: process list — stacks on top of the terminal on phones */}
-          <div className="thin-scroll max-h-[30vh] shrink-0 overflow-y-auto border-b border-hair bg-bg md:max-h-none md:w-[320px] md:border-r md:border-b-0">
+          <div className="thin-scroll max-h-[30vh] shrink-0 overflow-y-auto border-b border-hair bg-bg md:max-h-none md:w-[320px] md:border-e md:border-b-0">
             {procs.map((p) => {
               const st = liveStatus(p);
               return (
@@ -118,20 +113,20 @@ export function BgProcessesPanel({ session, onClose }) {
                   key={p.id}
                   type="button"
                   onClick={() => setSelId(p.id)}
-                  className={`flex w-full flex-col gap-1 border-b border-hair px-3 py-2.5 text-left ${
-                    p.id === sel?.id ? 'bg-chip' : 'hover:bg-panel'
+                  className={`flex w-full cursor-pointer flex-col gap-1 border-b border-hair px-3 py-2.5 text-start ${
+                    p.id === sel?.id ? 'bg-muted' : 'hover:bg-panel'
                   }`}
                 >
                   <div className="flex items-center gap-2">
-                    <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: STATUS_COLOR[st] || '#9a9a9a' }} />
-                    <span className="font-mono text-[11.5px] md:text-[10px] text-fgdim">{p.id}</span>
-                    <span className="ml-auto font-mono text-[11px] md:text-[9.5px] text-fgdim">{statusLabel(st)}</span>
+                    <span className="size-2 shrink-0 rounded-full" style={{ background: STATUS_COLOR[st] || 'var(--color-fgdim)' }} />
+                    <span className="font-mono text-xs text-fgdim" dir="ltr">{p.id}</span>
+                    <span className="ms-auto text-xs text-fgdim">{statusLabel(st)}</span>
                   </div>
                   <Truncate
                     text={p.description || p.command}
-                    className="font-mono text-[11px] text-fg"
+                    className="font-mono text-xs text-fg"
                   />
-                  <span className="font-mono text-[11px] md:text-[9.5px] text-fgdim">{t('chat.startedAgo', { ago: fmtAgo(p.startedAt) })}</span>
+                  <span className="text-xs text-fgdim">{t('chat.startedAgo', { ago: fmtAgo(p.startedAt) })}</span>
                 </button>
               );
             })}
@@ -142,34 +137,30 @@ export function BgProcessesPanel({ session, onClose }) {
             {sel ? (
               <>
                 <div className="flex items-center gap-2 border-b border-white/10 px-3.5 py-2">
-                  <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: STATUS_COLOR[liveStatus(sel)] || '#9a9a9a' }} />
-                  <Truncate text={sel.command} className="font-mono text-[11px] text-[#d4d4d4]" />
+                  <span className="size-2 shrink-0 rounded-full" style={{ background: STATUS_COLOR[liveStatus(sel)] || 'var(--color-fgdim)' }} />
+                  <Truncate text={sel.command} className="font-mono text-xs text-[#d4d4d4]" />
                   {liveStatus(sel) === 'running' && (
-                    <button
-                      type="button"
-                      onClick={() => kill(sel.id)}
-                      className="ml-auto flex shrink-0 cursor-pointer items-center gap-1.5 rounded-md border-[1.5px] border-danger bg-transparent px-2.5 py-1 text-[11.5px] md:text-[10.5px] font-bold text-danger hover:bg-danger/10"
-                    >
-                      <Icon icon={faStop} className="text-[11px] md:text-[9px]" /> {t('chat.killLower')}
-                    </button>
+                    <Button variant="destructive" size="sm" onClick={() => kill(sel.id)} className="ms-auto">
+                      <Icon icon={faStop} /> {t('chat.killLower')}
+                    </Button>
                   )}
                 </div>
                 <pre
                   ref={outRef}
                   dir="ltr"
-                  className="thin-scroll min-h-0 flex-1 overflow-auto px-3.5 py-3 font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-words text-[#cfcfcf]"
+                  className="thin-scroll min-h-0 flex-1 overflow-auto px-3.5 py-3 font-mono text-xs leading-relaxed whitespace-pre-wrap break-words text-[#cfcfcf]"
                 >
                   {detail ? detail.output || t('chat.noOutput') : t('chat.loading')}
                 </pre>
               </>
             ) : (
-              <div className="flex flex-1 items-center justify-center text-[12px] text-[#888]">
+              <div className="flex flex-1 items-center justify-center text-sm text-[#888]">
                 {t('chat.noBgProcesses')}
               </div>
             )}
           </div>
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }

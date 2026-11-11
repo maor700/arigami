@@ -9,16 +9,24 @@ import { Icon } from '../lib/icons.js';
 import { useT } from '../lib/i18n.js';
 import { faCheck, faRotateRight, faXmark, faArrowRight, faTriangleExclamation } from '@fortawesome/free-solid-svg-icons';
 import { useStore } from '../lib/store.js';
-import { OAuthCodeStep } from './setup/index.js';
+import { EngineConnect } from './setup/index.js';
+import RepoPicker from './setup/RepoPicker.jsx';
+import { RepoRow } from './setup/RepoList.jsx';
+import { addOutcome } from '../lib/repo-status.js';
+import { entryFromRepo, repoNameFromSource } from '../lib/repo-picker.js';
+import { anyEngineConnected } from './setup/EngineConnect.jsx';
 import * as setupApi from '../lib/setup-api.js';
+import { BTN, BTN2, BTN2_SM, INPUT as FIELD } from './setup/shared.jsx';
+import { Badge } from './ui/badge.jsx';
+import { Tip } from './ui/tooltip.jsx';
+import { Checkbox } from './ui/checkbox.jsx';
+import { Label } from './ui/label.jsx';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select.jsx';
+import { ChevronRight } from 'lucide-react';
+import { Segmented } from './settings/shared.jsx';
 
-const PILL = {
-  ok: 'border-[#bfe3cf] bg-[#EAF6EF] text-[#2f7d4f]',
-  missing: 'border-[#e7d3a8] bg-[#FBF3E0] text-[#8a6d1f]',
-  error: 'border-[#e2c4c0] bg-[#FBECEA] text-[#9c3b33]',
-  blocked: 'border-hair bg-chip text-fgdim',
-  running: 'border-[#bcd4ee] bg-[#EAF1FB] text-[#2C6BD6]',
-};
+// status → the dot colour of the neutral Badge
+const PILL_DOT = { ok: 'ok', missing: 'warn', error: 'err', blocked: 'idle', running: 'info' };
 
 // Steps whose action maps to a real server endpoint get a Fix button.
 const ACTION_EP = {
@@ -37,12 +45,17 @@ function StatusPill({ status }) {
     running: 'launcher.setup.status.running',
   };
   return (
-    <span
-      className={`shrink-0 rounded-full border px-2 py-px text-[11px] md:text-[9.5px] font-bold uppercase ${PILL[status] || PILL.blocked}`}
-    >
+    <Badge status={PILL_DOT[status] || 'idle'}>
       {STATUS_KEYS[status] ? t(STATUS_KEYS[status]) : status}
-    </span>
+    </Badge>
   );
+}
+
+// Backend detail strings for the "nothing to do here" cases, said in task language.
+export function stepDetail(detail, t) {
+  if (/^envSource: none$/.test(detail)) return t('launcher.setup.detail.envNone');
+  if (detail === 'no install step') return t('launcher.setup.detail.noInstall');
+  return detail;
 }
 
 function StepRow({ step, onFix, busy }) {
@@ -54,18 +67,13 @@ function StepRow({ step, onFix, busy }) {
     <div className="flex items-center gap-2.5 border-b border-hair px-3 py-2 last:border-0">
       <StatusPill status={step.status} />
       <div className="min-w-0 flex-1">
-        <div className="truncate text-[12px] font-semibold text-fg">{step.title}</div>
+        <div className="truncate text-sm font-medium text-fg">{step.title}</div>
         {step.detail && (
-          <div className="truncate font-mono text-[11.5px] md:text-[10px] text-fgdim">{step.detail}</div>
+          <div dir="auto" className="truncate text-start font-mono text-xs text-fgdim">{stepDetail(step.detail, t)}</div>
         )}
       </div>
       {fixable && (
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() => onFix(name, ep)}
-          className="shrink-0 cursor-pointer rounded-[7px] border-[1.5px] border-ink bg-brand px-2.5 py-1 text-[11px] font-bold text-fg disabled:opacity-50"
-        >
+        <button type="button" disabled={busy} onClick={() => onFix(name, ep)} className={BTN2_SM}>
           {busy ? '…' : t('launcher.setup.fix')}
         </button>
       )}
@@ -75,8 +83,8 @@ function StepRow({ step, onFix, busy }) {
 
 function Section({ title, children }) {
   return (
-    <div className="mb-4 overflow-hidden rounded-[10px] border border-border bg-panel">
-      <div className="border-b border-hair px-3 py-2 text-[11px] md:text-[9.5px] font-bold tracking-wide text-fgdim uppercase">
+    <div className="mb-4 overflow-hidden rounded-lg border border-hair bg-panel">
+      <div className="border-b border-hair px-3 py-2 text-xs font-medium text-fgdim">
         {title}
       </div>
       {children}
@@ -84,19 +92,21 @@ function Section({ title, children }) {
   );
 }
 
-const INPUT = 'rounded-[7px] border border-border bg-panel px-2 py-1 text-[12px] text-fg';
-const MONO = 'rounded-[7px] border border-border bg-panel px-2 py-1 font-mono text-[11.5px] text-fg';
+const INPUT = FIELD;
+const MONO = `${FIELD} font-mono`;
 
 // Add a repo — the host always keeps its OWN copy under reposDir/<name> (it owns
 // the .git/worktrees). Two sources: clone from GitHub, or copy an existing local
 // working dir (minus node_modules). Either way you can pick env files (.env.local
 // etc.) to copy in, so a fresh clone/copy is actually installable.
-export function AddRepo({ onAdd, busy }) {
+export function AddRepo({ onAdd, busy, defaultOpen = false }) {
   const t = useT();
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(defaultOpen);
   const [kind, setKind] = useState('github'); // 'github' | 'local'
   const [name, setName] = useState('');
   const [source, setSource] = useState('');
+  const [missing, setMissing] = useState(false); // tried to add with the source empty
+  const [showAdv, setShowAdv] = useState(false); // install command, env files, a custom name: rarely needed
   const [installCmd, setInstallCmd] = useState('');
   const [envFolder, setEnvFolder] = useState(''); // where to copy env from (github mode)
   const [detect, setDetect] = useState(null); // detect-local result for the env folder
@@ -105,7 +115,7 @@ export function AddRepo({ onAdd, busy }) {
   const [simpleEnv, setSimpleEnv] = useState('none'); // fallback when no files picked
 
   const reset = () => {
-    setKind('github'); setName(''); setSource(''); setInstallCmd('');
+    setKind('github'); setName(''); setSource(''); setInstallCmd(''); setShowAdv(false);
     setEnvFolder(''); setDetect(null); setPicked([]); setSimpleEnv('none'); setOpen(false);
   };
 
@@ -131,8 +141,10 @@ export function AddRepo({ onAdd, busy }) {
   const toggle = (f) => setPicked((p) => (p.includes(f) ? p.filter((x) => x !== f) : [...p, f]));
 
   const submit = () => {
-    if (!name.trim() || !source.trim()) return;
-    const entry = { name: name.trim(), source: source.trim() };
+    const finalName = name.trim() || repoNameFromSource(source);
+    if (!finalName || !source.trim()) { setMissing(true); return; }
+    setMissing(false);
+    const entry = { name: finalName, source: source.trim() };
     if (installCmd.trim()) entry.installCmd = installCmd.trim();
     if (picked.length && envBase) {
       const base = envBase.replace(/\/+$/, '');
@@ -149,7 +161,7 @@ export function AddRepo({ onAdd, busy }) {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="w-full cursor-pointer border-t border-hair px-3 py-2 text-left text-[11.5px] font-bold text-brand-ink hover:bg-chip/60"
+        className="w-full cursor-pointer border-t border-hair px-3 py-2 text-start text-xs font-medium text-fg outline-none hover:bg-muted focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring coarse:min-h-11"
       >
         {t('launcher.setup.addRepo')}
       </button>
@@ -157,29 +169,31 @@ export function AddRepo({ onAdd, busy }) {
 
   const candidates = detect?.envCandidates || [];
   return (
-    <div className="flex flex-col gap-2.5 border-t border-hair bg-bg px-3 py-3">
+    <div className="flex flex-col gap-3 border-t border-hair bg-bg px-3 py-3">
       {/* source kind */}
-      <div className="flex gap-1 rounded-[8px] border border-border bg-panel p-0.5 text-[11px] font-semibold">
-        {[['github', t('launcher.setup.fromGithub')], ['local', t('launcher.setup.fromLocal')]].map(([k, label]) => (
-          <button
-            key={k} type="button" onClick={() => { setKind(k); setDetect(null); setPicked([]); }}
-            className={`flex-1 cursor-pointer rounded-[6px] px-2 py-1 ${kind === k ? 'bg-brand text-fg' : 'text-fgdim hover:text-fg'}`}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
+      <Segmented
+        value={kind}
+        onChange={(k) => { setKind(k); setDetect(null); setPicked([]); }}
+        options={[{ value: 'github', label: t('launcher.setup.fromGithub') }, { value: 'local', label: t('launcher.setup.fromLocal') }]}
+      />
 
-      <input value={name} onChange={(e) => setName(e.target.value)} placeholder={t('launcher.setup.namePlaceholder')} className={INPUT} />
+      {kind === 'github' && (
+        <>
+          <RepoPicker onPick={(r) => setSource(entryFromRepo(r).source)} />
+          <div className="text-xs text-fgdim">{t('setup.repo.pick.orPaste')}</div>
+        </>
+      )}
       <input
         value={source}
         onChange={(e) => setSource(e.target.value)}
         onBlur={(e) => { if (kind === 'local') probe(e.target.value); }}
         placeholder={kind === 'github' ? t('launcher.setup.sourceGithubPlaceholder') : '/Users/you/Desktop/repos/app'}
+        dir="ltr"
+        spellCheck={false}
         className={MONO}
       />
       {kind === 'local' && (
-        <div className="text-[11.5px] md:text-[10px] text-fgdim">
+        <div className="text-xs text-fgdim">
           {detecting ? t('launcher.setup.scanning')
             : detect ? (detect.exists
               ? <><Icon icon={faCheck} /> {detect.isGit ? t('launcher.setup.gitRepo') : t('launcher.setup.folder')}{detect.toolchain?.pm ? ` · ${detect.toolchain.pm}` : ''}{t('launcher.setup.copiedMinus')}</>
@@ -188,52 +202,61 @@ export function AddRepo({ onAdd, busy }) {
         </div>
       )}
 
-      <input value={installCmd} onChange={(e) => setInstallCmd(e.target.value)} placeholder={t('launcher.setup.installPlaceholder')} className={MONO} />
+      <button
+        type="button" onClick={() => setShowAdv((v) => !v)} aria-expanded={showAdv}
+        className="inline-flex cursor-pointer items-center gap-1 self-start text-xs font-medium text-fgdim outline-none hover:text-fg focus-visible:outline-2 focus-visible:outline-ring coarse:min-h-11"
+      >
+        <ChevronRight className={`size-3.5 transition-transform rtl:rotate-180 ${showAdv ? 'rotate-90 rtl:rotate-90' : ''}`} aria-hidden="true" /> {t('setup.repo.advanced')}
+      </button>
+      {showAdv && (
+        <div className="flex flex-col gap-3 rounded-md border border-hair bg-panel px-3 py-3">
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder={source.trim() ? repoNameFromSource(source) || t('launcher.setup.namePlaceholder') : t('launcher.setup.namePlaceholder')} className={INPUT} />
+          <input value={installCmd} onChange={(e) => setInstallCmd(e.target.value)} placeholder={t('launcher.setup.installPlaceholder')} dir="ltr" className={MONO} />
 
-      {/* env files to copy */}
-      {kind === 'github' && (
-        <div className="flex gap-1.5">
-          <input
-            value={envFolder} onChange={(e) => setEnvFolder(e.target.value)}
-            placeholder={t('launcher.setup.copyEnvPlaceholder')} className={`${MONO} flex-1`}
-          />
-          <button
-            type="button" onClick={() => probe(envFolder)} disabled={detecting || !envFolder.trim()}
-            className="shrink-0 cursor-pointer rounded-[7px] border border-border bg-panel px-2 py-1 text-[11px] font-semibold text-fg hover:border-ink disabled:opacity-40"
-          >
-            {detecting ? '…' : t('launcher.setup.scan')}
-          </button>
+          {/* env files to copy */}
+          {kind === 'github' && (
+            <div className="flex gap-2">
+              <input
+                value={envFolder} onChange={(e) => setEnvFolder(e.target.value)}
+                placeholder={t('launcher.setup.copyEnvPlaceholder')} dir="ltr" className={`${MONO} flex-1`}
+              />
+              <button type="button" onClick={() => probe(envFolder)} disabled={detecting || !envFolder.trim()} className={BTN2}>
+                {detecting ? '…' : t('launcher.setup.scan')}
+              </button>
+            </div>
+          )}
+          {candidates.length > 0 ? (
+            <div className="rounded-md border border-hair px-2.5 py-2">
+              <div className="mb-1 text-xs font-medium text-fgdim">{t('launcher.setup.envFilesToCopy')}</div>
+              {candidates.map((f) => (
+                <label key={f} className="flex cursor-pointer items-center gap-2 py-1 text-xs text-fg coarse:min-h-11">
+                  <Checkbox checked={picked.includes(f)} onCheckedChange={() => toggle(f)} />
+                  <span dir="ltr" className="font-mono">{f}</span>
+                </label>
+              ))}
+            </div>
+          ) : (
+            <div className="flex items-center gap-2">
+              <Label>{t('launcher.setup.envLabel')}</Label>
+              <Select value={simpleEnv} onValueChange={setSimpleEnv}>
+                <SelectTrigger className="w-auto min-w-32" aria-label={t('launcher.setup.envLabel')}><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">{t('launcher.setup.envNone')}</SelectItem>
+                  <SelectItem value="file">{t('launcher.setup.envFile')}</SelectItem>
+                  <SelectItem value="command">{t('launcher.setup.envCommand')}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          )}
         </div>
       )}
-      {candidates.length > 0 ? (
-        <div className="rounded-[7px] border border-border bg-panel px-2 py-1.5">
-          <div className="mb-1 text-[11px] md:text-[9.5px] font-bold tracking-wide text-fgdim uppercase">{t('launcher.setup.envFilesToCopy')}</div>
-          {candidates.map((f) => (
-            <label key={f} className="flex cursor-pointer items-center gap-1.5 py-0.5 text-[11.5px] text-fg">
-              <input type="checkbox" checked={picked.includes(f)} onChange={() => toggle(f)} />
-              <span className="font-mono">{f}</span>
-            </label>
-          ))}
-        </div>
-      ) : (
-        <div className="flex items-center gap-2">
-          <label className="text-[11.5px] md:text-[10.5px] text-fgdim">{t('launcher.setup.envLabel')}</label>
-          <select value={simpleEnv} onChange={(e) => setSimpleEnv(e.target.value)} className="rounded-[7px] border border-border bg-panel px-2 py-1 text-[11.5px] text-fg">
-            <option value="none">{t('launcher.setup.envNone')}</option>
-            <option value="file">{t('launcher.setup.envFile')}</option>
-            <option value="command">{t('launcher.setup.envCommand')}</option>
-          </select>
-        </div>
-      )}
 
+      {missing && !source.trim() && <div role="alert" className="text-xs text-warn">{t('setup.repo.needSource')}</div>}
       <div className="flex items-center gap-2">
-        <button
-          type="button" disabled={busy} onClick={submit}
-          className="cursor-pointer rounded-[7px] border-[1.5px] border-ink bg-brand px-3 py-1 text-[11.5px] font-bold text-fg disabled:opacity-50"
-        >
+        <button type="button" disabled={busy} onClick={submit} className={BTN}>
           {t('launcher.setup.add')}
         </button>
-        <button type="button" onClick={reset} className="cursor-pointer px-1 text-[13px] text-fgdim hover:text-fg"><Icon icon={faXmark} /></button>
+        <button type="button" onClick={reset} aria-label={t('setup.cancel')} className="inline-flex size-8 cursor-pointer items-center justify-center rounded-md text-fgdim outline-none hover:bg-muted hover:text-fg focus-visible:outline-2 focus-visible:outline-ring coarse:size-11"><Icon icon={faXmark} /></button>
       </div>
     </div>
   );
@@ -244,73 +267,37 @@ export function AddRepo({ onAdd, busy }) {
 // S2 — minimal first screen: Connect Claude / Connect Codex → Start. Nothing else blocks;
 // every other capability connects just-in-time from the chat (SetupCard).
 // "Run full setup" reopens the B3 wizard for people who want all the steps.
-const ENGINE_CARDS = [
-  { id: 'claude', title: 'setup.minimal.connectClaude', connected: 'wizard.claude.connected', noCli: 'wizard.claude.noCli', install: 'npm i -g @anthropic-ai/claude-code', flow: 'pkce' },
-  { id: 'codex', title: 'setup.minimal.connectCodex', connected: 'wizard.codex.connected', noCli: 'wizard.codex.noCli', install: 'npm i -g @openai/codex', flow: 'codex' },
-];
-
-function EngineCard({ spec, cap, optional, onRecheck }) {
-  const t = useT();
-  const cli = cap?.data?.cli !== false;
-  return (
-    <div className={`rounded-[9px] border px-3 py-2.5 ${cap?.ok ? 'border-[#bfe3cf] bg-[#EAF6EF]' : optional ? 'border-hair bg-bg' : 'border-[#e7d3a8] bg-[#FBF3E0]'}`}>
-      <div className="flex items-center gap-2 text-[12px] font-bold text-fg">
-        {cap?.ok && <Icon icon={faCheck} />}
-        {t(spec.title)}
-        {optional && <span className="text-[11px] font-normal text-fgdim">{t('setup.minimal.optional')}</span>}
-      </div>
-      {cap?.ok ? (
-        <div className="mt-1 text-[11.5px] text-[#2f7d4f]">{t(spec.connected)}</div>
-      ) : optional ? null : !cli ? (
-        <div className="mt-2">
-          <p className="text-[11px] leading-snug text-[#8a6d1f]">{t(spec.noCli)}</p>
-          <code className="mt-1 block rounded-[6px] border border-[#e7d3a8] bg-[#fff9ec] px-2 py-1.5 font-mono text-[11.5px] md:text-[10.5px] select-all">{spec.install}</code>
-          <button type="button" onClick={onRecheck} className="mt-2 cursor-pointer rounded-[7px] border-[1.5px] border-ink bg-brand px-3 py-1 text-[11.5px] font-bold text-fg"><Icon icon={faRotateRight} /> {t('launcher.setup.recheck')}</button>
-        </div>
-      ) : (
-        <div className="mt-2"><OAuthCodeStep capability={spec.id} manual={{ kind: 'oauth', flow: spec.flow, token: true }} onDone={onRecheck} /></div>
-      )}
-    </div>
-  );
-}
-
 function MinimalHero({ engines, onStart, onRecheck, onRunWizard, busy }) {
   const t = useT();
-  const anyOk = ENGINE_CARDS.some((e) => engines?.[e.id]?.ok);
+  const anyOk = anyEngineConnected(engines);
   return (
-    <div className="mb-4 overflow-hidden rounded-[12px] border-[1.5px] border-ink bg-panel">
+    <div className="mb-4 overflow-hidden rounded-lg border border-hair bg-panel">
       <div className="px-4 py-4">
-        <div className="text-[15px] font-bold text-fg">{t('setup.minimal.title')}</div>
-        <p className="mt-1 text-[12px] leading-relaxed text-fgdim">{t('setup.minimal.body')}</p>
+        <div className="text-base font-medium text-fg">{t('setup.minimal.title')}</div>
+        <p className="mt-1 text-xs leading-relaxed text-fgdim">{t('setup.minimal.body')}</p>
         <ol className="mt-3 flex flex-col gap-3">
-          <li className={`rounded-[9px] border px-3 py-2.5 ${anyOk ? 'border-[#bfe3cf] bg-[#EAF6EF]' : 'border-[#e7d3a8] bg-[#FBF3E0]'}`}>
-            <div className="flex items-center gap-2 text-[12px] font-bold text-fg">
-              <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-ink bg-bg text-[11.5px] md:text-[10px]">{anyOk ? <Icon icon={faCheck} /> : '1'}</span>
+          <li className="rounded-md border border-hair bg-bg px-3 py-3">
+            <div className="flex items-center gap-2 text-xs font-medium text-fg">
+              <span className={`inline-flex size-5 items-center justify-center rounded-full text-xs tabular-nums ${anyOk ? 'bg-ok text-white' : 'border border-input bg-bg'}`}>{anyOk ? <Icon icon={faCheck} /> : '1'}</span>
               {t('setup.minimal.connectEngine')}
             </div>
-            <div className="mt-2 flex flex-col gap-2">
-              {ENGINE_CARDS.map((e) => (
-                <EngineCard key={e.id} spec={e} cap={engines?.[e.id]} optional={anyOk && !engines?.[e.id]?.ok} onRecheck={onRecheck} />
-              ))}
-            </div>
+            <div className="mt-2"><EngineConnect engines={engines} onChanged={onRecheck} intro={false} /></div>
           </li>
-          <li className={`rounded-[9px] border px-3 py-2.5 ${anyOk ? 'border-border bg-bg' : 'border-hair bg-chip/40 opacity-70'}`}>
-            <div className="flex items-center gap-2 text-[12px] font-bold text-fg">
-              <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-ink bg-bg text-[11.5px] md:text-[10px]">2</span>
+          <li className={`rounded-md border border-hair px-3 py-3 ${anyOk ? 'bg-bg' : 'bg-muted/40 opacity-70'}`}>
+            <div className="flex items-center gap-2 text-xs font-medium text-fg">
+              <span className="inline-flex size-5 items-center justify-center rounded-full border border-input bg-bg text-xs tabular-nums">2</span>
               {t('setup.minimal.start')}
             </div>
-            <p className="mt-1 text-[11px] leading-snug text-fgdim">{t('setup.minimal.startBody')}</p>
+            <p className="mt-1 text-xs leading-snug text-fgdim">{t('setup.minimal.startBody')}</p>
             <button
               type="button" disabled={busy || !anyOk} onClick={onStart}
-              className="mt-2 cursor-pointer rounded-[9px] border-[1.5px] border-ink bg-brand px-5 py-2 text-[13px] font-bold text-fg disabled:opacity-50"
+              className={`${BTN} mt-3`}
             >
-              {busy ? t('launcher.setup.starting') : t('setup.minimal.startBtn')} <Icon icon={faArrowRight} />
+              {busy ? t('launcher.setup.starting') : t('setup.minimal.startBtn')} <Icon icon={faArrowRight} className="mirror-rtl" />
             </button>
+            {!anyOk && <p role="status" className="mt-2 text-xs text-fgdim">{t('setup.minimal.needEngine')}</p>}
           </li>
         </ol>
-        {onRunWizard && (
-          <button type="button" onClick={onRunWizard} className="mt-3 cursor-pointer text-[11px] text-fgdim underline hover:text-fg">{t('setup.minimal.runFull')}</button>
-        )}
       </div>
     </div>
   );
@@ -322,14 +309,17 @@ export default function Setup({ onClose, onCreated, onRunWizard }) {
   const [err, setErr] = useState(null);
   const [busy, setBusy] = useState(false);
   const [profiles, setProfiles] = useState([]);
+  const [repoList, setRepoList] = useState([]); // GET /onboarding/repos — real per-repo clone state
+  const [repoNote, setRepoNote] = useState(null);
   const [engines, setEngines] = useState(null); // {claude, codex}: {ok, detail, data} from setup-api.overview()
   const [more, setMore] = useState(false);
   const { setupTick, wizardTick } = useStore();
 
   const refresh = useCallback(async () => {
     try {
-      const [st, ov] = await Promise.all([api.get('/onboarding/status'), setupApi.overview().catch(() => null)]);
+      const [st, ov, rl] = await Promise.all([api.get('/onboarding/status'), setupApi.overview().catch(() => null), api.get('/onboarding/repos').catch(() => null)]);
       setData(st);
+      if (Array.isArray(rl)) setRepoList(rl);
       const cap = (id) => ov?.capabilities?.find((c) => c.id === id) || null;
       setEngines({ claude: cap('claude'), codex: cap('codex') });
       setErr(null);
@@ -346,11 +336,11 @@ export default function Setup({ onClose, onCreated, onRunWizard }) {
 
   // While any step is running a background job, poll status until it settles.
   useEffect(() => {
-    const running = (data?.steps || []).some((s) => s.status === 'running');
+    const running = (data?.steps || []).some((s) => s.status === 'running') || repoList.some((r) => r.state === 'cloning');
     if (!running) return undefined;
     const t = setInterval(refresh, 2000);
     return () => clearInterval(t);
-  }, [data, refresh]);
+  }, [data, repoList, refresh]);
 
   const fix = async (name, ep) => {
     setBusy(true);
@@ -366,7 +356,8 @@ export default function Setup({ onClose, onCreated, onRunWizard }) {
   const addRepo = async (entry) => {
     setBusy(true);
     try {
-      await api.post('/onboarding/repos', entry);
+      const r = await setupApi.addRepoAndFetch(entry);
+      setRepoNote({ key: addOutcome(r, entry.source), name: r?.name || entry.name });
     } catch (e) {
       setErr(e.message);
     }
@@ -449,32 +440,29 @@ export default function Setup({ onClose, onCreated, onRunWizard }) {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-bg text-fg">
-      <div className="flex h-11 shrink-0 items-center gap-2.5 border-b border-hair px-4">
-        <span className="text-[13px] font-bold">{t('launcher.setup.title')}</span>
-        {env && (
-          <span className="rounded-[5px] border border-border px-[7px] py-px font-mono text-[11.5px] md:text-[10px] text-fgdim">
+      <div className="flex min-h-11 shrink-0 flex-wrap items-center gap-x-2.5 gap-y-1 border-b border-hair px-4 py-1">
+        <span className="text-sm font-medium">{t('launcher.setup.title')}</span>
+        {env && more && (
+          <Badge mono variant="outline">
             {env.container ? t('launcher.setup.container') : t('launcher.setup.native')} · {env.strategy}
-          </span>
+          </Badge>
         )}
         <button
           type="button" onClick={refresh}
-          className="ml-auto cursor-pointer text-[11px] text-fgdim hover:text-fg"
+          className="ms-auto inline-flex cursor-pointer items-center gap-1 px-1 text-xs text-fgdim outline-none hover:text-fg focus-visible:outline-2 focus-visible:outline-ring coarse:min-h-11"
         >
           <Icon icon={faRotateRight} /> {t('launcher.setup.refresh')}
         </button>
         {onRunWizard && (
-          <button
-            type="button"
-            title={t('launcher.setup.runWizardHint')}
-            onClick={runWizard}
-            className="cursor-pointer rounded-[7px] border-[1.5px] border-ink bg-brand px-2.5 py-1 text-[11px] font-bold text-fg"
-          >
-            {t('launcher.setup.runWizard')}
-          </button>
+          <Tip label={t('launcher.setup.runWizardHint')}>
+            <button type="button" onClick={runWizard} className={BTN2_SM}>
+              {t('launcher.setup.runWizard')}
+            </button>
+          </Tip>
         )}
         <button
-          type="button" onClick={onClose}
-          className="cursor-pointer px-1 text-[15px] text-fgdim hover:text-fg"
+          type="button" onClick={onClose} aria-label={t('wizard.exit')}
+          className="inline-flex size-8 cursor-pointer items-center justify-center rounded-md text-sm text-fgdim outline-none hover:bg-muted hover:text-fg focus-visible:outline-2 focus-visible:outline-ring coarse:size-11"
         >
           <Icon icon={faXmark} />
         </button>
@@ -482,63 +470,72 @@ export default function Setup({ onClose, onCreated, onRunWizard }) {
 
       <div className="thin-scroll min-h-0 flex-1 overflow-y-auto px-4 py-4">
         {err && (
-          <div className="mb-4 rounded-[8px] border border-[#e2c4c0] bg-[#FBECEA] px-3 py-2 text-[11.5px] text-[#9c3b33]">
+          <div role="alert" className="mb-4 rounded-md border border-err-line bg-err-bg px-3 py-2 text-xs text-err">
             {err}
           </div>
         )}
-        {!data && !err && <div className="text-[12px] text-fgdim">{t('launcher.setup.loading')}</div>}
+        {!data && !err && <div className="text-xs text-fgdim">{t('launcher.setup.loading')}</div>}
 
         {data && (
           <>
             <MinimalHero engines={engines} onStart={startSession} onRecheck={refresh} onRunWizard={onRunWizard ? runWizard : null} busy={busy} />
 
-            <button type="button" onClick={() => setMore((v) => !v)} aria-expanded={more} className="mb-3 cursor-pointer text-[11.5px] font-semibold text-fgdim hover:text-fg">
-              {more ? '▾' : '▸'} {t('setup.minimal.more')}{workspaceReady ? '' : ` · ${t('setup.minimal.moreHint')}`}
+            <button type="button" onClick={() => setMore((v) => !v)} aria-expanded={more} className="mb-3 inline-flex cursor-pointer items-center gap-1 text-xs font-medium text-fgdim outline-none hover:text-fg focus-visible:outline-2 focus-visible:outline-ring coarse:min-h-11">
+              <ChevronRight className={`size-3.5 transition-transform rtl:rotate-180 ${more ? 'rotate-90 rtl:rotate-90' : ''}`} aria-hidden="true" /> {t('setup.minimal.more')}{workspaceReady ? '' : ` · ${t('setup.minimal.moreHint')}`}
             </button>
             {more && (
             <>
             {!workspaceReady && (
-              <div className="mb-4 rounded-[10px] border border-border bg-panel px-4 py-3">
-                <div className="text-[12px] font-bold text-fg">{t('launcher.setup.welcomeTitle')}</div>
-                <p className="mt-1 text-[11.5px] leading-relaxed text-fgdim">{t('launcher.setup.welcomeBody')}</p>
-                <button type="button" disabled={busy} onClick={startOnboarding} className="mt-2 cursor-pointer rounded-[9px] border-[1.5px] border-ink bg-panel px-4 py-1.5 text-[12px] font-bold text-fg hover:bg-brand disabled:opacity-50">
+              <div className="mb-4 rounded-lg border border-hair bg-panel px-4 py-3">
+                <div className="text-sm font-medium text-fg">{t('launcher.setup.welcomeTitle')}</div>
+                <p className="mt-1 text-xs leading-relaxed text-fgdim">{t('launcher.setup.welcomeBody')}</p>
+                <button type="button" disabled={busy} onClick={startOnboarding} className={`${BTN2} mt-3`}>
                   {busy ? t('launcher.setup.starting') : t('launcher.setup.startOnboarding')}
                 </button>
               </div>
             )}
-            <a href="#/settings/connections" className="mb-4 flex items-center gap-2 rounded-[10px] border border-border bg-panel px-4 py-3 text-[12px] text-fg hover:border-ink">
-              <span className="font-bold">{t('launcher.setup.connections')}</span>
-              <span className="text-[11px] text-fgdim">{t('setup.minimal.moreConnections')}</span>
-              <span className="ms-auto text-fgdim">→</span>
+            <a href="#/settings/connections" className="mb-4 flex items-center gap-2 rounded-lg border border-hair bg-panel px-4 py-3 text-sm text-fg outline-none hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring">
+              <span className="font-medium">{t('launcher.setup.connections')}</span>
+              <span className="text-xs text-fgdim">{t('setup.minimal.moreConnections')}</span>
+              <Icon icon={faArrowRight} className="mirror-rtl ms-auto text-fgdim" />
             </a>
 
             <Section title={`${t('launcher.setup.repos')}${repoNames.length ? ` · ${repoNames.length}` : ''}`}>
               {repoNames.length === 0 && (
-                <div className="px-3 py-3 text-[11.5px] text-fgdim">
+                <div className="px-3 py-3 text-xs text-fgdim">
                   {t('launcher.setup.noRepos')}
                 </div>
               )}
               {repoNames.map((name) => (
                 <div key={name} className="border-b border-hair last:border-0">
-                  <div className="flex items-center gap-2 bg-chip/40 px-3 py-1.5">
-                    <span className="font-mono text-[11px] font-bold text-fg">{name}</span>
-                    <button
-                      type="button"
-                      disabled={busy}
-                      onClick={() => removeRepo(name)}
-                      title={t('launcher.setup.removeTitle')}
-                      className="ml-auto cursor-pointer text-[11.5px] md:text-[10.5px] text-fgdim hover:text-[#9c3b33] disabled:opacity-50"
-                    >
-                      {t('launcher.setup.remove')}
-                    </button>
+                  <div className="flex items-center gap-2 bg-muted/40 px-3 py-1.5">
+                    <span dir="ltr" className="font-mono text-xs font-medium text-fg">{name}</span>
+                    <Tip label={t('launcher.setup.removeTitle')}>
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => removeRepo(name)}
+                        className="ms-auto inline-flex cursor-pointer items-center text-xs text-fgdim outline-none hover:text-err focus-visible:outline-2 focus-visible:outline-ring disabled:opacity-50 coarse:min-h-11"
+                      >
+                        {t('launcher.setup.remove')}
+                      </button>
+                    </Tip>
                   </div>
+                  {repoList.find((r) => r.name === name) && (
+                    <RepoRow repo={repoList.find((r) => r.name === name)} onClone={(n) => fix(n, 'clone')} busy={busy} />
+                  )}
                   {steps
-                    .filter((s) => s.scope === `repo:${name}`)
+                    .filter((s) => s.scope === `repo:${name}` && !(repoList.length && s.action === 'onboarding.cloneRepo'))
                     .map((s) => (
                       <StepRow key={s.id} step={s} onFix={fix} busy={busy} />
                     ))}
                 </div>
               ))}
+              {repoNote && (
+                <div className="border-t border-hair px-3 py-2 text-xs font-medium text-ok">
+                  {t({ already: 'setup.repo.already', 'cloning-existing': 'setup.repo.alreadyCloning', added: 'setup.repo.added', 'added-local': 'setup.repo.addedLocal' }[repoNote.key], { name: repoNote.name })}
+                </div>
+              )}
               <AddRepo onAdd={addRepo} busy={busy} />
             </Section>
 
@@ -550,24 +547,20 @@ export default function Setup({ onClose, onCreated, onRunWizard }) {
                     className="flex items-start gap-2.5 border-b border-hair px-3 py-2.5 last:border-0"
                   >
                     <div className="min-w-0 flex-1">
-                      <div className="text-[12px] font-semibold text-fg">
+                      <div className="text-sm font-medium text-fg">
                         {prof.title || prof.name}
                       </div>
                       {prof.description && (
-                        <div className="mt-0.5 text-[11.5px] md:text-[10.5px] leading-snug text-fgdim">
+                        <div className="mt-0.5 text-xs leading-snug text-fgdim">
                           {prof.description}
                         </div>
                       )}
                     </div>
-                    <button
-                      type="button"
-                      disabled={busy}
-                      onClick={() => applyProfile(prof.name)}
-                      title={t('launcher.setup.profileApplyTitle')}
-                      className="shrink-0 cursor-pointer rounded-[7px] border-[1.5px] border-ink bg-brand px-2.5 py-1 text-[11px] font-bold text-fg disabled:opacity-50"
-                    >
-                      {t('launcher.setup.apply')}
-                    </button>
+                    <Tip label={t('launcher.setup.profileApplyTitle')}>
+                      <button type="button" disabled={busy} onClick={() => applyProfile(prof.name)} className={BTN2_SM}>
+                        {t('launcher.setup.apply')}
+                      </button>
+                    </Tip>
                   </div>
                 ))}
               </Section>

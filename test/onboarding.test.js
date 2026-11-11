@@ -10,6 +10,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { runInChild } from './_child.js';
+import { tmpDir } from './_tmp.js';
 
 const onb = await import('../server/onboarding.js');
 
@@ -25,7 +26,7 @@ test('assertRepoName rejects traversal, separators, and shell metacharacters', (
 });
 
 test('repoDir stays under reposDir; escaping names throw (isolated child)', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-onb-'));
+  const dir = tmpDir('arigami-onb-');
   const repos = path.join(dir, 'repos');
   const r = runInChild(
     "const onb=await import('./server/onboarding.js');const path=await import('node:path');" +
@@ -45,7 +46,7 @@ test('repoDir stays under reposDir; escaping names throw (isolated child)', () =
 });
 
 test('addRepo rejects an invalid name and an injecting branch (isolated child)', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-onb2-'));
+  const dir = tmpDir('arigami-onb2-');
   const r = runInChild(
     "const onb=await import('./server/onboarding.js');" +
       "let badName=false;try{onb.addRepo({name:'a;b',source:'github.com/o/r'});}catch{badName=true;}" +

@@ -56,6 +56,6 @@ test('ScreenEmptyState: explicit "no machine yet" message, an allocate button, a
 test('ScreenEmptyState: the allocate button disables while busy', () => {
   const idle = render(h(ScreenEmptyState, { busy: false, onAllocate: () => {}, onViewShared: () => {} }));
   const busy = render(h(ScreenEmptyState, { busy: true, onAllocate: () => {}, onViewShared: () => {} }));
-  expect(idle).not.toMatch(/Give this session a machine[^<]*<\/button>[^]*?disabled/);
+  expect(idle).not.toContain('disabled=""');
   expect(busy).toContain('disabled=""');
 });

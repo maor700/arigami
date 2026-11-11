@@ -10,13 +10,16 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { runInChild } from './_child.js';
+import { tmpDir } from './_tmp.js';
 
 const ROOT = path.resolve(import.meta.dir, '..');
-const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-f2-'));
+const tmp = () => tmpDir('arigami-f2-');
 const SKILL = (body) => `---\ndescription: f2 test skill\n---\n\n# T\n\n${body}\n`;
 const env = (dir) => ({ ARIGAMI_DIR: dir, ARIGAMI_PORT: '' });
 const gitSkillsStatus = () =>
   spawnSync('git', ['-C', ROOT, 'status', '--porcelain', '--', 'skills/'], { encoding: 'utf8' }).stdout.trim();
+
+const initialSkillsStatus = gitSkillsStatus();
 
 function seedUserSkill(dir, name, body) {
   fs.mkdirSync(path.join(dir, 'skills', name), { recursive: true });
@@ -66,7 +69,7 @@ test('writeSkill on a SHIPPED skill creates an override copy in the user dir (sh
   expect(r.out[0].after).toMatch(/edited body/);
   expect(fs.readFileSync(path.join(dir, 'skills', 'explain-changes', 'SKILL.md'), 'utf8')).toMatch(/edited body/);
   expect(fs.readFileSync(path.join(ROOT, 'skills', 'explain-changes', 'SKILL.md'), 'utf8')).toBe(before);
-  expect(gitSkillsStatus()).toBe('');
+  expect(gitSkillsStatus()).toBe(initialSkillsStatus);
   // no create without allowCreate; create with it → user dir
   const r2 = runInChild(
     "const sk=await import('./server/skills.ts');" +
@@ -107,13 +110,14 @@ test('skill-proposal apply writes to the user dir (edit of a shipped skill ⇒ o
   expect(r.out[0].src).toBe('user');
   expect(r.out[0].content).toMatch(/proposed body/);
   expect(fs.existsSync(path.join(dir, 'skills', 'explain-changes', 'SKILL.md'))).toBe(true);
-  expect(gitSkillsStatus()).toBe('');
+  expect(gitSkillsStatus()).toBe(initialSkillsStatus);
 });
 
 test('profile apply (shipped bundle, new skill) lands in the user dir and the repo tree stays clean', () => {
   const dir = tmp();
   const bname = `zz-f2-${Date.now().toString(36)}`;
-  const bdir = path.join(ROOT, 'profiles', 'bundles', bname); // under profiles/bundles ⇒ trusted
+  const shipDir = tmp(); // a private shipped dir (ARIGAMI_SHIPPED_BUNDLES_DIR) ⇒ trusted by location
+  const bdir = path.join(shipDir, bname);
   const skillName = `${bname}-skill`;
   try {
     fs.mkdirSync(path.join(bdir, 'skills', skillName), { recursive: true });
@@ -122,16 +126,45 @@ test('profile apply (shipped bundle, new skill) lands in the user dir and the re
     const r = runInChild(
       "const pf=await import('./server/profiles.ts');" +
         `const b=pf.loadBundle(${JSON.stringify(bdir)});const rep=await pf.applyBundle(b,{skipRepos:true});emit({rep});`,
-      env(dir)
+      { ...env(dir), ARIGAMI_SHIPPED_BUNDLES_DIR: shipDir }
     );
     if (!r.ok) throw new Error(r.error);
     expect(r.out[0].rep.skills[0].status).toBe('applied');
     expect(fs.readFileSync(path.join(dir, 'skills', skillName, 'SKILL.md'), 'utf8')).toBe(SKILL('from bundle'));
     expect(fs.existsSync(path.join(ROOT, 'skills', skillName))).toBe(false);
-    expect(gitSkillsStatus()).toBe('');
+    expect(gitSkillsStatus()).toBe(initialSkillsStatus);
     // and it's visible to the merged list + the session plugin
     expect(fs.existsSync(path.join(dir, 'user-plugin', 'skills', skillName, 'SKILL.md'))).toBe(true);
   } finally {
-    fs.rmSync(bdir, { recursive: true, force: true });
+    fs.rmSync(shipDir, { recursive: true, force: true });
   }
+});
+
+test('first shipped override preserves nested templates and exposes them in the editor', () => {
+  const dir = tmp();
+  const r = runInChild(`
+    const sk = await import('./server/skills.ts');
+    const before = sk.readSkill('build-extension');
+    const result = sk.writeSkill('build-extension', before.content + '\\nEdited');
+    const after = sk.readSkill('build-extension');
+    emit({ok: result.ok, before: before.supporting, after: after.supporting});
+  `, env(dir));
+  if (!r.ok) throw new Error(r.error);
+  expect(r.out[0].ok).toBe(true);
+  expect(r.out[0].before.some(f => f.name === 'templates/tab/ui/index.html')).toBe(true);
+  expect(r.out[0].after).toEqual(r.out[0].before);
+});
+
+test('supporting resource discovery never follows nested symlinks', () => {
+  const dir = tmp();
+  seedUserSkill(dir, 'nested-safe', 'test');
+  const nested = path.join(dir, 'skills', 'nested-safe', 'nested');
+  fs.mkdirSync(nested);
+  fs.writeFileSync(path.join(nested, 'safe.txt'), 'safe');
+  fs.writeFileSync(path.join(dir, 'secret.txt'), 'secret');
+  fs.symlinkSync(path.join(dir, 'secret.txt'), path.join(nested, 'secret.txt'));
+  fs.symlinkSync(dir, path.join(nested, 'loop'));
+  const r = runInChild("const sk=await import('./server/skills.ts');emit(sk.readSkill('nested-safe').supporting);", env(dir));
+  if (!r.ok) throw new Error(r.error);
+  expect(r.out[0]).toEqual([{name:'nested/safe.txt', size:4, content:'safe'}]);
 });

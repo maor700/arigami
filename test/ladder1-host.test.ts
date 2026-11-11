@@ -13,6 +13,7 @@ import net from 'node:net';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { hostDiag } from './_host-diag.js';
+import { tmpDir } from './_tmp.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let host: ChildProcess;
@@ -76,10 +77,10 @@ const incidents = (): any[] => {
 };
 
 beforeAll(async () => {
-  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-LADDER1-host-'));
+  dir = tmpDir('arigami-LADDER1-host-');
   argvDir = path.join(dir, 'argv');
   fs.mkdirSync(argvDir, { recursive: true });
-  ws = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-LADDER1-ws-'));
+  ws = tmpDir('arigami-LADDER1-ws-');
   const port = await freePort();
   base = `http://127.0.0.1:${port}`;
   const home = path.join(dir, 'home');

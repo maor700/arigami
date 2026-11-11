@@ -6,9 +6,9 @@
 import { untilTime } from '../lib/time.js';
 import { useT } from '../lib/i18n.js';
 import { usePrefs, setPrefs } from '../lib/prefs.js';
-import { Icon } from '../lib/icons.js';
-import { faChevronDown, faChevronUp } from '@fortawesome/free-solid-svg-icons';
+import { ChevronDown, ChevronUp } from 'lucide-react';
 import { windowLabel } from '../lib/providers.js';
+import { useIsDesktop } from '../lib/useMedia.js';
 
 // Remaining-capacity color: green when there's plenty left, amber when getting
 // tight, red when nearly exhausted. `left` is a 0–100 percentage.
@@ -65,8 +65,12 @@ export function UsageChip({ usage }) {
   );
 }
 
+// Rail bars are neutral while there is plenty left; they pick up the warning /
+// danger tone only when the window is getting tight (<= 30% left).
+const barTone = (left) => (left <= 30 ? leftColor(left) : 'var(--hb-faint)');
+
 // One tiny labeled bar for the rail panel: title at the start, reset time at the
-// end, then a thin track with the "% left" after it. Direction follows the app
+// end, then a thin track with the "% used" after it. Direction follows the app
 // (RTL in Hebrew, LTR in English); numeric tokens (the % and the reset duration)
 // are LTR runs the bidi algorithm isolates automatically, so they read correctly
 // inside RTL labels instead of being mangled by a forced dir.
@@ -78,19 +82,15 @@ function MiniBar({ title, win }) {
   const reset = untilTime(win.resetsAt);
   return (
     <div title={`${t('dialogs.spentPct', { title, pct: used })}${reset ? ` · ${t('dialogs.resetsIn', { t: reset })}` : ''}`}>
-      <div className="flex items-baseline justify-between gap-2">
-        <span className="min-w-0 truncate font-mono text-[11px] md:text-[9.5px] tracking-[0.04em] text-fgdim uppercase">
-          {title}
-        </span>
-        {reset && (
-          <span className="shrink-0 font-mono text-[11px] md:text-[9px] text-fgdim">{t('dialogs.resetsIn', { t: reset })}</span>
-        )}
+      <div className="flex items-baseline justify-between gap-2 text-2xs text-muted-foreground">
+        <span className="min-w-0 truncate">{title}</span>
+        {reset && <span className="shrink-0 tabular-nums">{t('dialogs.resetsIn', { t: reset })}</span>}
       </div>
-      <div className="mt-[3px] flex items-center gap-1.5">
-        <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-hair">
-          <div className="h-full rounded-full transition-[width] duration-500" style={{ width: `${used}%`, background: leftColor(left) }} />
+      <div className="mt-1 flex items-center gap-1.5">
+        <div className="h-1 flex-1 overflow-hidden rounded-full bg-muted">
+          <div className="h-full rounded-full transition-[width] duration-500" style={{ width: `${used}%`, background: barTone(left) }} />
         </div>
-        <span className="shrink-0 font-mono text-[11px] md:text-[9.5px] font-bold tabular-nums" style={{ color: leftColor(left) }}>
+        <span className="shrink-0 text-2xs font-medium tabular-nums" style={{ color: left <= 30 ? leftColor(left) : undefined }}>
           {used}%
         </span>
       </div>
@@ -102,22 +102,48 @@ function MiniBar({ title, win }) {
 // nothing when usage isn't available so the rail stays clean. Collapsible:
 // collapsed (default) shows only the 5h session line; expanded adds the 7d
 // week window too. State persists across sessions via prefs.
-export function UsageMini({ usage, provider = 'claude' }) {
+export function UsageMini({ usage, provider = 'claude', chip = false }) {
   const t = useT();
   const prefs = usePrefs();
+  const desktop = useIsDesktop();
   if (!usage?.available || (!usage.session && !usage.week)) return null;
   const expanded = prefs.usageExpanded;
   // codex windows are labelled by length (a free plan has one 30-day window)
   const label = (which) => provider === 'codex' ? windowLabel(t, provider, which, usage[which]) : t(which === 'session' ? 'dialogs.sessionWindow5h' : 'dialogs.weekWindow7d');
+  const toggle = () => setPrefs({ usageExpanded: !expanded });
+  if (!desktop) {
+    // Phone: the rail is for sessions — usage is a small "N%" chip in the footer row (`chip`), and the bars open
+    // above the footer (the default render) only while expanded.
+    const win = usage.session || usage.week;
+    const used = Math.max(0, Math.min(100, win.pct ?? 0));
+    if (chip) {
+      return (
+        <button type="button" onClick={toggle} aria-expanded={expanded} aria-label={`${provider === 'codex' ? 'Codex' : 'Claude'} ${t('dialogs.usageShort')} ${used}%`} data-usage-mini-phone title={label(usage.session ? 'session' : 'week')} className="flex min-h-11 shrink-0 cursor-pointer items-center gap-1.5 rounded-md px-1.5 text-2xs text-muted-foreground hover:bg-muted hover:text-foreground">
+          <span className="h-1 w-8 overflow-hidden rounded-full bg-muted">
+            <span className="block h-full rounded-full" style={{ width: `${used}%`, background: barTone(100 - used) }} />
+          </span>
+          <span className="font-medium tabular-nums" style={{ color: 100 - used <= 30 ? leftColor(100 - used) : undefined }}>{used}%</span>
+        </button>
+      );
+    }
+    if (!expanded) return null;
+    return (
+      <div className="flex flex-col gap-2 border-t border-border px-3 py-2" data-usage-mini-phone-bars>
+        {usage.session && <MiniBar title={label('session')} win={usage.session} />}
+        <MiniBar title={label('week')} win={usage.week} />
+      </div>
+    );
+  }
   return (
-    <div className="flex flex-col gap-2 border-t border-hair px-[13px] py-2.5">
+    <div className="flex flex-col gap-2 border-t border-border px-3 py-2">
       <button
         type="button"
-        onClick={() => setPrefs({ usageExpanded: !expanded })}
-        className="flex cursor-pointer items-center gap-1.5 py-1.5 font-mono text-[11.5px] md:text-[10.5px] tracking-[0.08em] text-fgdim uppercase hover:text-fg md:py-0 md:text-[9px]"
+        onClick={toggle}
+        aria-expanded={expanded}
+        className="flex cursor-pointer items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground"
       >
         <span className="flex-1 text-start">{t('dialogs.usageSpent')}</span>
-        <Icon icon={expanded ? faChevronUp : faChevronDown} />
+        {expanded ? <ChevronUp className="size-3.5" /> : <ChevronDown className="size-3.5" />}
       </button>
       <MiniBar title={label('session')} win={usage.session} />
       {(expanded || !usage.session) && <MiniBar title={label('week')} win={usage.week} />}

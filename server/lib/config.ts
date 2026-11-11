@@ -65,6 +65,8 @@ export interface ScreenConfig {
   snapshotChangeThreshold: number;
   screenshotRetentionDays: number;
   screenshotMaxMb: number;
+  // A session Chrome unused this long is closed (lib/chrome.ts idle closer); unset = 10 min. ARIGAMI_BROWSER_IDLE_MS wins.
+  browserIdleMs?: number;
   // Per-session desktops (T8): pool of VNC ports handed to `server/lib/desktops.ts`
   // when it lazily spawns an `Xvfb`+`x11vnc` pair for a session. The X display
   // number is derived from the port's offset into this range (port 5901 → :100,
@@ -212,6 +214,27 @@ export interface MemoryLearningConfig {
 }
 export interface MemoryConfig {
   learning: MemoryLearningConfig;
+  // CONSOL1: optional token caps — shared USER.md/MEMORY.md and per agent
+  // namespace (agents.<slug> → that agent's MEMORY.md). Absent = memory.ts CAPS.
+  caps?: { user?: number; memory?: number; agents?: Record<string, number> };
+}
+
+// Voice & phone layer (docs/VOICE.md): one kill-switch + a monthly USD cap per provider id (absent = no cap).
+export interface VoiceConfig {
+  enabled: boolean;
+  caps: Record<string, number>;
+  tts?: { voice?: Record<string, string>; model?: Record<string, string> }; // per provider id; stage 1b, file-only
+  realtime?: { model?: string; voice?: string; baseUrl?: string; geminiModel?: string; geminiVoice?: string; geminiBaseUrl?: string }; // stage 1c clerk; file-only
+}
+
+// Stage 2 phone (docs/VOICE.md): the one number that may call in, a scrypt-hashed PIN, the public base Twilio signs against.
+export interface TelephonyConfig {
+  ownerNumber: string; // E.164 or ''
+  pinHash: string; // 'scrypt$<salt>$<hash>' or ''
+  publicUrl?: string; // overrides cfg.publicUrl / the Funnel host for the webhook URLs
+  number?: string; // stage 4a: the agent's own Twilio number (E.164) — From for calls and SMS
+  callerIds?: { number: string; sid?: string; verifiedAt?: string }[]; // stage 4a: Twilio-verified caller IDs (the owner's own number)
+  outbound?: Record<string, unknown>; // stage 4a: calls/SMS to others — see OUTBOUND_DEFAULTS in server/voice-outbound.ts
 }
 
 export interface NotifyConfig {
@@ -254,16 +277,26 @@ export interface Config {
   devServerPorts: number[];
   dispatcher: DispatcherConfig;
   screen: ScreenConfig;
+  // The owner's everyday Chrome as a second source of logins (lib/owner-chrome.ts): unset = auto (Linux, not in a
+  // container, ~/.config/google-chrome present), false = off, or where it is.
+  ownerChrome?: { userDataDir?: string; profile?: string } | false;
   brain: BrainConfig;
   artifacts: ArtifactsConfig;
   share: ShareConfig;
   host: HostConfig;
   telemetry: TelemetryConfig;
+  voice: VoiceConfig;
+  telephony: TelephonyConfig;
   memory: MemoryConfig;
   // Model every NEW session starts on (a `claude --model` value: 'opus',
-  // 'sonnet', 'haiku', 'opus[1m]', or a full id). null/'' = don't pass --model,
-  // letting the Claude Code CLI pick its own default. Per-session dropdown wins.
+  // 'sonnet', 'haiku', 'opus[1m]', 'best', or a full id). Default 'opus' = the
+  // CLI's alias for its current Opus, so a new release is picked up without
+  // naming a version here. null/'' (older config files wrote null) = 'opus';
+  // set 'default' to let the Claude Code CLI pick. Per-session dropdown wins.
   defaultModel: string | null;
+  // Reasoning effort every NEW claude session starts on ('low'…'max').
+  // null/'' = 'high'; 'default' = the CLI's own default.
+  defaultEffort: string | null;
   // Engine a new session runs on when neither the caller, its agent nor its parent names one; unknown = claude.
   defaultEngine: 'claude' | 'codex';
   // RES1 — the host-wide model ladder. When every pooled account has hit its
@@ -362,6 +395,9 @@ export const DEFAULTS: Config = {
     displayBase: IS_DEFAULT_INSTANCE ? 100 : 200,
     keepProfiles: false,
   },
+  // {} = auto (lib/owner-chrome.ts). It must be a DEFAULTS key: loadFile() reads only those, and a config.json
+  // `"ownerChrome": false` was silently dropped — the owner's Chrome stayed on (measured on a scratch host).
+  ownerChrome: {},
   brain: {
     heartbeatEnabled: false,
     heartbeatEvery: '30m',
@@ -394,7 +430,10 @@ export const DEFAULTS: Config = {
   memory: {
     learning: { mode: 'auto', minBatch: 40, maxAgeHours: 48, minFreeMb: 600 },
   },
-  defaultModel: null,
+  voice: { enabled: true, caps: {} },
+  telephony: { ownerNumber: '', pinHash: '' },
+  defaultModel: 'opus',
+  defaultEffort: 'high',
   defaultEngine: 'claude',
   modelChain: ['fable', 'sonnet', 'haiku'],
   codexModelChain: ['gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5'],
@@ -612,6 +651,8 @@ export const cfg: Config = {
   runDir: path.join(CONFIG_DIR, 'run'),
   pidFile: path.join(CONFIG_DIR, 'run', 'host.pid'),
   publicUrl: String(merged.publicUrl || '').replace(/\/+$/, ''),
+  defaultModel: merged.defaultModel || DEFAULTS.defaultModel,
+  defaultEffort: merged.defaultEffort === 'default' ? null : merged.defaultEffort || DEFAULTS.defaultEffort,
   defaultEngine: merged.defaultEngine === 'codex' ? 'codex' : 'claude',
   codexTransport: merged.codexTransport === 'exec' ? 'exec' : 'app-server',
   codexApprovals: merged.codexApprovals === 'on-request' || merged.codexApprovals === 'untrusted' ? merged.codexApprovals : 'never',
@@ -685,6 +726,17 @@ export function updateBrainConfig(patch: Partial<BrainConfig>): BrainConfig {
   return next;
 }
 
+// Settings › Connections › Notifications: the owner's WhatsApp target for notify.ts.
+export function updateNotifyConfig(patch: Partial<NotifyConfig>): NotifyConfig {
+  ensureConfigFile();
+  const file = loadFile() as Partial<Config>;
+  const next: NotifyConfig = { ...(cfg.notify || {}), ...patch };
+  const out = { ...file, notify: { ...(file.notify || {}), ...patch } } as any;
+  writeConfigFile(out);
+  cfg.notify = next;
+  return next;
+}
+
 // Persist a partial telemetry config (Settings toggle, wizard step, `bin/host`).
 // Same merge pattern as updateBrainConfig. Note: env ARIGAMI_TELEMETRY and
 // DO_NOT_TRACK still win at runtime — see server/telemetry.ts effective().
@@ -699,9 +751,27 @@ export function updateHostConfig(patch: Partial<HostConfig>): HostConfig {
   return next;
 }
 
-/** The host default engine; anything but 'codex' reads as claude. */
+// Whether an engine is signed in on this host (registered by onboarding.ts, which owns the probes).
+let engineReady: ((e: 'claude' | 'codex') => boolean) | null = null;
+export function setEngineReadiness(fn: ((e: 'claude' | 'codex') => boolean) | null): void {
+  engineReady = fn;
+}
+
+/**
+ * The host default engine; anything but 'codex' reads as claude. A user who
+ * connected only ONE engine must not get sessions on the other (a Codex-only
+ * host would otherwise spawn `claude` and hit "Not logged in"): when the
+ * configured default is not connected but the other engine is, the other wins.
+ */
 export function defaultEngine(): 'claude' | 'codex' {
-  return cfg.defaultEngine === 'codex' ? 'codex' : 'claude';
+  const want = cfg.defaultEngine === 'codex' ? 'codex' : 'claude';
+  if (!engineReady) return want;
+  const other = want === 'codex' ? 'claude' : 'codex';
+  try {
+    return !engineReady(want) && engineReady(other) ? other : want;
+  } catch {
+    return want;
+  }
 }
 
 // Persist cfg.defaultEngine (Settings › Host); an unknown value falls back to claude.
@@ -720,6 +790,32 @@ export function updateTelemetryConfig(patch: Partial<TelemetryConfig>): Telemetr
   const out = { ...file, telemetry: { ...(file.telemetry || {}), ...patch } } as any;
   writeConfigFile(out);
   cfg.telemetry = next;
+  return next;
+}
+
+// Voice kill-switch + caps; a null cap removes it. Same merge pattern as updateTelemetryConfig.
+export function updateVoiceConfig(patch: { enabled?: boolean; caps?: Record<string, number | null> }): VoiceConfig {
+  ensureConfigFile();
+  const file = loadFile() as Partial<Config>;
+  const caps: Record<string, number> = { ...(cfg.voice?.caps || {}) };
+  for (const [k, v] of Object.entries(patch.caps || {})) {
+    if (v === null || !(Number(v) > 0)) delete caps[k];
+    else caps[k] = Number(v);
+  }
+  const next: VoiceConfig = { enabled: typeof patch.enabled === 'boolean' ? patch.enabled : cfg.voice?.enabled !== false, caps, ...(cfg.voice?.tts ? { tts: cfg.voice.tts } : {}), ...(cfg.voice?.realtime ? { realtime: cfg.voice.realtime } : {}) };
+  writeConfigFile({ ...file, voice: next } as any);
+  cfg.voice = next;
+  return next;
+}
+
+// Stage 2 phone: owner number / PIN hash / public base; same merge pattern as updateNotifyConfig.
+export function updateTelephonyConfig(patch: Partial<TelephonyConfig>): TelephonyConfig {
+  ensureConfigFile();
+  const file = loadFile() as Partial<Config>;
+  const next: TelephonyConfig = { ...DEFAULTS.telephony, ...(cfg.telephony || {}), ...patch };
+  if (!next.publicUrl) delete next.publicUrl;
+  writeConfigFile({ ...file, telephony: next } as any);
+  cfg.telephony = next;
   return next;
 }
 

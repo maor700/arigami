@@ -16,6 +16,7 @@ const web = (p) => path.join(ROOT, 'web/src', p);
 let React, render, prefs, langs, voice, store, MicButton, VoiceHUD, VoiceLangPicker;
 const h = (...a) => React.createElement(...a);
 const calls = [];
+let hostVoiceEnabled = true; // what GET /__api/config reports (a Groq key exists)
 
 beforeAll(async () => {
   const mem = new Map();
@@ -36,6 +37,7 @@ beforeAll(async () => {
     const reply = (j) => ({ ok: true, status: 200, url: u, json: async () => j, text: async () => JSON.stringify(j) });
     if (u.includes('/voice/stt')) return reply({ text: '  תריץ את הבדיקות  ' });
     if (u.includes('/voice/route')) return reply({ actions: [{ type: 'open_changes' }], say: 'ok' });
+    if (u.endsWith('/config')) return reply({ voiceEnabled: hostVoiceEnabled });
     return reply({});
   };
   React = (await import(path.join(ROOT, 'web/node_modules/react/index.js'))).default;
@@ -143,7 +145,9 @@ test('command: the same clip goes STT → /voice/route with the transcript, and 
 });
 
 // ---- the two mics + badge + picker ----------------------------------------------
-test('MicButton: dictate and command mounts differ only by mode; both wear the language badge', () => {
+test('MicButton: dictate and command mounts differ only by mode; both wear the language badge', async () => {
+  hostVoiceEnabled = true;
+  await store.loadConfig();
   prefs.setPrefs({ language: 'he', voiceLang: 'auto' });
   const d = render(h(MicButton, { mode: 'dictate' }));
   const c = render(h(MicButton, { mode: 'command' }));
@@ -164,4 +168,45 @@ test('the language picker lists auto (with the UI language) + the voice language
   expect(html).toContain('value="ar"');
   expect(html).toContain('he · עברית'); // the auto option names the UI language
   prefs.setPrefs({ voiceLang: 'auto', language: 'auto' });
+});
+
+// ---- no Groq key on the host -------------------------------------------------------
+test('no Groq key: no mic is rendered, and the hotkey path opens the HUD on a "no key" card with the Groq guide instead of the mic', async () => {
+  hostVoiceEnabled = false;
+  await store.loadConfig();
+  expect(render(h(MicButton, { mode: 'dictate' }))).toBe('');
+  expect(render(h(MicButton, { mode: 'command' }))).toBe('');
+  voice.setVoiceAvailable(false);
+  await voice.startRecording({ mode: 'command' });
+  expect(voice.getState().status).toBe('nokey');
+  prefs.setPrefs({ language: 'en' });
+  const html = render(h(VoiceHUD));
+  expect(html).toContain('data-voice-nokey');
+  expect(html).toContain(`href="${voice.GROQ_KEY_GUIDE}"`);
+  expect(html).toContain('no Groq key');
+  voice.clearPlan();
+  expect(voice.getState().status).toBe('idle');
+  voice.setVoiceAvailable(true);
+  hostVoiceEnabled = true;
+  await store.loadConfig();
+});
+
+test('a host that loses its key mid-way: the STT "no GROQ_API_KEY" error turns into the same "no key" card, and the next take does not open the mic', async () => {
+  voice.setVoiceAvailable(null);
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('/voice/stt')) return { ok: false, status: 502, url: String(url), json: async () => ({ error: 'voice disabled: no GROQ_API_KEY' }), text: async () => JSON.stringify({ error: 'voice disabled: no GROQ_API_KEY' }) };
+    return realFetch(url, init);
+  };
+  try {
+    await voice.processClip(clip(), 'dictate');
+    expect(voice.getState().status).toBe('nokey');
+    voice.clearPlan();
+    await voice.startRecording({ mode: 'dictate' });
+    expect(voice.getState().status).toBe('nokey');
+  } finally {
+    globalThis.fetch = realFetch;
+    voice.clearPlan();
+    voice.setVoiceAvailable(true);
+  }
 });

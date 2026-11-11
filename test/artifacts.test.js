@@ -8,8 +8,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { walkSource, injectBase, scanHtmlWarnings, sweepArtifactsDir, ARTIFACT_CSP, MIME } from '../server/artifacts.ts';
 import { runInChild } from './_child.js';
+import { tmpDir } from './_tmp.js';
 
-const tmp = (p) => fs.mkdtempSync(path.join(os.tmpdir(), p));
+const tmp = (p) => tmpDir(p);
 
 function makeSite(root) {
   fs.mkdirSync(path.join(root, 'assets'), { recursive: true });
@@ -164,4 +165,28 @@ test('publish: size cap → 413 with a clear message; state dir refused', () => 
   expect(r.out[0].cap.status).toBe(413);
   expect(r.out[0].cap.msg).toMatch(/too large/);
   expect(r.out[0].st).toBe(403);
+});
+
+test('workspace publication is limited to explicit staging, with state and symlink escapes denied', () => {
+  const dir = tmp('art-boundary-');
+  const staging = path.join(dir, 'workspace', 'public-artifacts');
+  fs.mkdirSync(staging, { recursive: true });
+  fs.writeFileSync(path.join(staging, 'report.md'), 'report');
+  fs.writeFileSync(path.join(staging, '.env'), 'secret');
+  fs.writeFileSync(path.join(dir, 'credentials.json'), 'secret');
+  fs.symlinkSync(path.join(dir, 'credentials.json'), path.join(staging, 'escape.md'));
+  fs.symlinkSync(dir, path.join(staging, 'escape-dir'));
+  const r = runInChild(`
+    const state=await import('./server/state.ts');
+    const art=await import('./server/artifacts.ts');
+    const root=process.env.ARIGAMI_DIR;
+    const s=state.createSession({title:'t',cwd:root});
+    const attempt=p=>{try{return {files:art.publish(s.id,{path:p,title:'Report'}).artifact.files};}catch(e){return {error:e.message};}};
+    emit(['workspace/public-artifacts/report.md','workspace/public-artifacts',
+      'workspace','credentials.json','workspace/public-artifacts/escape.md',
+      'workspace/public-artifacts/escape-dir','workspace/public-artifacts/.env'].map(attempt));
+  `, { ARIGAMI_DIR: dir });
+  if (!r.ok) throw new Error(r.error);
+  expect(r.out[0].slice(0,2)).toEqual([{files:1},{files:1}]);
+  for (const result of r.out[0].slice(2)) expect(result.error).toMatch(/refusing/);
 });

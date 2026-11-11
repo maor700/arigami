@@ -16,14 +16,14 @@ import {
   codexBuildSpawn,
   codexHomeFor,
   codexHooksFile,
+  needsPolicyHook,
   codexModels,
   refreshCodexModels,
   flatToolName,
   isHookTrustNotice,
   CODEX_MODEL_RE,
-  EFFORTS,
+  isCodexEffort,
   textOfContent,
-  restrictedAgentOf,
   reapGivenUpHostTool,
   onLimitText,
   onTurnEnd,
@@ -135,7 +135,7 @@ function modelOf(s: Session): string | null {
 
 function effortOf(s: Session): string | null {
   const e = s.claude?.effort;
-  return e && EFFORTS.has(e) ? e : null;
+  return e && isCodexEffort(e) ? e : null;
 }
 
 function threadParams(s: Session): Record<string, unknown> {
@@ -190,7 +190,7 @@ async function startThread(id: string, p: any): Promise<void> {
   notify(st, 'initialized', {});
   const s = getSession(id);
   if (!s) return;
-  if (restrictedAgentOf(s)) await trustHooks(id, st, cwdOf(s));
+  if (needsPolicyHook(s)) await trustHooks(id, st, cwdOf(s));
   const prev = p.resume ? s.claude?.sessionId : null;
   let r = prev ? await rpc(st, 'thread/resume', { threadId: prev, ...threadParams(s) }) : await rpc(st, 'thread/start', threadParams(s));
   if (gone()) return;

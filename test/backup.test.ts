@@ -13,10 +13,11 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { runInChild } from './_child.js';
 import { isolate } from './_isolate.js';
+import { tmpDir } from './_tmp.js';
 isolate(); // restore globalThis/process.env after this file (bun test shares them)
 
 const bk = await import('../server/backup.ts');
-const tmp = (p = 'arigami-bk-') => fs.mkdtempSync(path.join(os.tmpdir(), p));
+const tmp = (p = 'arigami-bk-') => tmpDir(p);
 const tarList = (f: string) => spawnSync('tar', ['-tzf', f], { encoding: 'utf8' }).stdout.split('\n').filter(Boolean).map((e) => e.replace(/^\.\//, ''));
 
 const SKILL = '---\ndescription: a throwaway exported skill\n---\n\n# Exported\n\nbody\n';
@@ -305,7 +306,7 @@ test('round-trip is idempotent for cron: apply → export → import into the SA
   const r = runInChild(
     `const pf = await import('./server/profiles.ts'); const tr = await import('./server/triggers.ts'); const bk = await import('./server/backup.ts'); tr.load();
      const cron = () => tr.listTriggers().filter(t => t.type === 'cron').map(t => ({ name: t.name, key: t.bundleKey, enabled: t.enabled, prompt: t.prompt })).sort((a, b) => a.name.localeCompare(b.name));
-     // 1. apply the shipped solo-dev bundle → +1 trigger "[solo-dev] standup"
+     // 1. apply the (fixture) shipped solo-dev bundle → +1 trigger "[solo-dev] standup"
      const a1 = await pf.applySource('solo-dev'); const after1 = cron();
      // 2. export this instance, 3. import the export back into the same instance
      const b = bk.exportBundle({ out: ${JSON.stringify(bundle)}, cron: tr.listTriggers() });

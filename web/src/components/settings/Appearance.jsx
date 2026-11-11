@@ -10,22 +10,22 @@
 // pending strip, manual block) sits here, on the page, under the chrome block:
 // it is about how the assistant behaves for the human, like language/voice,
 // not about the machine (Host). Deep link: #/settings/appearance/memory.
-import { usePrefs, setPrefs, PREF_LIMITS, UI_SCALE_IDS } from '../../lib/prefs.js';
+import { usePrefs, setPrefs, UI_SCALE_IDS } from '../../lib/prefs.js';
 import { DEFAULT_ACCENT } from '../../lib/logos.js';
 import { LANGS, LANG_IDS } from '../../lib/langs.js';
 import { useT } from '../../lib/i18n.js';
-import { Field, Segmented, Section, Advanced } from './shared.jsx';
+import { Field, Segmented, Section, Advanced, BTN_SM, INPUT } from './shared.jsx';
+import ChatTextSize from './ChatTextSize.jsx';
 import { VoiceMain, VoiceAdvanced } from './Voice.jsx';
 import { BrainHeartbeat, TelemetryToggle } from './Automation.jsx';
 import MemoryLearning from './MemoryLearning.jsx';
+import { GROQ_KEY_GUIDE } from '../../lib/voice.js';
 
-export const GENERAL_ADVANCED_IDS = ['accent', 'terminal', 'voice-advanced', 'heartbeat', 'telemetry'];
+export const GENERAL_ADVANCED_IDS = ['voice-advanced', 'heartbeat', 'telemetry'];
 
 export default function General({ section = '', voiceEnabled = false, recording, setRecording }) {
   const prefs = usePrefs();
   const t = useT();
-  const [fontMin, fontMax] = PREF_LIMITS.font;
-  const stepFont = (delta) => setPrefs({ termFontSize: prefs.termFontSize + delta });
   const lightDark = [
     { value: 'light', label: t('common.light') },
     { value: 'dark', label: t('common.dark') },
@@ -38,13 +38,24 @@ export default function General({ section = '', voiceEnabled = false, recording,
     <>
       <Section id="chrome" title={t('settings.appearance')} first>
         <Field label={t('settings.theme')} hint={t('settings.theme.hint')}>
-          <Segmented value={prefs.theme} onChange={(v) => setPrefs({ theme: v })} options={lightDark} />
+          <Segmented
+            value={prefs.themeMode}
+            onChange={(v) => setPrefs({ themeMode: v })}
+            options={[{ value: 'system', label: t('common.system') }, ...lightDark]}
+          />
+        </Field>
+        <Field label={t('settings.termTheme')} hint={t('settings.termTheme.hint')}>
+          <Segmented
+            value={prefs.termTheme}
+            onChange={(v) => setPrefs({ termTheme: v })}
+            options={[{ value: 'auto', label: t('settings.chatTheme.auto') }, ...lightDark]}
+          />
         </Field>
         <Field label={t('settings.language')} hint={t('settings.language.hint')}>
           <select
             value={prefs.language}
             onChange={(e) => setPrefs({ language: e.target.value })}
-            className="cursor-pointer rounded-lg border-[1.5px] border-ink bg-panel px-3 py-1.5 text-[0.71875rem] font-bold text-fg"
+            className={`${INPUT} cursor-pointer`}
           >
             <option value="auto">{t('settings.language.auto')}</option>
             {LANG_IDS.map((id) => (
@@ -59,25 +70,36 @@ export default function General({ section = '', voiceEnabled = false, recording,
             options={UI_SCALE_IDS.map((id) => ({ value: id, label: t(`settings.uiScale.${id}`) }))}
           />
         </Field>
-        <Field label={t('settings.fontSize')} hint={t('settings.fontSize.hint', { min: fontMin, max: fontMax })}>
-          <span className="flex items-center overflow-hidden rounded-lg border-[1.5px] border-ink">
-            <button
-              type="button"
-              onClick={() => stepFont(-1)}
-              disabled={prefs.termFontSize <= fontMin}
-              className="cursor-pointer bg-panel px-3 py-1.5 text-[0.6875rem] text-fg hover:bg-brand disabled:cursor-default disabled:opacity-40"
-            >
-              A−
-            </button>
-            <span className="border-x-[1.5px] border-ink bg-panel px-3 py-1.5 font-mono text-[0.71875rem] font-bold text-fg">{prefs.termFontSize}px</span>
-            <button
-              type="button"
-              onClick={() => stepFont(1)}
-              disabled={prefs.termFontSize >= fontMax}
-              className="cursor-pointer bg-panel px-3 py-1.5 text-[0.8125rem] text-fg hover:bg-brand disabled:cursor-default disabled:opacity-40"
-            >
-              A+
-            </button>
+        <ChatTextSize />
+        <Field label={t('settings.textDir')} hint={t('settings.textDir.hint')}>
+          <Segmented
+            value={prefs.termDir}
+            onChange={(v) => setPrefs({ termDir: v })}
+            options={[
+              { value: 'auto', label: t('common.auto') },
+              { value: 'ltr', label: t('common.ltr') },
+              { value: 'rtl', label: t('common.rtl') },
+            ]}
+          />
+        </Field>
+        <Field label={t('settings.accent')} hint={t('settings.accent.hint')}>
+          <span className="flex items-center gap-2">
+            <label className="relative flex h-[1.625rem] w-[2.375rem] cursor-pointer coarse:h-11 coarse:w-11 items-center justify-center overflow-hidden rounded-md border border-input">
+              <span className="absolute inset-0" style={{ background: prefs.accent || DEFAULT_ACCENT }} />
+              <input
+                type="color"
+                value={prefs.accent || DEFAULT_ACCENT}
+                onChange={(e) => setPrefs({ accent: e.target.value })}
+                className="absolute inset-0 cursor-pointer opacity-0"
+                aria-label={t('settings.accent')}
+              />
+            </label>
+            <code dir="ltr" className="font-mono text-xs text-fgdim">{prefs.accent || DEFAULT_ACCENT}</code>
+            {prefs.accent ? (
+              <button type="button" onClick={() => setPrefs({ accent: '' })} className={BTN_SM}>
+                {t('common.reset')}
+              </button>
+            ) : null}
           </span>
         </Field>
       </Section>
@@ -91,54 +113,14 @@ export default function General({ section = '', voiceEnabled = false, recording,
       )}
 
       <Advanced section={section} ids={advIds}>
-        <Section id="accent" title={t('settings.appearance')}>
-          <Field label={t('settings.accent')} hint={t('settings.accent.hint')}>
-            <span className="flex items-center gap-2">
-              <label className="relative flex h-[1.625rem] w-[2.375rem] cursor-pointer items-center justify-center overflow-hidden rounded-lg border-[1.5px] border-ink">
-                <span className="absolute inset-0" style={{ background: prefs.accent || DEFAULT_ACCENT }} />
-                <input
-                  type="color"
-                  value={prefs.accent || DEFAULT_ACCENT}
-                  onChange={(e) => setPrefs({ accent: e.target.value })}
-                  className="absolute inset-0 cursor-pointer opacity-0"
-                  aria-label={t('settings.accent')}
-                />
-              </label>
-              <code className="font-mono text-[0.6875rem] text-fgdim">{prefs.accent || DEFAULT_ACCENT}</code>
-              {prefs.accent ? (
-                <button
-                  type="button"
-                  onClick={() => setPrefs({ accent: '' })}
-                  className="cursor-pointer rounded-md border border-hair px-2 py-1 text-[0.6875rem] md:text-[0.65625rem] text-fgdim hover:border-ink hover:text-fg"
-                >
-                  {t('common.reset')}
-                </button>
-              ) : null}
-            </span>
-          </Field>
-        </Section>
-
-        <Section id="terminal" title={t('settings.terminal')}>
-          <Field label={t('settings.termTheme')} hint={t('settings.termTheme.hint')}>
-            <Segmented value={prefs.termTheme} onChange={(v) => setPrefs({ termTheme: v })} options={lightDark} />
-          </Field>
-          <Field label={t('settings.textDir')} hint={t('settings.textDir.hint')}>
-            <Segmented
-              value={prefs.termDir}
-              onChange={(v) => setPrefs({ termDir: v })}
-              options={[
-                { value: 'auto', label: t('common.auto') },
-                { value: 'ltr', label: t('common.ltr') },
-                { value: 'rtl', label: t('common.rtl') },
-              ]}
-            />
-          </Field>
-        </Section>
 
         <Section id={voiceEnabled ? 'voice-advanced' : 'voice'} title={t('chrome.voice.section')}>
           {!voiceEnabled && (
             <>
-              <div data-voice-off className="mb-1 text-[0.6875rem] text-fgdim">{t('settings.voice.off')}</div>
+              <div data-voice-off className="mb-1 text-xs text-fgdim">
+                {t('settings.voice.off')}{' '}
+                <a href={GROQ_KEY_GUIDE} target="_blank" rel="noreferrer" className="text-info underline underline-offset-2">{t('dialogs.voiceNoKeyGuide')}</a>
+              </div>
               <VoiceMain recording={recording} setRecording={setRecording} />
             </>
           )}

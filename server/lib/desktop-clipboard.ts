@@ -15,6 +15,7 @@
 //
 // Limit: a selection inside a cross-origin iframe is not read (the top page's
 // selection is empty then). Password fields are never read.
+import { spawn } from 'node:child_process';
 import { listTabs, cdpCall, cdpPort } from './chrome-cdp.js';
 import { CHROME_BASE_DIR } from './chrome.js';
 
@@ -43,10 +44,48 @@ export async function selectionAt(port: number | null): Promise<string> {
 
 export async function insertAt(port: number | null, text: string): Promise<void> {
   const ws = await frontWs(port);
+  // Insert at the DOM level first: execCommand('insertText') edits the focused
+  // field or contenteditable at its cursor, fires the input events, and does not
+  // care whether the window has OS focus — a Chrome under Xvfb (or headless)
+  // never does, and Input.insertText silently drops the text there (measured in
+  // test/desktop-clipboard.test.ts). Input.insertText stays as the fallback for
+  // pages where nothing editable has focus.
+  const r = await cdpCall(ws, 'Runtime.evaluate', {
+    expression: `(() => { const a = document.activeElement; const editable = a && (a.tagName === 'TEXTAREA' || a.tagName === 'INPUT' || a.isContentEditable); return editable ? document.execCommand('insertText', false, ${JSON.stringify(text)}) : false; })()`,
+    returnByValue: true,
+  }).catch(() => null);
+  if (r?.result?.value === true) return;
   await cdpCall(ws, 'Input.insertText', { text });
 }
 
 /** The DevTools port of the screen the cockpit shows: a session's Chrome, or "my browser". */
 export function portFor(sessionId: string | null): number | null {
   return sessionId ? cdpPort(sessionId) : cdpPort('vault', CHROME_BASE_DIR);
+}
+
+/**
+ * Put `text` on the X CLIPBOARD of `display`, for a paste into an app that is not a DevTools-controllable Chrome (the
+ * Chrome on the shared desktop's icon runs without a debug port; anything else — a terminal, a native dialog — never
+ * had one). The viewer then sends Ctrl+V over the same VNC connection, so the app pastes it itself. `xclip` stays
+ * alive in the background to own the selection; we only wait for it to take the text.
+ */
+export function setXClipboard(display: string, text: string, timeoutMs = 3000): Promise<void> {
+  if (!display) return Promise.reject(new Error('no display to put the clipboard on'));
+  return new Promise((resolve, reject) => {
+    const child = spawn('xclip', ['-selection', 'clipboard', '-i'], { env: { ...process.env, DISPLAY: display }, stdio: ['pipe', 'ignore', 'ignore'] });
+    const timer = setTimeout(() => {
+      child.kill();
+      reject(new Error('xclip did not take the text in time'));
+    }, timeoutMs);
+    child.on('error', (e: NodeJS.ErrnoException) => {
+      clearTimeout(timer);
+      reject(new Error(e.code === 'ENOENT' ? 'xclip is not installed on this host' : e.message));
+    });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      code === 0 ? resolve() : reject(new Error(`xclip exited ${code}`));
+    });
+    child.stdin.on('error', () => {});
+    child.stdin.end(text);
+  });
 }

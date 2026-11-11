@@ -11,8 +11,9 @@ import { createShareTokens, clampDays } from '../server/share-token.ts';
 import { rewriteAbsoluteRefs } from '../server/artifacts.ts';
 import { parseArtifactUrl, rewriteBaseForShare } from '../server/artifacts.ts';
 import { runInChild } from './_child.js';
+import { tmpDir } from './_tmp.js';
 
-const tmp = (p) => fs.mkdtempSync(path.join(os.tmpdir(), p));
+const tmp = (p) => tmpDir(p);
 const DAY = 86_400_000;
 
 function mk(over = {}) {
@@ -249,8 +250,8 @@ test('gate + serve: a share token opens ONE artifact at ONE version, cookie-less
   expect(o.tampered.body).toContain('Link expired');
   expect(o.redirect.status).toBe(302);
   expect(o.redirect.loc).toBe(`/__artifacts/${o.rec.id}/?t=${o.withTok.body.match(/~t\/([^/]+)\//)[1]}`);
-  expect(o.traversal).toBe(403);
-  expect(o.traversalEnc).toBe(403);
+  expect(o.traversal).toBe(400); // refused by the gate before any routing (path tricks are ambiguous)
+  expect(o.traversalEnc).toBe(400);
   expect(o.warnings.some((w) => w.includes('ARIGAMI_PUBLIC_URL'))).toBe(true); // relative link, no public url
   expect(o.rec.shareVersion).toBe(1);
   expect(o.rec.shareExp).toMatch(/^\d{4}-/);

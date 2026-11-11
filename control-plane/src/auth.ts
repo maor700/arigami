@@ -31,6 +31,22 @@ export function parseCookies(header: string | null | undefined): Record<string, 
   return out;
 }
 
+/** Every value sent under `name` — a browser can hold a host-only AND a domain cookie of the same name. */
+export function cookieValues(header: string | null | undefined, name: string): string[] {
+  const out: string[] = [];
+  for (const part of String(header || '').split(';')) {
+    const i = part.indexOf('=');
+    if (i < 0 || part.slice(0, i).trim() !== name) continue;
+    const v = part.slice(i + 1).trim();
+    try {
+      out.push(decodeURIComponent(v));
+    } catch {
+      out.push(v);
+    }
+  }
+  return out;
+}
+
 export function createAuthService(cfg: Config, store: Store) {
   function isHttps(xForwardedProto?: string | null): boolean {
     if (cfg.publicUrl.startsWith('https://')) return true;
@@ -40,24 +56,34 @@ export function createAuthService(cfg: Config, store: Store) {
     }
     return false;
   }
-  function cookieHeader(name: string, value: string, maxAgeSec: number, https: boolean, cookiePath = '/'): string {
-    return `${name}=${value}; Path=${cookiePath}; HttpOnly; SameSite=Lax; Max-Age=${maxAgeSec}` + (https ? '; Secure' : '');
+  function cookieHeader(name: string, value: string, maxAgeSec: number, https: boolean, cookiePath = '/', domain = ''): string {
+    return `${name}=${value}; Path=${cookiePath}` + (domain ? `; Domain=${domain}` : '') + `; HttpOnly; SameSite=Lax; Max-Age=${maxAgeSec}` + (https ? '; Secure' : '');
   }
-  function sessionCookieHeader(token: string, expMs: number, https: boolean): string {
-    return cookieHeader(COOKIE, token, Math.max(1, Math.floor((expMs - Date.now()) / 1000)), https);
+  // CP_COOKIE_PARENT_DOMAIN: the session cookie goes to u-<id>.<orgDomain> too, so the edge's GET /auth/verify
+  // (src/gate.ts) can see it. Only the session cookie — the OIDC state cookie stays host-only.
+  const sessionDomain = cfg.cookieParentDomain ? cfg.orgDomain : '';
+  function sessionCookieHeaders(token: string, expMs: number, https: boolean): string[] {
+    const out = [cookieHeader(COOKIE, token, Math.max(1, Math.floor((expMs - Date.now()) / 1000)), https, '/', sessionDomain)];
+    // A host-only cookie from before the flag was turned on would shadow the new one on this host only.
+    if (sessionDomain) out.push(cookieHeader(COOKIE, '', 0, https));
+    return out;
   }
-  function clearSessionCookieHeader(https: boolean): string {
-    return cookieHeader(COOKIE, '', 0, https);
+  function clearSessionCookieHeaders(https: boolean): string[] {
+    const out = [cookieHeader(COOKIE, '', 0, https)];
+    if (sessionDomain) out.push(cookieHeader(COOKIE, '', 0, https, '/', sessionDomain));
+    return out;
   }
 
   function principalFromCookieHeader(cookieHeaderStr: string | null): { subject: string; email: string; role: 'admin' | 'user' } | null {
-    const tok = parseCookies(cookieHeaderStr)[COOKIE];
-    if (!tok) return null;
-    const s = store.findSession(tok);
-    if (!s) return null;
-    const u = store.findUserBySubject(s.subject);
-    if (!u) return null;
-    return { subject: u.subject, email: u.email, role: u.role };
+    for (const tok of cookieValues(cookieHeaderStr, COOKIE)) {
+      if (!tok) continue;
+      const s = store.findSession(tok);
+      if (!s) continue;
+      const u = store.findUserBySubject(s.subject);
+      if (!u) continue;
+      return { subject: u.subject, email: u.email, role: u.role };
+    }
+    return null;
   }
 
   const oidcEnabled = () => !!(cfg.oidcIssuer && cfg.oidcClientId);
@@ -83,7 +109,9 @@ export function createAuthService(cfg: Config, store: Store) {
     return oidcConfig;
   }
 
-  async function oidcStart(https: boolean): Promise<{ redirectUrl: string; setCookie: string }> {
+  // `returnTo` must already be validated (gate.ts safeReturnUrl); it rides in the state cookie, so the IdP
+  // never sees it and the callback re-validates it before redirecting.
+  async function oidcStart(https: boolean, returnTo: string | null = null): Promise<{ redirectUrl: string; setCookie: string }> {
     const client = await import('openid-client');
     const config = await discover();
     const code_verifier = client.randomPKCECodeVerifier();
@@ -98,12 +126,12 @@ export function createAuthService(cfg: Config, store: Store) {
       state,
       nonce,
     });
-    const payload = Buffer.from(JSON.stringify({ code_verifier, state, nonce })).toString('base64url');
+    const payload = Buffer.from(JSON.stringify({ code_verifier, state, nonce, ...(returnTo ? { rd: returnTo } : {}) })).toString('base64url');
     return { redirectUrl: url.href, setCookie: cookieHeader(OIDC_COOKIE, payload, 600, https, '/auth') };
   }
 
   type CallbackResult =
-    | { ok: true; subject: string; email: string; role: 'admin' | 'user'; isNewUser: boolean }
+    | { ok: true; subject: string; email: string; role: 'admin' | 'user'; isNewUser: boolean; returnTo: string | null }
     | { ok: false; status: number; error: string };
 
   async function oidcCallback(cookieHeaderStr: string | null, currentUrl: URL): Promise<CallbackResult> {
@@ -150,17 +178,16 @@ export function createAuthService(cfg: Config, store: Store) {
       const role = store.hasAdmin() ? 'user' : 'admin';
       user = store.createUser(subject, email, role);
     }
-    return { ok: true, subject: user.subject, email: user.email, role: user.role, isNewUser };
+    return { ok: true, subject: user.subject, email: user.email, role: user.role, isNewUser, returnTo: typeof st.rd === 'string' ? st.rd : null };
   }
 
-  function login(subject: string, https: boolean): { setCookie: string } {
+  function login(subject: string, https: boolean): { setCookie: string[] } {
     const s = store.createSession(subject, cfg.cookieDays);
-    return { setCookie: sessionCookieHeader(s.token, s.exp, https) };
+    return { setCookie: sessionCookieHeaders(s.token, s.exp, https) };
   }
-  function logout(cookieHeaderStr: string | null, https: boolean): { setCookie: string } {
-    const tok = parseCookies(cookieHeaderStr)[COOKIE];
-    if (tok) store.deleteSession(tok);
-    return { setCookie: clearSessionCookieHeader(https) };
+  function logout(cookieHeaderStr: string | null, https: boolean): { setCookie: string[] } {
+    for (const tok of cookieValues(cookieHeaderStr, COOKIE)) if (tok) store.deleteSession(tok);
+    return { setCookie: clearSessionCookieHeaders(https) };
   }
 
   return { principalFromCookieHeader, oidcEnabled, oidcStart, oidcCallback, login, logout, isHttps };

@@ -25,7 +25,7 @@ export function isOutbound(tool: string, declared: string[] = []): boolean {
 
 export interface OutboundExec {
   /** How the host performs the send once approved. */
-  via: 'whatsapp' | 'ext' | 'composio' | 'mcp';
+  via: 'whatsapp' | 'ext' | 'composio' | 'mcp' | 'call' | 'sms'; // call/sms: stage 4a, server/voice-outbound.ts
   ext?: string;
   /** mcp: the host-held grant (lib/mcp-grants.ts) it runs through. */
   server?: string;
@@ -43,6 +43,11 @@ const pick = (a: Record<string, unknown>, keys: string[]): string | null => {
 
 /** Recipient and text as a person reads them, whatever the tool calls its fields. */
 export function describe(x: OutboundExec): { channel: string; to: string | null; text: string | null; rest: Record<string, unknown> } {
+  if (x.via === 'call' || x.via === 'sms') {
+    const a = x.args as Record<string, string>;
+    const to = a.name ? `${a.name} (${a.to})` : a.to || null;
+    return { channel: x.via === 'call' ? 'phone call' : 'SMS', to, text: (x.via === 'call' ? a.goal : a.text) || null, rest: {} };
+  }
   const channel = x.via === 'whatsapp' ? 'WhatsApp' : x.via === 'composio' ? `Composio · ${x.tool}` : x.via === 'mcp' ? `${x.server} · ${x.tool}` : `${x.ext} · ${x.tool}`;
   const toKeys = ['recipient', 'recipient_email', 'to', 'target', 'channel', 'chat_jid', 'user', 'email', 'phone', 'attendees', 'issueId', 'issue_id', 'pullNumber', 'issue_number'];
   const textKeys = ['message', 'text', 'markdown_text', 'body', 'content', 'comment'];
@@ -55,6 +60,10 @@ export function describe(x: OutboundExec): { channel: string; to: string | null;
 
 /** The card's text: the exact message, nothing paraphrased. */
 export function cardPrompt(x: OutboundExec, why?: string): string {
+  if (x.via === 'call' || x.via === 'sms') {
+    const vo = require('../voice-outbound.js') as typeof import('../voice-outbound.js');
+    return x.via === 'call' ? vo.callCardText(x.args as unknown as import('../voice-outbound.js').CallArgs, why) : vo.smsCardText(x.args as unknown as import('../voice-outbound.js').SmsArgs, why);
+  }
   const d = describe(x);
   const lines = [`Send on ${d.channel}${d.to ? ` to ${d.to}` : ''}?`];
   if (why) lines.push(`Why: ${why}`);

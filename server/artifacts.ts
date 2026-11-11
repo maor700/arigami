@@ -116,11 +116,15 @@ export function publish(sessionId: string, opts: PublishOpts): PublishResult {
   const raw = path.resolve(base, opts.path);
   let src: string;
   try { src = fs.realpathSync(raw); } catch { throw new PublishError(`path not found: ${opts.path}`, 404); }
-  // Never publish out of the host's own state dir (config.json, secrets,
-  // state) — the only legitimate sub-tree there is uploads/.
+  // Only explicit output staging is publishable inside the host state tree.
+  // Compare canonical source paths to lexical boundaries: a staging symlink
+  // into credentials/state must not turn its target into an allowed root.
   const cfgDir = safeReal(cfg.configDir!);
-  if (cfgDir && (src === cfgDir || src.startsWith(cfgDir + path.sep)) && !src.startsWith(path.join(cfgDir, 'uploads') + path.sep))
-    throw new PublishError('refusing to publish from the Arigami state directory', 403);
+  const staging = cfgDir && path.join(cfgDir, 'workspace', 'public-artifacts');
+  if (cfgDir && (src === cfgDir || src.startsWith(cfgDir + path.sep)) &&
+      !src.startsWith(path.join(cfgDir, 'uploads') + path.sep) &&
+      !(staging && (src === staging || src.startsWith(staging + path.sep))))
+    throw new PublishError('refusing to publish from the Arigami state directory; stage reports in workspace/public-artifacts', 403);
   const st = fs.statSync(src);
   const maxBytes = (cfg.artifacts?.maxMb ?? 50) * 1024 * 1024;
 

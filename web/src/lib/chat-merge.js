@@ -128,5 +128,24 @@ export function appendChatEvents(existing, newer) {
     return k && byKey.has(k) ? byKey.get(k) : e;
   });
   const fresh = newer.filter((e) => !known(e, have));
-  return fresh.length ? [...replaced, ...fresh] : replaced;
+  if (!fresh.length) return replaced;
+  // RESUME: a gap filled LATE (a chat that was not open when the link came
+  // back) can land after live rows the socket delivered meanwhile — a fresh row
+  // goes before the first row on screen with a higher seq, not at the end.
+  const out = replaced.slice();
+  let from = 0;
+  for (const e of fresh) {
+    let at = out.length;
+    if (e?.seq > 0) {
+      for (let i = from; i < out.length; i++) {
+        if (out[i]?.seq > e.seq) {
+          at = i;
+          break;
+        }
+      }
+    }
+    out.splice(at, 0, e);
+    from = at + 1;
+  }
+  return out;
 }

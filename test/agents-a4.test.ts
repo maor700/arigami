@@ -1,4 +1,4 @@
-// A4 — bundles ship agents (server/profiles.ts): the shipped marketing-team
+// A4 — bundles ship agents (server/profiles.ts): the marketing-team fixture bundle
 // bundle loads with its six agents and validates clean; validate() rejects a
 // malformed agents/ dir; apply creates the agents under $ARIGAMI_DIR/agents,
 // is idempotent (an existing agent is the user's — untouched unless force),
@@ -10,11 +10,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { runInChild } from './_child.js';
+import { tmpDir } from './_tmp.js';
 
 const pf = await import('../server/profiles.ts');
 const ROOT = path.resolve(import.meta.dir, '..');
-const MT = path.join(ROOT, 'profiles', 'bundles', 'marketing-team');
-const tmp = (p = 'arigami-a4-') => fs.mkdtempSync(path.join(os.tmpdir(), p));
+const MT = path.join(ROOT, 'test', 'fixtures', 'bundles', 'marketing-team');
+const tmp = (p = 'arigami-a4-') => tmpDir(p);
 const SIX = ['awesome', 'fibi', 'jord', 'mila', 'reachard', 'richi'];
 
 function writeAgentBundle(dir: string, agents: Record<string, { record?: unknown; persona?: string; assets?: Record<string, string> }>, manifest: Record<string, unknown> = {}, cron?: unknown) {

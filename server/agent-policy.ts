@@ -57,13 +57,15 @@ export const CRON_BUILTINS = ['CronCreate', 'CronDelete', 'CronList'];
 // AND folded into `desktop` for compatibility (an agent already ticked
 // `desktop` gets browsing for free; a NEW agent can also grant just `browser`
 // without the rest of desktop's tools).
-// browser_logins / request_login / save_login ride with the browser: a login is
+// sign_in (and its internals: browser_logins / request_login / save_login…) rides with the browser: a login is
 // only useful to an agent that can drive one, and each hand-over is still
 // approved by a person on a card.
-const BROWSER_TOOLS = ['browser_open', 'browser_navigate', 'browser_snapshot', 'browser_click', 'browser_type', 'browser_scroll', 'browser_close', 'browser_logins', 'request_login', 'save_login'];
+// VAULT2: the owner's named details (vault_fields / vault_collect / vault_fill) ride with it for the same reason — they
+// are only useful to an agent that drives a page, and every value is approved by a person on a card.
+const BROWSER_TOOLS = ['browser_open', 'browser_navigate', 'browser_snapshot', 'browser_click', 'browser_type', 'browser_scroll', 'browser_close', 'sign_in', 'vault_fields', 'vault_collect', 'vault_fill', 'browser_logins', 'request_login', 'sso_login', 'sso_look', 'sso_click', 'sso_navigate', 'sso_done', 'request_credentials', 'save_login'];
 
 export const FAMILIES: Record<string, string[]> = {
-  desktop: ['open_tab', 'update_tab', 'close_tab', 'activate_tab', 'capture_screen', 'request_screen', 'save_browser_logins', ...BROWSER_TOOLS],
+  desktop: ['open_tab', 'update_tab', 'close_tab', 'activate_tab', 'capture_screen', 'request_screen', 'save_browser_logins', 'shared_desktop_acquire', 'shared_desktop_release', ...BROWSER_TOOLS],
   browser: [...BROWSER_TOOLS],
   whatsapp: ['whatsapp', 'mcp__whatsapp__*', 'mcp__composio-mcp__WHATSAPP_*'],
   gmail: ['mcp__composio-mcp__GMAIL_*'],
@@ -76,6 +78,7 @@ export const FAMILIES: Record<string, string[]> = {
   // A5 (#2): publishing is revocable — it used to be an unrevocable CORE tool, so a
   // "read-only" agent could publish a file and mint a public link.
   publish: ['publish_artifact', 'share_artifact', 'unshare_artifact'],
+  phone: ['call_contact', 'send_sms'], // stage 4a: calls/SMS to others — each still a Send card
 };
 // EXT: an extension contributes its own family, `ext:<name>` → the tool
 // patterns of the MCP server(s) the loader injects for it. FAMILIES is mutated
@@ -339,8 +342,7 @@ export function checkToolCall(p: Policy | null, toolName: string, input: unknown
 }
 
 /** The `--settings` JSON that installs the PreToolUse hook (claude.js). */
-export function hookSettings(hookCmd: string): string {
-  return JSON.stringify({
-    hooks: { PreToolUse: [{ matcher: '', hooks: [{ type: 'command', command: hookCmd, timeout: 20 }] }] },
-  });
+export function hookSettings(hookCmd: string, opts: { post?: boolean } = {}): string {
+  const entry = [{ matcher: '', hooks: [{ type: 'command', command: hookCmd, timeout: 30 }] }];
+  return JSON.stringify({ hooks: { PreToolUse: entry, ...(opts.post ? { PostToolUse: entry } : {}) } });
 }

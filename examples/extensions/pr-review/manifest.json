@@ -36,11 +36,42 @@
         "title": "Review agent",
         "description": "Slug of the agent a review session is born from (list_agents). Empty = a plain session. The agent is what makes this mode thin: it already carries the persona, the skills and the model."
       },
+      "engine": {
+        "type": "string",
+        "default": "claude",
+        "title": "Default engine",
+        "description": "claude or codex — what the launcher's Session options panel starts on for this mode (changeable per launch)."
+      },
+      "model": {
+        "type": "string",
+        "default": "",
+        "title": "Default model",
+        "description": "Model for that engine (e.g. a claude alias, or gpt-5.6-terra for codex). Empty = the engine's default."
+      },
+      "effort": {
+        "type": "string",
+        "default": "",
+        "title": "Default reasoning effort",
+        "description": "low | medium | high | xhigh | max (codex also: ultra). Empty = the model's default."
+      },
+      "folderName": {
+        "type": "string",
+        "default": "",
+        "title": "Default project folder",
+        "description": "Folder the launcher's Session options panel starts on for this mode (changeable per launch). Empty = no folder."
+      },
       "reviewMode": {
         "type": "string",
         "default": "worktree",
         "title": "Default checkout",
         "description": "worktree = check the PR out and review the code on disk. nocheckout = review from the diff alone, touching nothing."
+      },
+      "promptTemplate": {
+        "type": "string",
+        "multiline": true,
+        "default": "",
+        "title": "First-message template",
+        "description": "The first message of a review session. Placeholders: {{prUrl}} (the pull request URL) and {{checkout}} (a line saying whether the branch is checked out). Empty = the built-in prompt. You can still edit the message per review in the From PR tab."
       },
       "repos": {
         "type": "string",

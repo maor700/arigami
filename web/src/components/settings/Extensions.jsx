@@ -19,6 +19,8 @@ import { Icon } from '../../lib/icons.js';
 import { toast, toastError } from '../../lib/toast.js';
 import { confirmDialog } from '../../lib/confirm.js';
 import { settingsFields, fieldValue, coerceSettings } from '../../lib/ext.js';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '../ui/dialog.jsx';
+import { Checkbox } from '../ui/checkbox.jsx';
 import { faPuzzlePiece, faRotateRight } from '@fortawesome/free-solid-svg-icons';
 import {
   Section, SettingCard, StatusPill, Toggle, ErrorLine,
@@ -37,15 +39,15 @@ export function permissionLabel(t, perm) {
 function PermissionList({ permissions }) {
   const t = useT();
   const list = (permissions || []).filter((p) => typeof p === 'string');
-  if (!list.length) return <div className="text-[11px] text-fgdim">{t('ext.permissions.none')}</div>;
+  if (!list.length) return <div className="text-xs text-fgdim">{t('ext.permissions.none')}</div>;
   return (
     <ul className="mt-1 flex flex-col gap-1">
       {list.map((p) => (
-        <li key={p} className="flex items-start gap-2 text-[11.5px] text-fg">
+        <li key={p} className="flex items-start gap-2 text-xs text-fg">
           <span className="mt-[5px] h-1 w-1 shrink-0 rounded-full bg-fgdim" />
           <span className="min-w-0">
             {permissionLabel(t, p)}
-            <code dir="ltr" className="ms-1.5 font-mono text-[11.5px] md:text-[10px] text-fgdim">{p}</code>
+            <code dir="ltr" className="ms-1.5 font-mono text-xs text-fgdim">{p}</code>
           </span>
         </li>
       ))}
@@ -63,8 +65,8 @@ function PermissionList({ permissions }) {
 function TrustNotice({ children }) {
   const t = useT();
   return (
-    <div className="mt-2 rounded-lg border-[1.5px] border-ink bg-chip px-3 py-2 text-[11.5px] leading-relaxed text-fg">
-      <div className="font-bold">⚠ {t('ext.trust.title')}</div>
+    <div className="mt-2 rounded-lg border border-hair bg-muted px-3 py-2 text-xs leading-relaxed text-fg">
+      <div className="font-medium">⚠ {t('ext.trust.title')}</div>
       <div className="mt-0.5 text-fgdim">{t('ext.trust.body')}</div>
       {children}
     </div>
@@ -75,31 +77,26 @@ function TrustNotice({ children }) {
 
 // Deliberately a modal, not an inline panel: an install is a decision with
 // consequences outside this page, and it should interrupt.
-function InstallDialog({ manifest, permissions, errors = [], mode, busy, onConfirm, onCancel }) {
+function InstallDialog({ manifest, permissions, errors = [], dependencies = null, mode, busy, onConfirm, onCancel }) {
   const t = useT();
   const name = manifest?.title || manifest?.name || '';
   const review = mode === 'review';
   const wantsTrust = manifest?.trusted === true;
   const [trust, setTrust] = useState(false);
+  // A third decision: `bun install` of the extension's package.json pulls code
+  // from a registry that nobody here has read. Off until ticked, like trust.
+  const depNames = Object.keys(dependencies || {});
+  const [installDeps, setInstallDeps] = useState(false);
   return (
-    <div
-      className="fixed inset-0 z-[86] flex items-center justify-center bg-[rgba(20,20,22,0.5)] p-5"
-      role="dialog"
-      aria-modal="true"
-      aria-label={name}
-      onClick={busy ? undefined : onCancel}
-    >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        className="max-h-[85vh] w-[440px] max-w-full overflow-y-auto rounded-xl border-2 border-ink bg-panel text-fg shadow-[5px_6px_0_rgba(42,42,42,0.25)] thin-scroll"
-      >
-        <div className="px-[18px] pt-4 pb-1 text-[14px] font-bold">
-          {t(review ? 'ext.review.title' : 'ext.confirm.title', { name })}
-        </div>
+    <Dialog open onOpenChange={(o) => { if (!o && !busy) onCancel(); }}>
+      <DialogContent aria-label={name} aria-describedby={undefined} className="max-w-[440px] gap-0 p-0" onInteractOutside={busy ? (e) => e.preventDefault() : undefined} onEscapeKeyDown={busy ? (e) => e.preventDefault() : undefined}>
+        <DialogHeader className="px-[18px] pt-4 pb-1">
+          <DialogTitle>{t(review ? 'ext.review.title' : 'ext.confirm.title', { name })}</DialogTitle>
+        </DialogHeader>
         {manifest?.description && (
-          <div className="px-[18px] pb-2 text-[11.5px] leading-relaxed text-fgdim">{manifest.description}</div>
+          <div className="px-[18px] pb-2 text-xs leading-relaxed text-fgdim">{manifest.description}</div>
         )}
-        <div className="px-[18px] pb-1 text-[11.5px] leading-relaxed text-fgdim">
+        <div className="px-[18px] pb-1 text-xs leading-relaxed text-fgdim">
           {t(review ? 'ext.review.intro' : 'ext.confirm.intro')}
         </div>
         <div className="px-[18px] pb-3">
@@ -107,15 +104,26 @@ function InstallDialog({ manifest, permissions, errors = [], mode, busy, onConfi
           {wantsTrust && !review && (
             <TrustNotice>
               <label className="mt-2 flex cursor-pointer items-start gap-2">
-                <input type="checkbox" checked={trust} onChange={(e) => setTrust(e.target.checked)} className="mt-[3px]" />
-                <span className="min-w-0 font-bold">{t('ext.trust.grant')}</span>
+                <Checkbox checked={trust} onCheckedChange={(v) => setTrust(v === true)} className="mt-0.5" />
+                <span className="min-w-0 font-medium">{t('ext.trust.grant')}</span>
               </label>
             </TrustNotice>
           )}
           {wantsTrust && review && <TrustNotice>{null}</TrustNotice>}
+          {depNames.length > 0 && !review && (
+            <div className="mt-2 rounded-lg border border-hair bg-muted/50 px-3 py-2 text-xs leading-relaxed text-fg">
+              <div className="font-medium">{t('ext.deps.title', { n: depNames.length })}</div>
+              <div className="mt-0.5 font-mono text-xs text-fgdim" dir="ltr">{depNames.join(', ')}</div>
+              <div className="mt-0.5 text-fgdim">{t('ext.deps.body')}</div>
+              <label className="mt-2 flex cursor-pointer items-start gap-2">
+                <Checkbox checked={installDeps} onCheckedChange={(v) => setInstallDeps(v === true)} className="mt-0.5" />
+                <span className="min-w-0 font-medium">{t('ext.deps.grant')}</span>
+              </label>
+            </div>
+          )}
           {errors.length > 0 && (
             <ErrorLine>
-              <div className="font-bold">{t('ext.confirm.errors')}</div>
+              <div className="font-medium">{t('ext.confirm.errors')}</div>
               <ul className="mt-1 list-disc list-inside">
                 {errors.slice(0, 6).map((e, i) => <li key={i}>{e}</li>)}
               </ul>
@@ -132,14 +140,14 @@ function InstallDialog({ manifest, permissions, errors = [], mode, busy, onConfi
           ) : (
             <>
               <button type="button" disabled={busy} onClick={onCancel} className={BTN_SM}>{t('ext.confirm.cancel')}</button>
-              <button type="button" disabled={busy} onClick={() => onConfirm('install', { trust })} className={BTN_PRIMARY}>
+              <button type="button" disabled={busy} onClick={() => onConfirm('install', { trust, installDeps })} className={BTN_PRIMARY}>
                 {busy ? t('ext.add.installing') : wantsTrust && trust ? t('ext.confirm.installTrusted') : t('ext.confirm.install')}
               </button>
             </>
           )}
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -152,7 +160,7 @@ function AddExtension({ onDone }) {
   const [source, setSource] = useState('');
   const [phase, setPhase] = useState(''); // '' | 'checking' | 'installing'
   const [error, setError] = useState(null);
-  const [pending, setPending] = useState(null); // {manifest, permissions, errors, mode, name}
+  const [pending, setPending] = useState(null); // {manifest, permissions, errors, dependencies, mode, name}
 
   const busy = phase !== '';
 
@@ -179,6 +187,7 @@ function AddExtension({ onDone }) {
         manifest: v?.manifest || { name: src },
         permissions: v?.manifest?.permissions || [],
         errors: v?.errors || [],
+        dependencies: v?.dependencies || null,
         mode: 'install',
       });
     } catch (e) {
@@ -192,18 +201,20 @@ function AddExtension({ onDone }) {
   // 'review' (git: show the permissions once they exist). `trust` is only ever
   // true on the confirmed path — a git clone's manifest is unread at this point,
   // so the trusted tier there is granted afterwards, from the extension's card.
-  const install = async (src, after, trust = false) => {
+  const install = async (src, after, trust = false, installDeps = false) => {
     setPhase('installing');
     setError(null);
     try {
-      const r = await api.post('/extensions/add', { source: src, trust });
+      const r = await api.post('/extensions/add', { source: src, trust, installDeps });
       setSource('');
       await loadExtensions();
       if (after === 'review') {
         setPending({ manifest: r?.manifest || { name: r?.name }, permissions: r?.permissions || [], errors: r?.errors || [], mode: 'review', name: r?.name });
       } else {
         setPending(null);
-        toast(t('ext.added', { name: r?.name || '' }));
+        // Installed — but a failed dependency install is worth saying out loud.
+        if (r?.deps && !r.deps.ok && r.deps.status !== 'not-allowed') toastError(new Error(r.deps.error));
+        else toast(t('ext.added', { name: r?.name || '' }));
         onDone?.();
       }
     } catch (e) {
@@ -244,6 +255,7 @@ function AddExtension({ onDone }) {
           onChange={(e) => setSource(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && check()}
           placeholder={t('ext.add.placeholder')}
+          aria-label={t('ext.add.placeholder')}
           className={`${INPUT} min-w-0 flex-1`}
         />
         <button type="button" disabled={busy || !source.trim()} onClick={check} className={BTN}>
@@ -256,9 +268,10 @@ function AddExtension({ onDone }) {
           manifest={pending.manifest}
           permissions={pending.permissions}
           errors={pending.errors}
+          dependencies={pending.dependencies}
           mode={pending.mode}
           busy={busy}
-          onConfirm={(choice, opts) => (pending.mode === 'review' ? decide(choice) : install(source.trim(), 'install', opts?.trust === true))}
+          onConfirm={(choice, opts) => (pending.mode === 'review' ? decide(choice) : install(source.trim(), 'install', opts?.trust === true, opts?.installDeps === true))}
           onCancel={() => setPending(null)}
         />
       )}
@@ -297,21 +310,28 @@ function SettingsForm({ ext }) {
 
   return (
     <div className="mt-2 border-t border-hair pt-2">
-      <div className="mb-1 font-mono text-[11px] md:text-[9.5px] tracking-[0.08em] text-fgdim uppercase">{t('ext.settings')}</div>
+      <div className="mb-1 text-xs font-medium text-fgdim">{t('ext.settings')}</div>
       {fields.map((f) => (
-        <div key={f.key} className="flex items-center gap-3 border-b border-hair py-2 last:border-b-0">
+        <div key={f.key} className={`flex gap-3 border-b border-hair py-2 last:border-b-0 ${f.multiline ? 'flex-col' : 'items-center'}`}>
           <div className="min-w-0 flex-1">
-            <div className="text-[11.5px] font-bold text-fg">{f.title}</div>
-            {f.description && <div className="mt-0.5 text-[11.5px] md:text-[10.5px] text-fgdim">{f.description}</div>}
-            {f.fallback !== undefined && f.type !== 'boolean' && (
-              <div className="mt-0.5 font-mono text-[11px] md:text-[9.5px] text-fgdim" dir="ltr">
+            <div className="text-xs font-medium text-fg">{f.title}</div>
+            {f.description && <div className="mt-0.5 text-xs text-fgdim">{f.description}</div>}
+            {f.fallback !== undefined && f.type !== 'boolean' && !f.multiline && (
+              <div className="mt-0.5 font-mono text-xs text-fgdim" dir="ltr">
                 {t('ext.settings.default', { v: String(f.fallback) })}
               </div>
             )}
           </div>
-          <div className="shrink-0">
+          <div className={f.multiline ? 'w-full' : 'shrink-0'}>
             {f.type === 'boolean' ? (
               <Toggle on={form[f.key] === true} onChange={(v) => setForm((s) => ({ ...s, [f.key]: v }))} />
+            ) : f.multiline ? (
+              <textarea
+                value={form[f.key] ?? ''}
+                rows={8}
+                onChange={(e) => setForm((s) => ({ ...s, [f.key]: e.target.value }))}
+                className={`${INPUT} w-full resize-y font-mono`}
+              />
             ) : (
               <input
                 value={form[f.key] ?? ''}
@@ -343,7 +363,9 @@ export function ExtensionCard({ ext }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
 
-  const status = ext.state === 'loaded' ? 'ok' : ext.state === 'error' ? 'error' : 'off';
+  const depsMissing = ext.deps?.state === 'missing' || ext.deps?.state === 'installing';
+  const status = ext.state === 'loaded' ? (depsMissing ? 'todo' : 'ok') : ext.state === 'error' ? 'error' : 'off';
+  const pillLabel = ext.state === 'loaded' && depsMissing ? t('ext.state.depsMissing') : t(`ext.state.${ext.state}`);
   const contributions = CONTRIB_KEYS
     .filter((k) => (ext.contributions?.[k] || 0) > 0)
     .map((k) => t(`ext.c.${k}`, { n: ext.contributions[k] }));
@@ -385,6 +407,28 @@ export function ExtensionCard({ ext }) {
     }
   };
 
+  // Allow + run `bun install` for this extension (also the retry after an offline failure).
+  const installDeps = async () => {
+    const ok = await confirmDialog({
+      title: t('ext.deps.confirm.title', { name: ext.title || ext.name }),
+      body: t('ext.deps.confirm.body', { list: (ext.deps?.missing || []).join(', ') }),
+      confirmLabel: t('ext.deps.confirm.go'),
+    });
+    if (!ok) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await api.patch(`/extensions/${ext.name}`, { installDeps: true });
+      await loadExtensions();
+      if (r?.deps && !r.deps.ok) setError(new Error(r.deps.error));
+      else toast(t('ext.deps.installed', { name: ext.title || ext.name }));
+    } catch (e) {
+      setError(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const remove = async () => {
     const ok = await confirmDialog({
       title: t('ext.remove.title', { name: ext.title || ext.name }),
@@ -409,7 +453,7 @@ export function ExtensionCard({ ext }) {
     <SettingCard
       title={ext.title || ext.name}
       hint={ext.description || undefined}
-      pill={<StatusPill status={status} label={t(`ext.state.${ext.state}`)} />}
+      pill={<StatusPill status={status} label={pillLabel} />}
       actions={
         <>
           <button type="button" disabled={busy} onClick={remove} className={BTN_DANGER}>{t('ext.remove')}</button>
@@ -418,20 +462,20 @@ export function ExtensionCard({ ext }) {
       }
       tone={ext.state === 'error' ? 'danger' : 'default'}
     >
-      <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 font-mono text-[11px] md:text-[9.5px] text-fgdim" dir="ltr">
+      <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 font-mono text-xs text-fgdim" dir="ltr">
         <span>{ext.name}</span>
         {ext.version && <span>· {t('ext.version', { v: ext.version })}</span>}
         {ext.apiVersion != null && <span>· {t('ext.apiVersion', { n: ext.apiVersion })}</span>}
         {ext.sha && <span>· {t('ext.sha', { sha: String(ext.sha).slice(0, 7) })}</span>}
       </div>
 
-      <div className="mt-1.5 text-[11px] text-fgdim">
-        <span className="font-bold">{t('ext.contributions')}: </span>
+      <div className="mt-1.5 text-xs text-fgdim">
+        <span className="font-medium">{t('ext.contributions')}: </span>
         {contributions.length ? contributions.join(' · ') : t('ext.c.none')}
       </div>
 
       <div className="mt-1.5">
-        <div className="text-[11px] font-bold text-fgdim">{t('ext.permissions')}</div>
+        <div className="text-xs font-medium text-fgdim">{t('ext.permissions')}</div>
         <PermissionList permissions={ext.permissions} />
       </div>
 
@@ -439,10 +483,10 @@ export function ExtensionCard({ ext }) {
           sandboxed extension that never asked says nothing. */}
       {(ext.trusted || ext.trustRequested) && (
         <div className="mt-2 flex flex-wrap items-center gap-2">
-          <span className={`rounded-full border-[1.5px] border-ink px-2 py-0.5 text-[11.5px] md:text-[10.5px] ${ext.trusted ? 'bg-chip text-fg' : 'bg-panel text-fgdim'}`}>
+          <span className={`rounded-full border-[1.5px] border-ink px-2 py-0.5 text-xs ${ext.trusted ? 'bg-chip text-fg' : 'bg-panel text-fgdim'}`}>
             {t(ext.trusted ? 'ext.tier.trusted' : 'ext.tier.sandboxed')}
           </span>
-          <span className="min-w-0 flex-1 text-[11.5px] md:text-[10.5px] text-fgdim">
+          <span className="min-w-0 flex-1 text-xs text-fgdim">
             {t(ext.trusted ? 'ext.tier.trusted.hint' : 'ext.tier.asked.hint')}
           </span>
           <button type="button" disabled={busy} onClick={() => setTrust(!ext.trusted)} className={ext.trusted ? BTN_SM : BTN_DANGER}>
@@ -451,10 +495,24 @@ export function ExtensionCard({ ext }) {
         </div>
       )}
 
+      {ext.deps?.needed && (
+        <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-fgdim">
+          <span className="font-medium">{t('ext.deps.label')}:</span>
+          <span>
+            {t(`ext.deps.state.${ext.deps.state}`)}
+            {ext.deps.lockfile ? ` · ${ext.deps.lockfile}` : ` · ${t('ext.deps.unpinned')}`}
+          </span>
+          {ext.deps.state === 'missing' && (
+            <button type="button" disabled={busy} onClick={installDeps} className={`${BTN_SM} ms-auto`}>
+              {t(ext.deps.allowed ? 'ext.deps.retry' : 'ext.deps.install')}
+            </button>
+          )}
+        </div>
+      )}
       {ext.error && <ErrorLine>{ext.error}</ErrorLine>}
       {(ext.warnings || []).length > 0 && (
-        <div className="mt-2 rounded-lg border border-hair bg-chip/50 px-3 py-2 text-[11.5px] md:text-[10.5px] text-fgdim">
-          <div className="font-bold">{t('ext.warnings')}</div>
+        <div className="mt-2 rounded-lg border border-hair bg-chip/50 px-3 py-2 text-xs text-fgdim">
+          <div className="font-medium">{t('ext.warnings')}</div>
           <ul className="mt-0.5 list-inside list-disc">
             {ext.warnings.map((w, i) => <li key={i}>{w}</li>)}
           </ul>
@@ -490,7 +548,7 @@ export default function ExtensionsPage() {
   return (
     <>
       <Section id="extensions" title={t('ext.title')} onRefresh={loadExtensions} first>
-        <p className="mb-2 text-[11px] leading-snug text-fgdim">
+        <p className="mb-2 text-xs leading-snug text-fgdim">
           {t('ext.sub')} · {t('ext.apiVersion', { n: extApiVersion })}
         </p>
         <div className="mb-3 flex justify-end">
@@ -501,7 +559,7 @@ export default function ExtensionsPage() {
         {extensions.length === 0 ? (
           <div className="flex flex-col items-center gap-1 py-6 text-center">
             <span className="text-[18px] text-fgdim"><Icon icon={faPuzzlePiece} /></span>
-            <div className="text-[12px] text-fgdim">{t('ext.empty')}</div>
+            <div className="text-sm text-fgdim">{t('ext.empty')}</div>
           </div>
         ) : (
           extensions.map((e) => <ExtensionCard key={e.name} ext={e} />)

@@ -88,6 +88,8 @@ spec:
               value: {{ .Values.config.allowedEmailDomains | quote }}
             - name: CP_ORG_DOMAIN
               value: {{ required "config.orgDomain is required — tenants are addressed at u-<id>.<orgDomain>" .Values.config.orgDomain | quote }}
+            - name: CP_COOKIE_PARENT_DOMAIN
+              value: {{ .Values.config.cookieParentDomain | default "0" | quote }}
             - name: CP_ORG_NAME
               value: {{ .Values.config.orgName | quote }}
             - name: CP_URL_SCHEME
@@ -98,6 +100,10 @@ spec:
               value: {{ .Values.config.tenantImageTag | quote }}
             - name: CP_ARIGAMI_BUNDLE
               value: {{ .Values.config.arigamiBundle | quote }}
+            - name: CP_ARIGAMI_BUNDLE_REF
+              value: {{ .Values.config.arigamiBundleRef | default "" | quote }}
+            - name: CP_PROFILE_ROLLOUT
+              value: {{ .Values.config.profileRollout | default "1" | quote }}
             - name: CP_INGRESS_CLASS
               value: {{ .Values.config.tenantIngressClass | quote }}
             - name: CP_INGRESS_NAMESPACES
@@ -116,6 +122,20 @@ spec:
               value: {{ .Values.config.backupKeep | quote }}
             - name: CP_COOKIE_DAYS
               value: {{ .Values.config.cookieDays | quote }}
+            - name: CP_PERSONAL_WORKSPACES
+              value: {{ .Values.config.personalWorkspaces | default "auto" | quote }}
+            {{- if .Values.tenantValues }}
+            # Extra Helm values layered on every tenant install (ingress TLS/annotations, resources, …).
+            - name: CP_HELM_EXTRA_VALUES
+              value: /etc/arigami/tenant-values/values.yaml
+            {{- end }}
+            {{- if .Values.tiers }}
+            # Hardware tiers: name -> tenant chart values overlay (control-plane/src/tier.ts).
+            - name: CP_TIERS
+              value: /etc/arigami/tiers/tiers.json
+            - name: CP_DEFAULT_TIER
+              value: {{ .Values.defaultTier | quote }}
+            {{- end }}
             {{- range .Values.extraEnv }}
             - name: {{ .name }}
               value: {{ .value | quote }}
@@ -128,6 +148,19 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data
+            {{- if .Values.tenantValues }}
+            - name: tenant-values
+              mountPath: /etc/arigami/tenant-values
+              readOnly: true
+            {{- end }}
+            {{- if .Values.tiers }}
+            - name: tiers
+              mountPath: /etc/arigami/tiers
+              readOnly: true
+            {{- end }}
+            {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           startupProbe:
@@ -150,10 +183,25 @@ spec:
             periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
             timeoutSeconds: {{ .Values.probes.readiness.timeoutSeconds }}
             failureThreshold: {{ .Values.probes.readiness.failureThreshold }}
-      {{- if not .Values.persistence.enabled }}
+      {{- if or (not .Values.persistence.enabled) .Values.tenantValues .Values.tiers .Values.extraVolumes }}
       volumes:
+        {{- if not .Values.persistence.enabled }}
         - name: data
           emptyDir: {}
+        {{- end }}
+        {{- if .Values.tenantValues }}
+        - name: tenant-values
+          configMap:
+            name: {{ include "arigami-control-plane.fullname" . }}-tenant-values
+        {{- end }}
+        {{- if .Values.tiers }}
+        - name: tiers
+          configMap:
+            name: {{ include "arigami-control-plane.fullname" . }}-tiers
+        {{- end }}
+        {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
       {{- end }}
   {{- if .Values.persistence.enabled }}
   volumeClaimTemplates:

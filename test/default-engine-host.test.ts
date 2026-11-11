@@ -7,6 +7,7 @@ import net from 'node:net';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { hostDiag } from './_host-diag.js';
+import { tmpDir } from './_tmp.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -49,7 +50,7 @@ async function until<T>(fn: () => Promise<T | null | undefined | false>, ms = 80
 const session = async (id: string) => (await api('GET', `/__api/sessions/${id}`)).json;
 
 beforeAll(async () => {
-  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-default-engine-host-'));
+  dir = tmpDir('arigami-default-engine-host-');
   const port = await freePort();
   base = `http://127.0.0.1:${port}`;
   const home = path.join(dir, 'home');
@@ -116,6 +117,17 @@ test('config: POST /__api/config/default-engine sets it, GET /__api/config shows
   expect(r.json.defaultEngine).toBe('codex');
   expect((await api('GET', '/__api/config')).json.defaultEngine).toBe('codex');
   expect(JSON.parse(fs.readFileSync(path.join(dir, 'config.json'), 'utf8')).defaultEngine).toBe('codex');
+});
+
+test('config: POST /__api/config/notify sets the owner WhatsApp target, rejects junk, empty clears', async () => {
+  const bad = await api('POST', '/__api/config/notify', { whatsappJid: 'not a jid' });
+  expect(bad.status).toBe(400);
+  const r = await api('POST', '/__api/config/notify', { whatsappJid: ' 972500000000@s.whatsapp.net ' });
+  expect(r.json.notify.whatsappJid).toBe('972500000000@s.whatsapp.net');
+  expect((await api('GET', '/__api/config')).json.notify.whatsappJid).toBe('972500000000@s.whatsapp.net');
+  expect(JSON.parse(fs.readFileSync(path.join(dir, 'config.json'), 'utf8')).notify.whatsappJid).toBe('972500000000@s.whatsapp.net');
+  expect((await api('POST', '/__api/config/notify', { whatsappJid: '' })).json.notify.whatsappJid).toBe('');
+  expect((await api('GET', '/__api/whatsapp/status')).json).toHaveProperty('ownJids'); // null here: nothing is paired
 });
 
 test('create_session: no engine → the default; explicit claude wins; an agent\'s engine beats the default', async () => {

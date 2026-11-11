@@ -45,6 +45,9 @@ export default function QrStep({ capability = 'whatsapp', onDone, initial = null
   // while the bare bridge answers {status:'qr'|…}. Read the bridge state from
   // whichever shape arrived — otherwise a live QR never reaches the <img>.
   const state = typeof st?.status === 'string' ? st.status : st?.status?.data?.status;
+  const reason = st?.reason || st?.status?.data?.reason;
+  const failure = state === 'disconnected' && reason
+    ? t(reason === 'not-installed' ? 'setup.qr.missing' : 'setup.qr.failed', { reason }) : null;
   const user = st?.user ?? st?.status?.data?.user;
 
   if (state === 'connected') return <OkLine>{t('setup.qr.connected', { user: user || '…' })}</OkLine>;
@@ -52,15 +55,15 @@ export default function QrStep({ capability = 'whatsapp', onDone, initial = null
     <div className="flex flex-col items-start gap-2">
       {state === 'qr' && qr ? (
         <>
-          <img src={qr} alt="WhatsApp QR" className="h-[200px] w-[200px] rounded-[8px] border border-hair bg-white" />
-          <div className="text-[11px] text-fgdim">{t('setup.qr.scanHint')}</div>
+          <img src={qr} alt="WhatsApp QR" className="size-[200px] rounded-md border border-hair bg-white" />
+          <div className="text-xs text-fgdim">{t('setup.qr.scanHint')}</div>
         </>
       ) : active ? (
         <Spinner>{t('setup.qr.starting')}</Spinner>
       ) : (
         <button type="button" className={BTN2} disabled={busy} onClick={connect}>{t('setup.qr.connect')}</button>
       )}
-      <ErrorBox err={err} />
+      <ErrorBox err={err || failure} />
     </div>
   );
 }

@@ -1,0 +1,12 @@
+# Helm values layered on EVERY tenant by the control plane (CP_HELM_EXTRA_VALUES, or the control-plane chart's
+# `tenantValues`) when TLS is terminated by something in front of the pods (edge.yaml's Caddy).
+ingress:
+  enabled: false # edge.yaml routes straight to the tenant Service
+  tls:
+    enabled: true # no Ingress is rendered, but this makes ARIGAMI_PUBLIC_URL https:// — an http:// origin is refused by
+                  # OAuth providers (Linear: "plaintext HTTP is allowed only for loopback addresses")
+resources:
+  requests: {cpu: 200m, memory: 1Gi}
+  limits: {cpu: "4", memory: 6Gi}
+persistence:
+  size: 10Gi

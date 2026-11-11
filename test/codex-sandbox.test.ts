@@ -4,8 +4,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { probeCodexSandbox, readCodexSandbox, failureDetail } from '../server/lib/codex-sandbox.ts';
+import { tmpDir, tmpPath } from './_tmp.js';
 
-const tmpFile = () => path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'codex-sandbox-probe-')), 'codex-sandbox.json');
+const tmpFile = () => path.join(tmpDir('codex-sandbox-probe-'), 'codex-sandbox.json');
 const now = new Date('2026-09-15T10:00:00.000Z');
 
 test('bwrap failure → unavailable with the bwrap line, cached, logged as keeping bypass', async () => {
@@ -34,7 +35,7 @@ test('codex missing / runner throws → null or unavailable, never a crash', asy
   expect(a).toMatchObject({ available: null, detail: 'codex not installed' });
   const b = await probeCodexSandbox({ file: tmpFile(), now, log: () => {}, run: async () => { throw new Error('boom'); } });
   expect(b).toMatchObject({ available: false, detail: 'boom' });
-  expect(readCodexSandbox(path.join(os.tmpdir(), 'nope-codex-sandbox', 'x.json'))).toBeNull();
+  expect(readCodexSandbox(tmpPath('nope-codex-sandbox', 'x.json'))).toBeNull();
 });
 
 test('failureDetail picks the sandbox line, else the last line, capped at 160', () => {

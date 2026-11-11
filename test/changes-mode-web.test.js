@@ -22,6 +22,12 @@ test('defaultChangesMode: "work" only for a session with both metadata.base and 
   expect(defaultChangesMode(null)).toBe('uncommitted');
 });
 
+test('defaultChangesMode: a session created from a PR opens on "pr" (wins over work)', () => {
+  expect(defaultChangesMode({ metadata: { pr: 'https://github.com/o/r/pull/7', prNumber: 7 } })).toBe('pr');
+  expect(defaultChangesMode({ metadata: { prNumber: 7, base: 'master', worktree: '/x' } })).toBe('pr');
+  expect(defaultChangesMode({ metadata: { pr: 'https://github.com/o/r/pull/7' } })).toBe('pr');
+});
+
 // ---- explanationSwitchOffer: never auto-switches ----------------------------
 
 const at = (iso, mode) => ({ generatedAt: iso, mode });
@@ -66,4 +72,44 @@ test('newestExplanation picks the latest generatedAt across modes, or null when 
   expect(newestExplanation({})).toBeNull();
   const explanations = { uncommitted: at('2026-08-31T09:00:00Z', 'uncommitted'), pr: at('2026-08-31T11:00:00Z', 'pr') };
   expect(newestExplanation(explanations)).toEqual({ generatedAt: '2026-08-31T11:00:00Z', mode: 'pr' });
+});
+
+// ---- base picker ------------------------------------------------------------
+
+const { changesQuery, loadDefaultBase, saveDefaultBase } = await import(path.join(ROOT, 'web/src/lib/changesMode.js'));
+
+test('changesQuery adds base only for pr/work, never for uncommitted', () => {
+  expect(changesQuery('pr', '')).toBe('mode=pr');
+  expect(changesQuery('pr', 'origin/main')).toBe('mode=pr&base=origin%2Fmain');
+  expect(changesQuery('work', 'release/1.0')).toBe('mode=work&base=release%2F1.0');
+  expect(changesQuery('uncommitted', 'origin/main')).toBe('mode=uncommitted');
+});
+
+test('default base round-trips through storage; empty clears it', () => {
+  const mem = new Map();
+  const storage = { getItem: (k) => mem.get(k) ?? null, setItem: (k, v) => mem.set(k, v), removeItem: (k) => mem.delete(k) };
+  expect(loadDefaultBase(storage, 'one')).toBe('');
+  saveDefaultBase('origin/develop', storage, 'one');
+  expect(loadDefaultBase(storage, 'one')).toBe('origin/develop');
+  saveDefaultBase('', storage, 'one');
+  expect(loadDefaultBase(storage, 'one')).toBe('');
+});
+
+const { filterBaseRefs } = await import(path.join(ROOT, 'web/src/lib/changesMode.js'));
+
+test('filterBaseRefs: case-insensitive substring match; empty query returns everything', () => {
+  const refs = ['origin/main', 'origin/Release/1.0', 'feat/picker'];
+  expect(filterBaseRefs(refs, '')).toEqual(refs);
+  expect(filterBaseRefs(refs, '  REL ')).toEqual(['origin/Release/1.0']);
+  expect(filterBaseRefs(refs, 'zzz')).toEqual([]);
+  expect(filterBaseRefs(undefined, 'a')).toEqual([]);
+});
+
+test('saved base never leaks across sessions or from the legacy global preference', () => {
+  const mem = new Map([['arigami-changes-base', 'origin/stale']]);
+  const storage = { getItem: k => mem.get(k), setItem: (k, v) => mem.set(k, v) };
+  expect(loadDefaultBase(storage, 'one')).toBe('');
+  saveDefaultBase('release', storage, 'one');
+  expect(loadDefaultBase(storage, 'one')).toBe('release');
+  expect(loadDefaultBase(storage, 'two')).toBe('');
 });

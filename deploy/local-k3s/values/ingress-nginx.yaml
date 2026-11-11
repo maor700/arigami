@@ -1,0 +1,28 @@
+# ingress-nginx for a local cluster: NodePort instead of a cloud LoadBalancer, nothing else exotic.
+# Cloud equivalent: `controller.service.type: LoadBalancer` + `loadBalancerIP: <static IP>` (README checklist).
+controller:
+  ingressClassResource:
+    name: nginx
+    default: false # tenants and the control plane name the class explicitly
+  ingressClass: nginx
+  service:
+    type: NodePort # no cloud LB here; reached with `kubectl port-forward` on 127.0.0.1 (up.sh prints it)
+    nodePorts:
+      http: 30080
+      https: 30443
+  # The tenant gate strips the control plane's session cookie before a request reaches a cockpit
+  # (`configuration-snippet` in control-plane.yaml's tenantValues) — the only snippet in the stack. Snippets are off by
+  # default since controller 1.9 and rated "Critical" since 1.12, so both switches are needed. Only the control plane
+  # creates Ingresses in this cluster (tenant pods get no ServiceAccount token), which is what makes this acceptable.
+  allowSnippetAnnotations: true
+  config:
+    annotations-risk-level: Critical
+    # The cockpit's websockets (/__ws, the desktop's VNC bridge) and a slow agent turn need long-lived connections.
+    proxy-read-timeout: "3600"
+    proxy-send-timeout: "3600"
+    proxy-body-size: 64m
+  resources:
+    requests: {cpu: 100m, memory: 128Mi}
+    limits: {memory: 512Mi}
+  admissionWebhooks:
+    enabled: true

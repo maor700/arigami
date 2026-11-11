@@ -1,0 +1,41 @@
+#!/bin/bash
+# arigami-healthcheck — restart the host when it is alive but no longer answering.
+#
+# systemd's Restart=always only acts when the process dies. A host whose HTTP
+# server stops accepting connections while the process stays up (seen once: the
+# listen queue full, the event loop idle, nothing in the log) is never noticed.
+# This runs every minute from arigami-healthcheck.timer: three failed checks of
+# /__health in a row (10 s each, so ~3 minutes) restart the unit.
+#
+# It never acts on a unit that is stopped on purpose, nor within the unit's
+# first 3 minutes after a start (a slow boot is not a hang).
+#
+# Env: ARIGAMI_UNIT (default arigami), ARIGAMI_PORT (default 3099, as the host),
+#      HEALTH_URL (overrides both), ARIGAMI_HEALTH_STATE (failure counter file),
+#      DRY_RUN=1 (log what it would do, restart nothing).
+set -u
+UNIT="${ARIGAMI_UNIT:-arigami}"
+URL="${HEALTH_URL:-http://127.0.0.1:${ARIGAMI_PORT:-3099}/__health}"
+STATE="${ARIGAMI_HEALTH_STATE:-/run/arigami-healthcheck-$UNIT.fails}"
+LIMIT=3
+GRACE=180
+log() { logger -t arigami-healthcheck "$*" 2>/dev/null; echo "$*"; }
+
+systemctl is-active --quiet "$UNIT" || { rm -f "$STATE"; exit 0; }
+started=$(date -d "$(systemctl show -p ActiveEnterTimestamp --value "$UNIT")" +%s 2>/dev/null || echo 0)
+if [ $(( $(date +%s) - started )) -lt "$GRACE" ]; then rm -f "$STATE"; exit 0; fi
+
+if curl -sf -o /dev/null -m 10 "$URL"; then
+  [ -f "$STATE" ] && log "$UNIT healthy again after $(cat "$STATE") failed check(s)"
+  rm -f "$STATE"
+  exit 0
+fi
+
+fails=$(( $(cat "$STATE" 2>/dev/null || echo 0) + 1 ))
+echo "$fails" > "$STATE"
+log "$UNIT health check failed ($fails/$LIMIT): $URL did not answer in 10s"
+[ "$fails" -lt "$LIMIT" ] && exit 0
+rm -f "$STATE"
+if [ "${DRY_RUN:-0}" = "1" ]; then log "DRY_RUN: would restart $UNIT"; exit 0; fi
+log "restarting $UNIT: not answering for $LIMIT checks in a row"
+systemctl restart "$UNIT"

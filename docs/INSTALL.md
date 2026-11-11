@@ -20,7 +20,7 @@ or, with options:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/maor700/arigami/master/install.sh -o install.sh
-bash install.sh --server --profile solo-dev
+bash install.sh --server --profile <name|git-url>
 ```
 
 What it does, in order (every step is skipped when already satisfied, so
@@ -129,9 +129,9 @@ Refuses to run on a dirty checkout (same guard as the cockpit).
 ```sh
 # Ubuntu 24.04, fresh, as root
 apt-get update && apt-get install -y curl
-curl -fsSL https://raw.githubusercontent.com/maor700/arigami/master/install.sh | bash -s -- --server --profile solo-dev
+curl -fsSL https://raw.githubusercontent.com/maor700/arigami/master/install.sh | bash -s -- --server --profile <name|git-url>
 systemctl status arigami           # active (running)
-/opt/arigami/bin/host doctor       # manager: systemd, pairing code pending, profile pending: solo-dev
+/opt/arigami/bin/host doctor       # manager: systemd, pairing code pending, profile pending: <name>
 bash /opt/arigami/install.sh       # second run: every step "(already)"
 bash /opt/arigami/install.sh update
 ```
@@ -166,7 +166,7 @@ my-bundle/
     └── assets/           #   brand/style references (optional)
 ```
 
-`profiles/bundles/solo-dev/` in the repo is the reference bundle; `agency-client`, `ops`, `il-whatsapp-business` and `marketing-team` (six agents) are the showcase bundles (see `profiles/README.md`).
+The repo ships no example bundles — yours comes from your organisation's profile repo (a git URL) or `$ARIGAMI_DIR/profiles/` (see `profiles/README.md`).
 
 ### What "apply" does (idempotent, additive)
 
@@ -182,7 +182,7 @@ my-bundle/
 ### Ways to apply
 
 ```sh
-install.sh --profile solo-dev                 # staged as $ARIGAMI_DIR/pending-profile; Setup finishes it
+install.sh --profile <name|git-url>                # staged as $ARIGAMI_DIR/pending-profile; Setup finishes it
 bin/host profile list | current | validate <src>
 bin/host profile apply <name|dir|git-url> [--force]   # host down → applied now; host up → staged (or via ARIGAMI_TOKEN=<admin API token> → REST); --force overwrites agents you edited
 ```
@@ -196,13 +196,13 @@ POST /__api/profiles/validate     {source}  → summary + {ok, errors, warnings}
 POST /__api/profiles/apply        {source, force?}  → {ok, report}      # source may be "pending"; force overwrites existing agents
 ```
 
-`source` is a shipped name (`solo-dev`), an installed name
+`source` is a name from the shipped dir (empty by default), an installed name
 (`$ARIGAMI_DIR/profiles/<name>`), a directory, or a git URL (shallow-cloned
 into `$ARIGAMI_DIR/profiles/<name>` and `git pull --ff-only`ed on re-apply).
 
 ### Writing your own
 
-Copy `profiles/bundles/solo-dev/`, change `profile.json.name`, add skills
+Create a directory with a `profile.json` (change `name`), add skills
 (each needs YAML frontmatter with a `description`), keep memory seeds short
 (they share the ~600/900-token caps of `USER.md`/`MEMORY.md`), and validate:
 

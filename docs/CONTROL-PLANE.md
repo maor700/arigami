@@ -296,16 +296,21 @@ All read once at boot (`src/config.ts`):
 | `CP_DB_PATH` | `./data/control-plane.db` | sqlite file |
 | `CP_COOKIE_DAYS` | `30` | session cookie lifetime |
 | `CP_TRUST_PROXY` | `false` | honour `X-Forwarded-Proto` (only meaningful behind a TLS-terminating proxy) |
+| `CP_COOKIE_PARENT_DOMAIN` | `false` | scope the session cookie to `CP_ORG_DOMAIN` so an edge can gate tenant hosts on `GET /auth/verify` ("Org SSO in front of every cockpit"); boot fails if `CP_PUBLIC_URL` is not under `CP_ORG_DOMAIN` |
 | `CP_OIDC_ISSUER` / `CP_OIDC_CLIENT_ID` / `CP_OIDC_CLIENT_SECRET` | — | the company IdP; OIDC is off (login 500s) until issuer+clientId are set |
 | `ALLOWED_EMAIL_DOMAINS` | — | comma-separated; **empty allows nobody**, not everybody. A literal `*` entry means **open signup** — anyone who authenticates with the configured OIDC provider gets in, any email domain. Meant for a solo operator / demo with no company domain to gate on: point `CP_OIDC_ISSUER` at Google (or GitHub), set `ALLOWED_EMAIL_DOMAINS=*`, and "sign in with Google" is the entire signup flow — still real authentication (Google verified the email), just no domain allow-list on top of it. |
 | `CP_ORG_DOMAIN` | `localtest.me` | tenants live at `u-<id>.<this>` |
 | `CP_URL_SCHEME` | `https` | `http` only makes sense for a local/k3d proof with no TLS in-cluster |
 | `CP_IMAGE_REPOSITORY` | `ghcr.io/maor700/arigami` | what image every new tenant gets |
 | `CP_IMAGE_TAG` | `latest` | a real deployment should pin a digest/release tag, not `latest` (same advice as `values-real.yaml`) |
-| `CP_ARIGAMI_BUNDLE` | — | git URL applied to every tenant on first boot (`server/profiles.ts` `applyBundleEnv`) — this is what makes the harness "already configured for the company" |
-| `CP_ARIGAMI_BUNDLE_REF` | — | **accepted, not wired to anything yet** — same gap `docs/K8S.md` documented for the chart itself: `applyBundleEnv`'s `gitClone` always clones the default branch. A future wave adding ref-pinning needs to plumb this through the chart's `env.ARIGAMI_BUNDLE_REF` (chart change) as well as here. |
+| `CP_ARIGAMI_BUNDLE` | — | git URL applied to every tenant on first boot (`server/profiles.ts` `applyBundleEnv`) — this is what makes the harness "already configured for the company" — and, after that, kept current by the profile rollout ([below](#profile-rollout)) |
+| `CP_ARIGAMI_GIT_TOKEN` | — | read-only token for the org's **private** profile repo (and the extensions in it), handed to each tenant as `secretEnv.ARIGAMI_GIT_TOKEN`; the user never signs in to GitHub for it. Sent only to `ARIGAMI_GIT_TOKEN_HOSTS` (default `github.com`) as an HTTP header — see `profiles/README.md`. Same Helm-release-Secret trade-off as the handoff secret. |
+| `CP_ARIGAMI_BUNDLE_REF` | — (default branch) | tag / branch / commit of the profile every tenant converges to. Passed to new tenants as the chart's `env.ARIGAMI_BUNDLE_REF` (first boot checks it out) and resolved to one commit on every reconcile tick for the [profile rollout](#profile-rollout). |
 | `CP_HELM_CHART_PATH` | `../deploy/helm/arigami-tenant` | which chart to render |
 | `CP_RELEASE_PREFIX` | `u-` | release/namespace name prefix |
+| `CP_PERSONAL_WORKSPACES` | `auto` | who gets a personal workspace (a dedicated pod and disk): `auto` = every non-admin on sign-in (today's behaviour), `choose` = nobody automatically, the person picks on a "Where do you want to work?" screen and creates their own with one click, `never` = shared workspaces only (an org-admin's own `/workspace` is unaffected). Anything else refuses to boot; see [Choosing a workspace](#choosing-a-workspace) |
+| `CP_TIERS` | — | hardware tiers, a JSON object (inline, or the path to a JSON file) of tier name → tenant-chart values overlay; see [Tiers](#tiers). Unset = no tiers |
+| `CP_DEFAULT_TIER` | `standard` | the tier a tenant gets unless an admin sets another; must be a key of `CP_TIERS` (boot refuses otherwise) |
 | `CP_HELM_EXTRA_VALUES` | — | optional extra `-f` layered on every install (used by the test/demo to swap in the stub image's resource/security overrides) |
 | `CP_HELM_TIMEOUT_SEC` | `120` | `helm --wait --timeout` |
 | `CP_INGRESS_CLASS` | — | not currently read by the provisioner (the chart's own `ingress.className` default is used) — reserved for a future per-org override |
@@ -411,8 +416,8 @@ K8S-2's "nothing notices desired != running" gap is closed.
 
 `src/backup.ts` reuses `server/backup.ts` (B4-full) unchanged:
 
-- **Backup** = `kubectl exec … gosu node:node bun server/backup.ts export
-  --full` in-pod, then `kubectl cp` the archive to
+- **Backup** = `kubectl exec … bun server/backup.ts export
+  --full` in-pod (as uid 1000 — through gosu only when the pod runs as root, `tenantExecArgv`), then `kubectl cp` the archive to
   `CP_BACKUP_DIR/<ns>/arigami-backup-<stamp>.tgz` on the control-plane's own
   disk — NOT the tenant's PVC; a backup living on the volume it protects
   dies with it. Pruned to `CP_BACKUP_KEEP` (default 7) per tenant. On-demand
@@ -440,7 +445,14 @@ The admin page gained a per-tenant image column (`running → desired` with
 the pending arrow), a digest form (records intent; the reconcile loop
 applies it — the form never blocks on helm), backup counts and a "Backup
 now" button. `src/cli.ts` is the scriptable/operator surface:
-`tenants | set-digest | upgrade | backup | backups | restore`.
+`tenants | set-digest | upgrade | backup | backups | restore`, plus the
+profile rollout's `set-ring | profile | profile-retry` ([below](#profile-rollout)).
+
+The admin page also shows a **Profile (applied → desired)** column, a banner
+with the desired ref → commit, and — while a failed apply holds the rollout —
+which tenant failed, why, when it retries, and a "Retry now" button.
+
+`tenants | set-digest | upgrade | backup | backups | restore | shared …` (shared workspaces, below).
 
 ### New env (all optional, defaults in parentheses)
 
@@ -452,6 +464,11 @@ now" button. `src/cli.ts` is the scriptable/operator surface:
 | `CP_BACKUP_INTERVAL_SEC` | `86400` | scheduled backup age threshold; `0` = on-demand only |
 | `CP_BACKUP_KEEP` | `7` | newest N archives kept per tenant |
 | `CP_ORG_NAME` | `your organisation` | shown on the waiting page ("Applying …'s setup") |
+| `CP_PROFILE_ROLLOUT` | `1` | profile rollout on/off (it is only ever on when `CP_ARIGAMI_BUNDLE` is a git source) |
+| `CP_PROFILE_RETRY_BASE_SEC` | `60` | first retry after a failed profile apply; doubles per consecutive failure |
+| `CP_PROFILE_RETRY_MAX_SEC` | `3600` | backoff ceiling |
+| `CP_PROFILE_RECHECK_SEC` | `3600` | re-read a converged tenant's provenance this often, so drift (someone re-applied something else in-tenant) is noticed and corrected; `0` = never |
+| `CP_PROFILE_BATCH` | `0` | max profile applies per tick (`0` = no limit); `1` makes the rollout one tenant per tick |
 
 ### Landing the user IN their workspace (K8S-3 follow-on, 2026-09-02)
 
@@ -662,14 +679,402 @@ production sizing; a real tenant keeps values.yaml's 2Gi/8Gi).
 - Multi-node behaviour, real storage classes, TLS — K8S-4 territory
   (docs/K8S-OPERATIONS.md sketches the dedicated-box path).
 
+## Tiers
+
+Per-user hardware. Without `CP_TIERS` every tenant gets the same Helm values (the chart defaults plus
+`CP_HELM_EXTRA_VALUES`) — exactly as before. With it, each tenant has a tier, and the tier's overlay is layered
+on top of everything else.
+
+**Config.** `CP_TIERS` is a JSON object: inline (starts with `{`) or the path to a JSON file (the Helm chart
+mounts one — `tiers:` in the control-plane chart's values). Each value is a values overlay for the tenant chart:
+
+```json
+{
+  "standard": { "persistence": { "size": "10Gi" } },
+  "large": {
+    "resources": { "requests": { "cpu": "4", "memory": "16Gi" }, "limits": { "cpu": "8", "memory": "32Gi" } },
+    "persistence": { "size": "50Gi" },
+    "nodeSelector": { "pool": "large" },
+    "tolerations": [{ "key": "dedicated", "operator": "Equal", "value": "large", "effect": "NoSchedule" }],
+    "priorityClassName": "workspace-large"
+  }
+}
+```
+
+`CP_DEFAULT_TIER` (default `standard`) names the tier of a tenant with none of its own. Boot fails with a clear
+message on invalid JSON, a bad tier name, a non-object overlay, a malformed `persistence.size`, an overlay that
+sets `tenant`, or a default tier that is not in `CP_TIERS`.
+
+**Layering** (later wins): chart defaults < the control plane's own `--set` flags < `CP_HELM_EXTRA_VALUES` <
+the tier overlay (a last `-f`). The tenant row's `tier` column (`''` = the default tier) is read on every
+install and upgrade, so an image upgrade keeps the tier. A tenant whose tier was removed from `CP_TIERS`
+fails its next provision with a message rather than silently falling back to other hardware.
+
+**Changing a tenant's tier.** Admin page (a select and "Set tier" in the tenant row, with a confirm that says
+the pod restarts) or `bun src/cli.ts set-tier <tenant> <tier>`. It takes the image-upgrade path
+(`src/upgrade.ts`): refused while any session has a turn in flight (nothing is touched; retry when idle),
+then `helm upgrade` with the new overlay, wait healthy, roll back to the previous revision if it is not, and
+only then record the tier. The pod restarts.
+
+**Disk only grows.** If the new tier's `persistence.size` is smaller than the tenant's current PVC, the change
+is refused with the two sizes. If it is larger and the StorageClass has `allowVolumeExpansion: false` (or that
+cannot be determined), it is refused before anything changes. Otherwise the PVC is patched, and because a
+StatefulSet's `volumeClaimTemplates` are immutable the StatefulSet object is deleted with `--cascade=orphan`
+(pod and PVC stay) and recreated by the upgrade. The size compared is the tier's, else `CP_HELM_EXTRA_VALUES`', else the chart default.
+
+**One person gets a bigger machine** = a tier plus a node pool: add a pool with a label and a taint
+(`extra_node_pools` in `deploy/gke-lab/terraform`, or any node pool on another cluster), define a tier whose
+`nodeSelector` matches the label and whose `tolerations` match the taint (so nobody else lands there), then
+`set-tier <tenant> large`. The pod reschedules onto the new pool, against the same disk (a zonal disk needs the pool in the same zone).
+
+Tests: `control-plane/test/tier.test.ts`. Not exercised against a real cluster: the kubectl/helm calls are covered through injected deps.
+
+## Org SSO in front of every cockpit (tenant gate, 2026-10-08)
+
+Before this, a request to `u-<id>.<orgDomain>` reached the tenant pod with nothing in front of it; only the
+tenant's own pairing/handoff cookie stood between the internet and a cockpit that can drive a machine. Now the
+edge asks the control plane about every tenant request first, using the sign-in the control plane already has —
+no extra IdP, no oauth2-proxy.
+
+```
+browser ── https://u-<id>.<orgDomain>/… ──> edge ── forward_auth: GET /auth/verify (same headers) ──> control plane
+                                             │        200 ─> proxy to the tenant
+                                             │        302 ─> /auth/login?rd=<that URL>   (no / expired session)
+                                             │        302 ─> /workspace                  (own tenant, not running)
+                                             │        403                                 (anyone else, any bad host)
+                                             └─ 5xx/timeout (control plane down)        ─> denied: fail closed
+```
+
+**Decision: owner only — org-admins included in the 403.** (A *shared* workspace admits its members instead — see
+"Shared workspaces" below; the reasoning for keeping org-admins out is the same.) A cockpit drives a machine with its owner's
+connected accounts (mail, WhatsApp, cloud tokens). An admin already holds suspend/resume/backup/delete on
+`/admin`; passing the edge would add nothing they need (the tenant's handoff is email-bound to the owner, so
+they'd meet a pairing screen) while making one stolen admin session reach every cockpit. An admin's own
+workspace (`/workspace`) passes like anyone's. Support access, if ever needed, should be an explicit,
+audited, per-tenant grant — not a role bit.
+
+How it is built (`src/gate.ts`, the `/auth/verify` route in `src/server.ts`):
+
+- **Shared session cookie.** `CP_COOKIE_PARENT_DOMAIN=1` sets `Domain=<orgDomain>` on `arigami_cp_sid` (still
+  `HttpOnly; SameSite=Lax`, `Secure` on https) so the browser sends it to the tenant hosts. Default **off**.
+  The service refuses to boot with the flag on if `CP_PUBLIC_URL` is not `orgDomain` or under it (the browser
+  would silently drop the cookie). Login also expires any old host-only twin; logout clears both scopes; when
+  both are sent, each value is tried. The OIDC state cookie stays host-only.
+- **The tenant never sees it.** The edge strips `arigami_cp_sid` from the `Cookie` header before proxying to
+  the pod, so nothing running in a cockpit can replay its owner's control-plane session.
+- **Host → tenant.** `X-Forwarded-Host` (falling back to `Host`) must be exactly `u-<hex>.<orgDomain>`; the
+  namespace is looked up (`tenants.ns`), and the session's subject must be the tenant's. "No such tenant" and
+  "not yours" are the same 403, so the gate does not enumerate addresses. The edge sets these headers itself
+  (Caddy overwrites client-sent `X-Forwarded-*` unless told to trust a proxy) — and the answer is only ever
+  "this cookie may / may not open this host", so a direct caller learns nothing about anyone else.
+- **Return URL, no open redirect, no loop.** `/auth/login?rd=` and the callback both pass `rd` through
+  `safeReturnUrl`: a path on this service (not `//…`, no backslash), this service's origin, or
+  `<scheme>://u-<hex>.<orgDomain>` on the default port with no credentials. Anything else falls back to `/`.
+  `rd` rides inside the OIDC state cookie, never to the IdP. Loop guards: tenant targets are refused while the
+  cookie is host-only; `/auth/verify` answers **503**, not 302, when the flag is off; `/auth/login` always does
+  the OIDC round-trip (short-circuiting on a session the gate could not see would bounce forever).
+- **Handoff still works.** `/` → `302 u-<id>…/__api/auth/handoff?t=…` → the edge asks `/auth/verify` → the
+  cookie the user just got is there → 200 → the tenant redeems the token. Unchanged code on both sides.
+- **Direct visits (bookmark, typed URL, a pasted link).** The edge lets the person through on their control-plane
+  cookie, but the pod has no session of its own for that browser and used to show its pairing screen. Each tenant
+  now gets `ARIGAMI_SSO_URL` (chart value `env.ARIGAMI_SSO_URL`, passed by `buildHelmArgs` on every provision,
+  upgrade and re-provision; default empty = nothing changes for a standalone host): `<CP_PUBLIC_URL>/workspace` for a
+  personal tenant, `<CP_PUBLIC_URL>/workspaces/<name>/open` for a shared one. When it is set, the tenant
+  (`server/sso-redirect.ts`, called from `auth.gate`) answers an unauthenticated browser *navigation* (GET, `Accept:
+  text/html`, `Sec-Fetch-Mode: navigate`, a page document) with a 302 there; the control plane signs the person in
+  (`/workspace` without a session goes through `/auth/login?rd=/workspace`) and returns them via the handoff. Never
+  redirected: non-GET, non-HTML, API / MCP / websocket / webhook / health / artifact / asset requests (so the handoff
+  route and the control plane's callbacks are untouched), and `?pair=1` (operators' way to the pairing screen; the
+  handoff failure page links there). Loop guards: a 60 s `arigami_sso_try` cookie makes a second session-less page
+  request show the pairing screen instead of bouncing again; someone who is not a member gets the control plane's
+  normal 403 (no redirect back). Tests: `test/sso-redirect.test.ts`, `control-plane/test/sso-url.test.ts`.
+- **Websockets** pass: forward_auth's subrequest carries the upgrade headers, the control plane answers a
+  plain 200, and the edge then proxies the real upgrade to the pod. A 403/302 refuses the upgrade.
+- **Inbound webhooks skip the gate** — `^/__api/webhooks/(sms|slack|github|custom/<id>)$`, mirrored from
+  `server/webhooks.ts INBOUND_RE`. They come from machines with no session and each verifies its own HMAC/token
+  in the tenant. Everything else, including the legacy `/__api/sms/inbound` (no longer public) and shared-artifact
+  links (`/__artifacts/…?t=`), now needs the owner's session: a share link only opens for its owner.
+- **Admin POSTs check `Origin`.** Every tenant host is same-site with the control plane, so `SameSite=Lax`
+  never stopped a page served from a tenant posting to `/admin/…`; a POST with a foreign `Origin` is now 403.
+
+Tests: `test/gate.test.ts` — own session (200), another user's tenant (403), no / unknown session (302 with
+`rd`), admin (403 on others, 200 on own), bad hosts and look-alikes (403), not-running tenant (302
+`/workspace`), flag off (503), stale host-only cookie next to a valid one, open-redirect attempts (`//`,
+`/\`, look-alike suffix, `@`, credentials, wrong scheme/port, `javascript:`), callback honours only a valid
+`rd`, cookie attributes on/off, logout, boot refusal, cross-origin admin POST.
+
+Proved against a real Caddy 2.10 (not a cluster): `deploy/gke-lab/edge.yaml` rendered with `envsubst` passes
+`caddy validate`; the same Caddyfile with only the listeners and upstreams pointed at localhost, in front of
+this app and a fake tenant, gave 200 for the owner (with `arigami_cp_sid` removed and other cookies intact),
+403 for another user and for an admin, 302 with `rd` for no session, a spoofed `X-Forwarded-Host` overwritten,
+a websocket echo for the owner and a refused upgrade for anyone else, the webhook path through without a
+session, and **502 with the control plane stopped** (the tenant never saw the request).
+
+The ingress-nginx variant ("the proper way" in `deploy/gke-lab/README.md`) is proven in-cluster on a local k3s —
+`deploy/local-k3s/` (values, `e2e.sh`, results). nginx `auth_request` answers any 3xx from the auth endpoint with a
+500, so nginx asks `/auth/verify?redirect=0` and gets **401** where Caddy gets a 302 (no session, or the own workspace
+not running); `auth-signin` → `/auth/login` then starts the sign-in, and `/auth/callback` sends a user back into their
+OWN workspace through the handoff (or to `/workspace` when it is not running — no 401 → sign-in → 401 loop).
+`X-Forwarded-Host`/`-Uri` come from an `auth-snippet` (nginx sends the control plane's own Host on the subrequest),
+the cookie strip from a `configuration-snippet`. Not proven: the full browser round-trip through a real IdP on a
+live lab.
+
+## Profile rollout
+
+The org ships ONE profile repo (`profile.json` + `skills/` + `agents/` +
+`extensions/` + `cron.json`, see `profiles/README.md`). A tenant applies it
+once, on first boot. Publishing a new version — a push to the branch
+`CP_ARIGAMI_BUNDLE_REF` names, a new tag set as the ref, or a commit sha —
+now reaches every existing tenant through the reconcile loop, mirroring how an
+image digest converges:
+
+```
+tick ─▶ git ls-remote CP_ARIGAMI_BUNDLE  ─▶ desired = ONE commit (a moving branch cannot split the fleet)
+     ─▶ for each running tenant, canary ring first, then oldest first:
+          decideProfile()  converged / backoff / halted ─▶ skip
+            │ needs it
+          GET  /__api/profiles/rollout  (in-pod loopback, operator token)
+            │ already on the commit, no errors ─▶ record it, no apply
+            │ busySessions > 0 ─▶ skip, next tick retries
+          POST /__api/profiles/rollout  {ref, commit as signed claims}
+            │ ok ─▶ record the commit the tenant REPORTS
+            │ failed ─▶ record error + backoff, HALT: stop this pass, and hold
+            │           every other tenant until this one succeeds or a new
+            │           commit is published
+```
+
+**The trusted entry point (tenant side, `server/profile-rollout.ts`).** A
+directory/CLI/cookie apply is untrusted — extensions are `skipped`, new cron
+jobs start disabled — because a user should not be able to grant themselves
+code execution through a bundle. The org operator is different: the rollout
+re-applies the bundle as **trusted** (extensions install/update in place via
+`installOrUpdateExtension`, new skills go live, cron jobs land by `bundleKey`,
+`scope: org` jobs are still skipped unless `ARIGAMI_ORG_HOST=1`; skills, agents
+and memory seed stay additive — an existing skill the profile CHANGES still
+becomes a pending proposal for the user). So it is gated on a credential only
+the operator holds: an operator token (`kind: "operator"`) signed with the
+per-tenant `ARIGAMI_HANDOFF_SECRET` the control-plane already injects
+(`src/handoff.ts mintOperator` / `server/handoff.ts verifyOperator`, the same
+wire format as the sign-in handoff, pinned by `test/handoff-contract.test.ts`).
+
+- A cookie, a session token, an API token — even the tenant admin's — does
+  not open `/__api/profiles/rollout`; neither does a sign-in token (different
+  `kind`), nor a status token on the apply route (the action is a claim).
+- The ref/commit are signed claims; the **source is not** — the tenant only
+  ever applies its own `ARIGAMI_BUNDLE`. A captured token can re-apply the
+  org's own repo at one commit, once: apply tokens are single-use (the jti is
+  spent on disk, like a sign-in) and live ≤ 2 minutes.
+- The token goes into the pod on **stdin** (`kubectl exec -i … curl -H @-`),
+  never in a process argument list.
+- The tenant refuses while a turn is in flight (409) or while another apply
+  runs (409), so the control-plane's busy check is enforced at both ends.
+- The bundle is fetched (`git fetch` of the ref, then the exact commit, token
+  as a header via `server/lib/git-auth.ts`) and **validated before anything is
+  touched**: a profile that fails validation returns 422 and leaves the tenant
+  exactly as it was. Every attempt is recorded in `$ARIGAMI_DIR/profile-rollout.json`;
+  a successful one writes `ref` + `commit` into the provenance (`profile.json`),
+  which is what the control-plane reads back.
+
+**Canary.** `bun src/cli.ts set-ring <tenant> canary` puts a tenant (yours, a
+volunteer's) at the front of every rollout. Applies run one tenant at a time;
+the first failure stops the pass and halts the commit for everyone else, so a
+bad profile reaches exactly one tenant. `CP_PROFILE_BATCH=1` slows the rollout
+to one tenant per tick for a longer soak. The failed tenant is retried with
+exponential backoff (`CP_PROFILE_RETRY_BASE_SEC`, doubling, capped at
+`CP_PROFILE_RETRY_MAX_SEC`); "Retry now" on the admin page (or
+`bun src/cli.ts profile-retry <tenant>`) drops the wait. The halt ends when the
+retry succeeds or a new commit is published — fixing the profile is the normal
+way out.
+
+**Not failures** (nothing recorded, retried next tick): a busy tenant, an
+unreachable one (status unreadable → fail closed, no apply), a tenant whose
+pod has no `ARIGAMI_BUNDLE` (provisioned before the bundle was configured — it
+converges once re-provisioned), a tenant with no handoff secret (pre-K8S-3
+row). If `git ls-remote` fails the tick rolls nothing out and the admin banner
+shows why. One lifecycle action per tenant per tick: an image upgrade, a
+profile apply and a backup never share a tick for the same tenant.
+
+**Tests.** `test/profile-rollout.test.ts` (decision table, canary pass,
+backoff, halt/release, tick integration, admin page) and
+`test/profile-rollout.e2e.test.ts` — two REAL Arigami hosts, a real git repo
+and real reconcile ticks, with only kubectl faked
+(`test/fixtures/fake-kubectl.sh` runs the in-pod `curl` against the local
+host): boot → confirm without re-apply → v2 canary-first with its extension
+installed → a broken v3 fails on the canary, the other tenant is never called,
+both stay healthy, backoff holds → a fixed v4 releases the halt. Tenant side:
+`test/profile-rollout-host.test.ts` in the root suite (auth matrix, trusted
+apply, single-use, broken profile, busy refusal).
+
+## Shared workspaces (one tenant, several org members, 2026-10-08)
+
+Until now every tenant was one person's: `ensureTenant(subject)` made it, the gate let only that subject in, and
+the handoff signed that person in as admin of their own instance. A **shared workspace** is a tenant that several
+org members open: the natural home for the organisation's `scope: org` cron jobs and shared agents
+(`ARIGAMI_ORG_HOST=1`, profiles/README.md "Cron `scope`").
+
+### Data model (`src/shared.ts`, additive migrations in `migrateShared`)
+
+| column / table | meaning |
+|---|---|
+| `tenants.kind` | `personal` (default — every existing row) or `shared` |
+| `tenants.name` | the stable slug of a shared workspace (`[a-z][a-z0-9-]{0,30}[a-z0-9]`), unique among shared rows (partial unique index). `''` for personal |
+| `tenants.subject` | for a shared workspace `shared:<name>`, so the namespace keeps the scheme: `u-<10 hex of sha256(subject)>`. The gate's host regex, the chart and the edge do not change |
+| `tenants.member_policy` | `explicit` (only listed e-mails) or `org` (every signed-in org user) |
+| `tenants.default_role` | the role an unlisted user gets under `org`; an explicit row always wins |
+| `tenants.org_host` | render `orgHost=true` (→ `ARIGAMI_ORG_HOST=1`). At most one live shared workspace may have it |
+| `tenants.roster_gen` / `roster_synced_gen` | bumped on every membership change / set when the pod acknowledged that roster |
+| `tenant_members(ns, email, role, added_by, added_at)` | the explicit list, keyed by e-mail so an admin can add someone who has never signed in |
+
+Every column is `ALTER TABLE … ADD COLUMN … DEFAULT …` guarded by `PRAGMA table_info`, the table/index are
+`IF NOT EXISTS` — a K8S-3 database opens unchanged and re-opening is a no-op (tested on a hand-built old schema).
+The `Tenant` type marks the new fields optional, so hand-built tenants in other tests stay personal.
+
+**Roles.** The control plane speaks `owner | admin | member | viewer`; the tenant host only has its own
+`admin | user | viewer` (`server/auth.ts`), so `owner`/`admin` → tenant `admin`, `member` → `user`, `viewer` →
+`viewer` (new). `owner` grants nothing over `admin` — it names who is accountable for the workspace.
+
+### Creating and managing (org-admin only)
+
+- **Admin page** (`/admin`, section "Shared workspaces"): create (name, policy, default role, org-host checkbox),
+  add / change role, remove, change policy, delete. Plain POSTs under `/admin/shared/…`, so the existing
+  org-admin check and the `Origin` check apply. Creating one does **not** make the admin a member.
+- **CLI** (`src/shared-cli.ts`, via `bun src/cli.ts shared …`): `list [name]`, `create <name> [--policy
+  explicit|org] [--default-role r] [--no-org-host] [--owner email]`, `add-member <name> <email> [--role r]`,
+  `remove-member <name> <email>`, `set-policy <name> explicit|org [--default-role r]`, `delete <name> --yes`,
+  `sync [name]`. Running it requires the control plane's database, i.e. it is org-admin by construction; `--by`
+  names the person in the log. `create` waits for the provision and exits non-zero if it failed.
+- **No forked provisioning.** A shared workspace is `db.createTenant` + `markShared`; `provisioner.provisionTenant`
+  adds `--set sharedWorkspace=true` (and `--set orgHost=true`) from the row (`sharedHelmArgs`), and the reconcile
+  loop upgrades and backs it up in the same pass as every personal tenant — the flags are re-rendered from the row
+  on every upgrade. Suspend / resume / backup / digest work from the existing tenants table, where shared rows show
+  as `shared: <name>`.
+- A deleted name is never reused (the address would come back to life); only one live org host.
+
+### Gate and handoff
+
+`GET /auth/verify` now asks `decideAccess(tenant, who, member)`:
+
+| tenant | who | answer |
+|---|---|---|
+| personal | its owner (subject match) | 200 (302 `/workspace` when not running) |
+| personal | anyone else, org-admins included | 403 |
+| shared | an e-mail on `tenant_members` | 200 with that role (302 `/workspaces/<name>/open` when not running) |
+| shared, policy `org` | any signed-in org user | 200 with `default_role` |
+| shared | anyone else — an org-admin who is not a member, a member of *another* shared workspace, an IdP subject that happens to be `shared:<name>` | 403 |
+| deleted / unknown | anyone | 403 (same message as "not yours": no enumeration) |
+
+Nothing is cached: the decision reads sqlite on every forward_auth request and answers `no-store`, and the edge
+(Caddy `forward_auth`) does not cache — so removing a member denies their **very next request**, including a new
+websocket upgrade. `ensureTenant`, `/api/progress` and the gate use `findPersonalTenant`, which never returns a
+shared row, so a look-alike subject cannot "own" a shared workspace (its `ensureTenant` fails closed instead).
+
+The handoff signs each member in **as themselves**: `/workspaces/<name>/open` re-checks membership and redirects to
+the same `/__api/auth/handoff` with a token naming *their* e-mail and *their* tenant role
+(`{kind:'handoff', email, exp, jti, role}`). The tenant creates or reuses that user row and sets its role, so the
+cockpit's users, audit trail and per-user settings stay per person. There is no shared identity anywhere.
+
+### Revocation: three layers
+
+1. **The edge, at once.** Every request is re-decided (above). This is the real gate.
+2. **The pod, within a push.** On every membership change the control plane mints a *roster* token
+   (`{kind:'roster', exp, jti, roster:{gen, policy, defaultRole, members:{email: role}}}`, HMAC with the tenant's
+   handoff secret, single-use) and posts it over loopback inside the pod (`kubectl exec … curl` →
+   `POST /__api/auth/roster`, `provisioner.pushRoster`; like the busy probe, but without the `gosu node:node`
+   user switch, which fails in a pod that already runs as uid 1000 — the chart default since 0.2.0. The busy probe
+   and backups (`execInTenant`) still carry that switch; found on a live k3s run, not fixed here). The tenant
+   (`server/org-access.ts applyRoster`) drops every **web session, API token and open socket** (`/__ws`, `/__vnc`,
+   `/__screencast`, proxied websockets) of anyone no longer on it, parks them as `viewer`, moves changed roles in
+   place (closing that user's sockets so a desktop opened as admin does not outlive a downgrade), and records the
+   applied `gen`; an older roster is refused (409), so two pushes that cross cannot resurrect a removed member. The
+   user row stays, so per-user settings survive a remove/re-add. After a roster has been applied, a handoff for an
+   e-mail not on it opens nothing (closes the 2-minute window of a token minted just before removal). A failed
+   push leaves `roster_gen != roster_synced_gen`; `startRosterSync` (30 s, separate from reconcile) retries until it
+   lands, a stopped workspace gets it when it runs again, and `/admin` flags "not yet applied".
+3. **Short sessions.** On a shared host (`ARIGAMI_SHARED_WORKSPACE=1`) handoff sessions live
+   `ARIGAMI_SHARED_SESSION_HOURS` (default 12) instead of `cookieDays` (30). Dumb, but bounds anything the first two
+   missed. A shared host also refuses a handoff token that names no role — it must never hand out an admin by
+   omission.
+
+### Landing
+
+With the default `CP_PERSONAL_WORKSPACES=auto`, `/` is unchanged: a normal user lands in their personal workspace, an org-admin on `/admin`
+([Choosing a workspace](#choosing-a-workspace) for the other modes). **`/workspaces`** is
+the chooser: "Open my workspace" plus every shared workspace the user may open (same `decideAccess`), with their
+role, state and **Open**. `/admin` links to it. Open on a dormant workspace wakes it and shows a self-refreshing
+wait page.
+
+### Choosing a workspace
+
+`CP_PERSONAL_WORKSPACES` decides whether a person gets a personal workspace (one pod + one disk each) on their own or by choice.
+Having a personal workspace never blocks shared ones and the other way round.
+
+| mode | sign-in | `/` | `/workspace` | create button |
+| --- | --- | --- | --- | --- |
+| `auto` (default) | a personal workspace is made automatically | as above: straight into it | the same flow | none (it exists) |
+| `choose` | nothing is created | one running personal and no shared -> straight in; exactly one shared and no personal -> straight into it; anything else -> the chooser | the personal workspace (starting page / resume), or the chooser when there is none | "Create my workspace" on the chooser |
+| `never` | nothing is created | one shared -> straight in; several -> the chooser; none -> a "shared workspaces only" page | the "shared workspaces only" page (org-admins unaffected) | none; `POST /workspaces/personal` answers 403 |
+
+The chooser is `/workspaces` ("Where do you want to work?"): a card per shared workspace the person is a member of (role, state,
+**Open**) plus, outside `never`, "Your own workspace". **Create my workspace** is `POST /workspaces/personal`: Origin-checked
+like the admin forms, always for the signed-in user (no subject in the form), idempotent (a double click or refresh finds the
+tenant the first press made), answers 303 to `/workspace` (the starting page with live progress). A deleted personal workspace
+counts as none: it can be created again in `choose`, and `auto` starts a fresh one on the next visit. The edge gate sends a personal
+workspace that is not running to `/workspace` and a shared one to its open route, so neither mode provisions behind the user's back or
+loops. Personal workspaces that already exist keep running when an install is switched to `never`; they just have no entry point
+for non-admins. Admins cannot create a personal workspace for someone else; the admin page only notes the mode.
+
+### Trust model (read this before creating one)
+
+- **Members share the machine.** A shared workspace is one pod, one disk, one desktop, one set of connected
+  accounts. Anyone who can run a turn (tenant `admin` or `user`) can read every file on it — including secrets
+  other members connected, other members' session transcripts and the org-wide tokens of the org host — and can
+  leave things behind (a cron job, a listener, a modified repo). Only add people you would give a shell on that box.
+  Connect personal accounts in your *personal* workspace, not here.
+- **Removing someone shuts the door, it does not undo what they did.** After removing a member who could run
+  turns, review cron jobs / listeners / agents they created and rotate any secret held in the workspace.
+- **`viewer` cannot run a turn.** Enforced before routing (`auth.gate` → `org-access.refusal`), for cookies and API tokens alike: only
+  `GET`/`HEAD`/`OPTIONS` and `POST /__api/auth/logout`; no `/__mcp/*`; the only websocket is the server→client
+  `/__ws` event stream (no `/__vnc`, `/__screencast` or proxied sockets). Fail closed: an unknown route is treated
+  as a write. A viewer is *read-only*, not *low-trust*: they see what a member sees (sessions, transcripts,
+  non-admin settings).
+- **No member reaches another tenant.** The gate is per namespace and per member; the edge strips the control
+  plane cookie before the pod; each tenant has its own handoff secret, so a token for one cannot open another;
+  NetworkPolicy keeps pods apart. New with shared workspaces: a member's dev server inside a shared workspace serves
+  pages to *other* members' browsers, and every tenant host is same-site with every other — so `SameSite=Lax` would
+  let such a page POST to, or open a websocket on, the viewer's own **personal** tenant with their cookie. Every
+  orchestrated tenant (handoff secret set) now refuses a cookie-authenticated write or upgrade whose `Origin` is not
+  its own (`org-access.crossOriginWrite`). **Roll this image to every tenant before you create the first shared
+  workspace** — personal tenants on an older image are not protected from it.
+- **Org-admins are not members by default.** Same reasoning as the gate's "owner only": admins manage the list and
+  must add themselves (logged) to get in.
+
+### Tests
+
+`control-plane/test/shared.test.ts` (51): migrations on an old schema + idempotence; the `decideAccess` decision
+table (17 rows); `/auth/verify` for members, non-members, org-admins, cross-workspace and cross-tenant attempts,
+`org` policy and switching back, removal denying the next request, not-running/deleted, the look-alike subject;
+picker contents, `/` unchanged, open-as-yourself with mapped roles, uniform 403, dormant wake-up; admin routes incl.
+non-admin and cross-origin refusal and bad input; one org host, no name reuse; roster contents/generations, failed
+push → retry, stopped workspace, monotonic sync; the CLI (in-process and the real `bun src/cli.ts shared list`
+against a DB file); `provisionTenant` args (`sharedWorkspace`/`orgHost` for shared rows only, the rest of the
+command identical) and `pushRoster`'s exec. Tenant side: `test/org-access.test.ts` (viewer policy, origin guard,
+roster application, handoff decisions, session TTL) and `test/shared-workspace-host.test.ts` — a real host booted
+like the chart boots a shared tenant, driven with tokens minted by the control plane's code: role-less token
+refused, members as themselves with short sessions, viewer read-only (POST 403, `/__vnc` 403, `/__ws` 101),
+cross-origin POST/upgrade 403, a roster push closing a live websocket and killing the cookie and the next sign-in,
+in-place downgrade, and replay / stale / wrong-secret / wrong-kind tokens refused.
+
+**Not proven yet:** a live cluster run (the roster push over a real `kubectl exec`, the chart flags on a real
+pod), the cockpit UI's handling of a viewer (it still shows the composer; the server refuses the write), and the
+org-host jobs actually running in a shared workspace end to end.
+
 ## What's deliberately NOT in here yet (K8S-4/K8S-5)
 
 - ~~Reconcile loop~~ — **landed in K8S-3** (above), including the
   "only upgrade when no session is in flight" gate.
-- **Rings.** The `ring` column exists in the schema (per the PRD's table
-  shape) and defaults to `"stable"`, but nothing reads it to stage a
-  rollout across cohorts — the reconcile loop upgrades every running tenant
-  whose digest differs, in table order.
+- **Rings for images.** The profile rollout reads `ring` (`canary` first,
+  `set-ring` in the CLI); image upgrades still do not — the reconcile loop
+  upgrades every running tenant whose digest differs, in table order.
 - **Dormancy automation** — moved to K8S-5 by explicit user decision
   (SPEC-ARIGAMI-K8S3.md: "right now I want to make this work properly; we'll
   optimize costs later"). `suspendTenant`/`resumeTenant` remain real levers; the

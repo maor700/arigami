@@ -7,8 +7,12 @@
 // — reusing it keeps this service's behaviour identical to what was already
 // proven on k3d, instead of reimplementing chart templating/apply ordering
 // in JS on unproven ground.
-import type { Config } from './config.js';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import type { Config, TierOverlay } from './config.js';
 import type { Tenant } from './db.js';
+import { sharedHelmArgs } from './shared-ops.js';
 
 export class ProvisionError extends Error {
   constructor(message: string, public readonly stderr: string) {
@@ -17,8 +21,8 @@ export class ProvisionError extends Error {
   }
 }
 
-async function run(cmd: string[], opts: { timeoutMs?: number } = {}): Promise<{ code: number; stdout: string; stderr: string }> {
-  const proc = Bun.spawn(cmd, { stdout: 'pipe', stderr: 'pipe' });
+async function run(cmd: string[], opts: { timeoutMs?: number; stdin?: string } = {}): Promise<{ code: number; stdout: string; stderr: string }> {
+  const proc = Bun.spawn(cmd, { stdout: 'pipe', stderr: 'pipe', ...(opts.stdin !== undefined ? { stdin: new Blob([opts.stdin]) } : {}) });
   const timeout = opts.timeoutMs
     ? setTimeout(() => {
         try {
@@ -53,13 +57,34 @@ export function fullname(ns: string): string {
   return `arigami-${ns.replace(/^u-/, '')}`;
 }
 
-// Idempotent: `helm upgrade --install` on the same release name/values is a
-// no-op apply, not a duplicate install — re-running this for a tenant that
-// is already `running` does not disturb its live pod (no template field the
-// StatefulSet cares about changes unless desired_digest/bundle actually
-// changed, in which case a normal rolling recreate is exactly what should
-// happen). `--create-namespace` makes namespace creation idempotent too.
-export async function provisionTenant(cfg: Config, t: Tenant): Promise<{ url: string }> {
+/** The tier a tenant runs on: its own, else the configured default. */
+export function effectiveTier(cfg: Config, t: Tenant): string {
+  return t.tier || cfg.defaultTier;
+}
+
+/**
+ * The Helm values overlay of the tenant's tier, or null when no tiers are configured (today's behaviour).
+ * A tenant whose recorded tier is no longer in CP_TIERS is an error, not a silent fallback to the default
+ * hardware — dropping a big machine's nodeSelector on the next upgrade would be a surprise eviction.
+ */
+export function tierOverlay(cfg: Config, t: Tenant): TierOverlay | null {
+  if (!Object.keys(cfg.tiers).length) return null;
+  const name = effectiveTier(cfg, t);
+  const o = cfg.tiers[name];
+  if (!o) throw new ProvisionError(`tenant ${t.ns} is on tier "${name}", which is not in CP_TIERS (${Object.keys(cfg.tiers).join(', ')})`, '');
+  return o;
+}
+
+/**
+ * The full `helm upgrade --install` argv. Layering, lowest to highest: chart defaults < the --set flags below <
+ * CP_HELM_EXTRA_VALUES (-f) < the tier overlay (-f, `tierFile`). Helm applies -f files in order, later wins.
+ */
+/** Where a tenant sends a browser that arrives without a session: the control-plane entry that ends in the handoff. */
+export function ssoUrl(cfg: Config, t: Tenant): string {
+  return t.kind === 'shared' && t.name ? `${cfg.publicUrl}/workspaces/${encodeURIComponent(t.name)}/open` : `${cfg.publicUrl}/workspace`;
+}
+
+export function buildHelmArgs(cfg: Config, t: Tenant, tierFile?: string): string[] {
   const args = [
     'helm', 'upgrade', '--install', t.release, cfg.helmChartPath,
     '--namespace', t.ns, '--create-namespace',
@@ -74,6 +99,9 @@ export async function provisionTenant(cfg: Config, t: Tenant): Promise<{ url: st
     '--set-string', `image.tag=${t.desired_digest}`,
     '--set', `ingress.domain=${cfg.orgDomain}`,
     '--set-string', `env.ARIGAMI_BUNDLE=${cfg.arigamiBundle}`,
+    // First boot checks the bundle out at the ref the rollout converges to; later versions arrive through the
+    // trusted re-apply (src/profile-rollout.ts), never through a pod restart.
+    '--set-string', `env.ARIGAMI_BUNDLE_REF=${cfg.arigamiBundleRef}`,
     '--wait', '--timeout', `${cfg.helmTimeoutSec}s`,
   ];
   // CP_INGRESS_CLASS was read into config and never passed to helm until now,
@@ -93,11 +121,42 @@ export async function provisionTenant(cfg: Config, t: Tenant): Promise<{ url: st
   // an org that wants the secret to exist in exactly one place should switch
   // the chart to `existingSecret` and create it out-of-band.
   if (t.handoff_secret) args.push('--set-string', `secretEnv.ARIGAMI_HANDOFF_SECRET=${t.handoff_secret}`);
+  // The org's private profile repo: one read-only token for every tenant, so a user never has to sign in to GitHub
+  // for the profile (and the extensions inside it) to install. Same chart `secretEnv` route, same Helm-release trade-off.
+  if (cfg.arigamiGitToken) args.push('--set-string', `secretEnv.ARIGAMI_GIT_TOKEN=${cfg.arigamiGitToken}`);
+  // Shared org workspace (src/shared.ts): the chart's `sharedWorkspace` / `orgHost` values become
+  // ARIGAMI_SHARED_WORKSPACE=1 / ARIGAMI_ORG_HOST=1. Kept in the row, so every later upgrade re-renders them.
+  args.push(...sharedHelmArgs(t));
+  // Direct visits (bookmark, typed URL): the tenant sends a browser that has no session of its own back through the
+  // control plane, which signs it in with the org SSO and returns it through the handoff (server/sso-redirect.ts).
+  args.push('--set-string', `env.ARIGAMI_SSO_URL=${ssoUrl(cfg, t)}`);
   if (cfg.helmExtraValuesFile) args.push('-f', cfg.helmExtraValuesFile);
+  if (tierFile) args.push('-f', tierFile);
+  return args;
+}
 
-  const res = await run(args, { timeoutMs: (cfg.helmTimeoutSec + 30) * 1000 });
-  if (res.code !== 0) throw new ProvisionError(`helm upgrade --install failed for ${t.release} (exit ${res.code})`, res.stderr);
-  return { url: tenantUrl(cfg, t.ns) };
+// Idempotent: `helm upgrade --install` on the same release name/values is a
+// no-op apply, not a duplicate install — re-running this for a tenant that
+// is already `running` does not disturb its live pod (no template field the
+// StatefulSet cares about changes unless desired_digest/bundle actually
+// changed, in which case a normal rolling recreate is exactly what should
+// happen). `--create-namespace` makes namespace creation idempotent too.
+export async function provisionTenant(cfg: Config, t: Tenant): Promise<{ url: string }> {
+  const overlay = tierOverlay(cfg, t);
+  let dir = '';
+  let tierFile: string | undefined;
+  if (overlay) {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cp-tier-'));
+    tierFile = path.join(dir, 'tier.yaml');
+    fs.writeFileSync(tierFile, JSON.stringify(overlay), { mode: 0o600 }); // JSON is YAML
+  }
+  try {
+    const res = await run(buildHelmArgs(cfg, t, tierFile), { timeoutMs: (cfg.helmTimeoutSec + 30) * 1000 });
+    if (res.code !== 0) throw new ProvisionError(`helm upgrade --install failed for ${t.release} (exit ${res.code})`, res.stderr);
+    return { url: tenantUrl(cfg, t.ns) };
+  } finally {
+    if (dir) fs.rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 // Deletes the whole namespace: takes the StatefulSet, Service(s), PVC and its
@@ -133,23 +192,60 @@ export async function deleteTenant(cfg: Config, t: Tenant): Promise<void> {
 // busy signal is deliberately loopback-only (server/host-control.ts
 // healthBody: /__health only reports busySessions to 127.0.0.1, so tenant
 // activity is never visible to the open internet through the probe path).
-// `gosu node:node` because kubectl exec lands in the container as root (the
-// entrypoint's chown-then-drop dance, docs/DOCKER.md) — anything that touches
-// $ARIGAMI_DIR must run as the same user as the host process or it leaves
-// root-owned files the host can no longer write.
+// Run as the host's own user (uid 1000, `node`): anything that touches $ARIGAMI_DIR as root leaves files the host
+// can no longer write. Since arigami-tenant 0.2.0 the pod itself runs as uid 1000 (podSecurityContext), so
+// `kubectl exec` already lands there — and gosu, which cannot switch users without root, fails every call with
+// "operation not permitted" (backups, the busy check before an upgrade, post-upgrade health). Only a pod started as
+// root (podSecurityContext: {}) still needs the drop.
 export function tenantPod(ns: string): string {
   return `${fullname(ns)}-0`;
+}
+
+export function tenantExecArgv(ns: string, cmd: string[], interactive = false): string[] {
+  const asNode = 'if [ "$(id -u)" = 0 ]; then exec gosu node:node "$@"; fi; exec "$@"';
+  // `-i` only when there is something to feed: a credential goes in on stdin, never in argv (visible in `ps`).
+  return ['kubectl', '-n', ns, 'exec', ...(interactive ? ['-i'] : []), tenantPod(ns), '--', 'sh', '-c', asNode, 'sh', ...cmd];
 }
 
 export async function execInTenant(
   cfg: Config,
   t: Tenant,
   cmd: string[],
-  opts: { timeoutMs?: number } = {},
+  opts: { timeoutMs?: number; stdin?: string } = {},
 ): Promise<{ code: number; stdout: string; stderr: string }> {
-  return run(['kubectl', '-n', t.ns, 'exec', tenantPod(t.ns), '--', 'gosu', 'node:node', ...cmd], {
+  return run(tenantExecArgv(t.ns, cmd, opts.stdin !== undefined), {
     timeoutMs: opts.timeoutMs ?? 30_000,
+    stdin: opts.stdin,
   });
+}
+
+/**
+ * Profile rollout: one operator call to the tenant host over loopback (same
+ * route as the busy probe). The token rides on stdin as a header file
+ * (`curl -H @-`) so it never appears in a process list; it is short-lived and,
+ * for an apply, single-use anyway. Returns the HTTP status and parsed body.
+ */
+export async function tenantOperatorCall(
+  cfg: Config,
+  t: Tenant,
+  method: 'GET' | 'POST',
+  token: string,
+  opts: { timeoutMs?: number } = {},
+): Promise<{ status: number; body: any }> {
+  const maxSec = Math.ceil((opts.timeoutMs ?? 30_000) / 1000);
+  const res = await execInTenant(
+    cfg,
+    t,
+    ['curl', '-sS', '-m', String(maxSec), '-X', method, '-H', '@-', '-w', '\n%{http_code}', `http://127.0.0.1:${cfg.tenantPort}/__api/profiles/rollout`],
+    { timeoutMs: (maxSec + 15) * 1000, stdin: `x-arigami-operator: ${token}\n` },
+  );
+  if (res.code !== 0) throw new ProvisionError(`profile call to ${t.ns} failed (exit ${res.code})`, res.stderr.slice(0, 500));
+  const nl = res.stdout.lastIndexOf('\n');
+  const status = Number(res.stdout.slice(nl + 1).trim());
+  let body: any = null;
+  try { body = JSON.parse(res.stdout.slice(0, nl)); } catch { body = { error: res.stdout.slice(0, Math.max(0, nl)).slice(0, 300) }; }
+  if (!Number.isFinite(status) || status === 0) throw new ProvisionError(`profile call to ${t.ns} got no HTTP status`, res.stdout.slice(0, 300));
+  return { status, body };
 }
 
 /**
@@ -226,4 +322,58 @@ export async function suspendTenant(cfg: Config, t: Tenant): Promise<void> {
 export async function resumeTenant(cfg: Config, t: Tenant): Promise<void> {
   const res = await run(['kubectl', '-n', t.ns, 'scale', `statefulset/${fullname(t.ns)}`, '--replicas=1']);
   if (res.code !== 0) throw new ProvisionError(`scale-up failed for ${t.ns} (exit ${res.code})`, res.stderr);
+}
+
+/**
+ * Hand a shared workspace its member roster (src/shared-ops.ts). Same loopback-over-exec route as the busy
+ * probe: the control plane never needs the tenant's ingress, and the call never crosses the edge.
+ */
+//
+// Not execInTenant: its `gosu node:node` fails ("operation not permitted") in a pod that already runs as uid 1000
+// — the chart's default since 0.2.0 (found on a live k3s run). This call writes nothing in the pod, so it needs no
+// user switch at all.
+export async function pushRoster(cfg: Config, t: Tenant, token: string): Promise<void> {
+  const res = await run(['kubectl', '-n', t.ns, 'exec', tenantPod(t.ns), '--',
+    'curl', '-fsS', '-m', '10', '-X', 'POST', '-H', 'content-type: application/json',
+    '--data', JSON.stringify({ t: token }), `http://127.0.0.1:${cfg.tenantPort}/__api/auth/roster`,
+  ], { timeoutMs: 30_000 });
+  if (res.code !== 0) throw new ProvisionError(`roster push to ${t.ns} failed (exit ${res.code})`, res.stderr || res.stdout);
+}
+
+// ---- Hardware tiers: the kubectl side of src/tier.ts -------------------------------------------------------------
+
+export const pvcName = (ns: string): string => `data-${fullname(ns)}-0`;
+
+/** What the tenant's PVC asks for (spec.resources.requests.storage), and whether its StorageClass can expand. */
+export async function pvcInfo(cfg: Config, t: Tenant): Promise<{ size: string; expandable: boolean | null; storageClass: string }> {
+  const r = await run(['kubectl', '-n', t.ns, 'get', 'pvc', pvcName(t.ns), '-o', 'json'], { timeoutMs: 30_000 });
+  if (r.code !== 0) throw new ProvisionError(`cannot read PVC ${pvcName(t.ns)} (exit ${r.code})`, r.stderr);
+  const pvc = JSON.parse(r.stdout);
+  const size = String(pvc?.spec?.resources?.requests?.storage ?? '');
+  const storageClass = String(pvc?.spec?.storageClassName ?? '');
+  if (!size) throw new ProvisionError(`PVC ${pvcName(t.ns)} has no storage request`, r.stdout.slice(0, 200));
+  let expandable: boolean | null = null; // null = could not tell
+  if (storageClass) {
+    const sc = await run(['kubectl', 'get', 'storageclass', storageClass, '-o', 'json'], { timeoutMs: 30_000 });
+    if (sc.code === 0) {
+      try { expandable = JSON.parse(sc.stdout)?.allowVolumeExpansion === true; } catch {}
+    }
+  }
+  return { size, expandable, storageClass };
+}
+
+/** Grow the PVC in place. Kubernetes refuses a shrink itself; src/tier.ts refuses it earlier, with a readable message. */
+export async function expandPvc(cfg: Config, t: Tenant, size: string): Promise<void> {
+  const r = await run(['kubectl', '-n', t.ns, 'patch', 'pvc', pvcName(t.ns), '--type=merge', '-p', JSON.stringify({ spec: { resources: { requests: { storage: size } } } })], { timeoutMs: 30_000 });
+  if (r.code !== 0) throw new ProvisionError(`PVC expansion to ${size} failed for ${t.ns} (exit ${r.code})`, r.stderr);
+}
+
+/**
+ * A StatefulSet's volumeClaimTemplates are immutable, so a `helm upgrade` that changes persistence.size is rejected.
+ * Deleting the StatefulSet object with --cascade=orphan leaves the pod and the PVC alone; the upgrade then recreates the
+ * object with the new template and adopts them.
+ */
+export async function orphanStatefulSet(cfg: Config, t: Tenant): Promise<void> {
+  const r = await run(['kubectl', '-n', t.ns, 'delete', `statefulset/${fullname(t.ns)}`, '--cascade=orphan', '--ignore-not-found'], { timeoutMs: 60_000 });
+  if (r.code !== 0) throw new ProvisionError(`could not detach the StatefulSet of ${t.ns} (exit ${r.code})`, r.stderr);
 }

@@ -98,6 +98,17 @@ export async function cdpCall(wsUrl: string, method: string, params: Record<stri
   });
 }
 
+/**
+ * Open a new window in this session's running Chrome — what a click on a browser icon does on a normal desktop. The
+ * dock's icon on a session desktop lands here when the browser is already up but has no window on screen
+ * (minimized, or its last window closed while the process stayed).
+ */
+export async function newWindow(sessionId: string, url = 'about:blank', port = cdpPort(sessionId)): Promise<void> {
+  if (!port) throw new Error('no DevTools port for this session');
+  const v = (await (await fetch(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(2000) })).json()) as any;
+  await cdpCall(v.webSocketDebuggerUrl, 'Target.createTarget', { url, newWindow: true });
+}
+
 /** The front (most recently focused) real page tab, or throws — every browser_* action needs one. */
 export async function frontPage(sessionId: string): Promise<ChromeTab> {
   const tabs = await listTabs(sessionId);

@@ -1,10 +1,13 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
+import path from 'node:path';
 
 export default defineConfig({
   base: '/__host/',
   plugins: [react(), tailwindcss()],
+  // shadcn/ui's `@/…` alias (components.json) → src/
+  resolve: { alias: { '@': path.resolve(import.meta.dirname, 'src') } },
   // es2022: noVNC's decoder module uses top-level await (probing WebCodecs
   // support) — the default esbuild target predates that. noVNC itself already
   // requires a secure context + modern browser APIs, so this isn't a real

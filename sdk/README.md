@@ -178,6 +178,34 @@ it never stops the host. A **gate** that throws or times out (5 min) **fails
 closed**: the merge is refused with the gate's message. That is the point of a
 gate.
 
+### Mods (Claude Code's mods API, on every engine)
+
+An extension can ship **Claude Code mods** — the same plugin dirs, the same `register(on)`, the same API — listed in
+`manifest.mods`:
+
+```json
+{ "mods": ["mod"] }
+```
+```
+mod/.claude-plugin/plugin.json
+mod/hooks/hooks.json        { "modules": ["./register.js"] }
+mod/hooks/register.js       export function register(on) { on('tool.call', async ($, e, next) => …) }
+```
+
+Where the engine has mods, it runs them itself; where it does not, Arigami does:
+
+| engine | how the mod runs |
+|---|---|
+| Claude Code | natively (`--plugin-dir`), the whole mods API. `mods/arigami-bridge` (loaded first) copies what a mod shows with `$.ui.log` / `toast` / `notice` into the Arigami chat. |
+| Codex (and any engine without mods) | in the host's mods runtime (`server/mods.ts`): `tool.call` through the engine's `PreToolUse` → `next()` → `PostToolUse` hooks (the chain is suspended at `next()` while the tool runs), `prompt.submit` on the host before the engine sees the prompt, `session.start` once. |
+
+The runtime implements `$.plugin`, `$.env`, `$.http.fetch`, `$.fs`, `$.process.run`, `$.store`, `$.session`,
+`$.clock` and `$.ui.log/toast/notice` (→ a chat card). Anything else throws "not available in Arigami's mods runtime",
+a hook on an event the runtime does not fire is reported once, and a hook that throws is reported — a mod never fails
+open silently. Hook semantics follow Claude Code: middleware `next(e)`, `{ deny }` / `{ result }` / `{ drop }`, a throw
+or a 10 s budget before `next()` skips the hook (or runs its `.catch`). Engine limits: on Codex a built-in tool's result
+cannot be replaced — a rewritten result is delivered as a blocking reason; an MCP tool's result is replaced outright.
+
 ---
 
 ## Tools
@@ -289,7 +317,9 @@ mode at all — a mode that can list and pick but not start is worse than an
 absent one, because the human only finds out at the last click.
 
 `createSession` accepts `title`, `cwd`, `prompt`, `skill`, `agent`, `engine`,
-`model`, `effort`, `permissionMode` and `metadata`. It is an allowlist, not a
+`model`, `effort`, `folderName`, `folderId`, `permissionMode` and `metadata`.
+A folder name is matched exactly after trimming and created if missing; an explicit
+folder id takes precedence. It is an allowlist, not a
 pass-through: the orchestration fields `POST /__api/sessions` also understands
 (`master`, `kind`, `subtask`, `worktree`…) are dropped, so a tab cannot graft
 its session into somebody else's dispatch tree.

@@ -9,8 +9,9 @@ import { runInChild } from './_child.js';
 import { planSweep } from '../server/lib/children.ts';
 import { judgeHostInfo, portFree } from '../server/lib/hostlock.ts';
 import { makeHostId } from '../server/lib/instance.ts';
+import { tmpDir } from './_tmp.js';
 
-const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-t5-'));
+const tmp = () => tmpDir('arigami-t5-');
 
 // ---- paths -------------------------------------------------------------------
 

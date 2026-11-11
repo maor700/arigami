@@ -86,7 +86,7 @@ test('Rail (en): a work session born from an agent wears its emoji + name chip; 
   prefs.setPrefs({ language: 'en' });
   const html = mountRail();
   expect(html).toContain('Team');
-  expect(html).toContain('+ New agent');
+  expect(html).toContain('aria-label="+ New agent"'); // the Team header's icon button
   // the WORK session's row carries the avatar (rendered before the team section)
   const avatar = html.indexOf('data-agent-avatar="marketing-lead"');
   expect(avatar).toBeGreaterThan(-1);
@@ -94,7 +94,7 @@ test('Rail (en): a work session born from an agent wears its emoji + name chip; 
   expect(html.slice(avatar, avatar + 400)).toContain('📣');
   // UX1: … and says whose job it is, linking back to the agent
   expect(html).toContain('data-row-agent="marketing-lead"');
-  expect(html).toContain('· Marketing Lead');
+  expect(html).toMatch(/data-row-agent="marketing-lead"[^>]*>Marketing Lead</);
   const freeRow = html.slice(html.indexOf('free one') - 600, html.indexOf('free one'));
   expect(freeRow).not.toContain('data-agent-avatar');
 });

@@ -3,10 +3,18 @@ import type { Store, Tenant } from './db.js';
 import { createAuthService } from './auth.js';
 import * as tpl from './templates.js';
 import { canTransition } from './state-machine.js';
-import { tenantUrl } from './provisioner.js';
+import { tenantUrl, pushRoster } from './provisioner.js';
 import * as backupMod from './backup.js';
 import { signInUrl } from './handoff.js';
+import { tenantNsForHost, safeReturnUrl, requestedUrl } from './gate.js';
 import { stepsFor, podSnapshot, EMPTY_SNAPSHOT, type PodSnapshot } from './progress.js';
+import { rolloutEnabled, haltingTenant, DESIRED_META_KEY, type DesiredRecord } from './profile-rollout.js';
+import { decideAccess } from './shared.js';
+import { sharedOnlyPage } from './shared-templates.js';
+import { handleShared, adminSection, livePersonal } from './shared-routes.js';
+import type { SharedDeps } from './shared-ops.js';
+import { setTier, realTierDeps, TierError, type TierDeps } from './tier.js';
+import { UpgradeBlockedError, UpgradeRolledBackError, UpgradeFailedError } from './upgrade.js';
 
 export interface Provisioner {
   provisionTenant(cfg: Config, t: Tenant): Promise<{ url: string }>;
@@ -21,12 +29,17 @@ export interface AdminOps {
   listBackups(cfg: Config, ns: string): { name: string; bytes: number; mtimeMs: number }[];
   /** live pod state behind the progress page; injected so tests need no cluster */
   podSnapshot(cfg: Config, t: Tenant): Promise<PodSnapshot>;
+  /** shared workspaces: hand the tenant its member roster (provisioner.pushRoster); optional so test doubles may omit it */
+  pushRoster?(cfg: Config, t: Tenant, token: string): Promise<void>;
+  /** tier changes (src/tier.ts); optional so test doubles may omit it — the real helm/kubectl deps are used then */
+  tierDeps?: TierDeps;
 }
 
 const realAdminOps: AdminOps = {
   backupTenant: (cfg, t) => backupMod.backupTenant(cfg, t),
   listBackups: (cfg, ns) => backupMod.listBackups(cfg, ns),
   podSnapshot: (cfg, t) => podSnapshot(cfg, t),
+  pushRoster: (cfg, t, token) => pushRoster(cfg, t, token),
 };
 
 // A digest ("sha256:<hex>") or an image tag — the only two things the chart's
@@ -35,8 +48,11 @@ export const DIGEST_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/;
 
 const html = (body: string, status = 200): Response =>
   new Response(body, { status, headers: { 'content-type': 'text/html; charset=utf-8' } });
-const redirect = (location: string, extraHeaders: Record<string, string> = {}): Response =>
-  new Response(null, { status: 302, headers: { location, ...extraHeaders } });
+const redirect = (location: string, setCookies: string[] = []): Response => {
+  const headers = new Headers({ location });
+  for (const c of setCookies) headers.append('set-cookie', c);
+  return new Response(null, { status: 302, headers });
+};
 const json = (obj: unknown, status = 200): Response =>
   new Response(JSON.stringify(obj), { status, headers: { 'content-type': 'application/json' } });
 
@@ -61,11 +77,27 @@ async function runProvisioning(cfg: Config, store: Store, provisioner: Provision
   }
 }
 
+// An OIDC `sub` is any string ("auth0|123", "…@…"); the admin page puts it in the path percent-encoded.
+const pathSubject = (raw: string): string => {
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
+};
+
 export function createApp(cfg: Config, store: Store, provisioner: Provisioner, log: (m: string) => void = console.log, adminOps: AdminOps = realAdminOps) {
   const auth = createAuthService(cfg, store);
+  const sharedDeps: SharedDeps = { cfg, store, provisioner, log, pushRoster: adminOps.pushRoster };
 
   function ensureTenant(subject: string, email: string): Tenant {
-    let t = store.findTenantBySubject(subject);
+    // Personal only: a shared workspace is never "your" tenant, whatever subject string an IdP hands out.
+    let t: Tenant | null = store.findPersonalTenant(subject);
+    // Deleted earlier (by the user's own admin click or an admin's): signing in again starts a fresh workspace.
+    if (t && t.state === 'deleted' && store.purgeDeletedTenant(subject)) {
+      log(`[tenant] ${t.ns} was deleted; ${email} signed in again — provisioning a new workspace`);
+      t = null;
+    }
     if (!t) {
       t = store.createTenant(subject, email, { desiredDigest: cfg.imageTag });
       runProvisioning(cfg, store, provisioner, t, log); // not awaited — see runProvisioning
@@ -80,47 +112,133 @@ export function createApp(cfg: Config, store: Store, provisioner: Provisioner, l
 
     if (url.pathname === '/__health') return json({ ok: true });
 
+    // Always a full OIDC round-trip, even with a session: the gate only sends people here when it saw NO
+    // session, so short-circuiting on one it cannot see (a host-only cookie) would bounce forever.
     if (url.pathname === '/auth/login') {
-      const { redirectUrl, setCookie } = await auth.oidcStart(https);
-      return redirect(redirectUrl, { 'set-cookie': setCookie });
+      const { redirectUrl, setCookie } = await auth.oidcStart(https, safeReturnUrl(cfg, url.searchParams.get('rd')));
+      return redirect(redirectUrl, [setCookie]);
     }
 
     if (url.pathname === '/auth/callback') {
       const result = await auth.oidcCallback(cookieHeader, url);
       if (!result.ok) return html(tpl.errorPage(result.status, result.error), result.status);
       const { setCookie } = auth.login(result.subject, https);
-      if (result.role === 'user') ensureTenant(result.subject, result.email);
+      // `choose` / `never`: nothing is created behind the person's back — see CP_PERSONAL_WORKSPACES.
+      if (result.role === 'user' && cfg.personalWorkspaces === 'auto') ensureTenant(result.subject, result.email);
       store.touchLastSeen(result.subject);
-      return redirect('/', { 'set-cookie': setCookie });
+      const back = safeReturnUrl(cfg, result.returnTo);
+      // Back to the user's OWN workspace: through the handoff while it runs — the gate now lets the browser in, but
+      // the cockpit has no session of its own yet in a fresh browser and would show its pairing screen (the handoff
+      // lands on /__host/, the deeper path is not kept). Not running: the gate would refuse it again, and an edge
+      // that answers that with a fresh sign-in (nginx auth-signin) would loop — /workspace resumes it instead.
+      const backNs = back && !back.startsWith('/') ? tenantNsForHost(cfg, new URL(back).host) : null;
+      const own = backNs ? store.findTenantByNs(backNs) : null;
+      if (own && own.subject === result.subject) {
+        if (own.state !== 'running') return redirect('/workspace', setCookie);
+        return redirect(signInUrl(tenantUrl(cfg, own.ns), own.handoff_secret, own.email), setCookie);
+      }
+      return redirect(back || '/', setCookie);
     }
 
     if (url.pathname === '/auth/logout') {
       const { setCookie } = auth.logout(cookieHeader, https);
-      return redirect('/', { 'set-cookie': setCookie });
+      return redirect('/', setCookie);
+    }
+
+    // The edge's forward_auth subrequest for every request to a tenant host — src/gate.ts has the contract.
+    if (url.pathname === '/auth/verify') {
+      const deny = (status: number, msg: string): Response =>
+        new Response(msg + '\n', { status, headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' } });
+      // Without the shared cookie no browser could ever pass; answering 302 would loop login -> tenant -> login.
+      if (!cfg.cookieParentDomain) return deny(503, 'tenant gate misconfigured: the control plane needs CP_COOKIE_PARENT_DOMAIN=1');
+      const host = req.headers.get('x-forwarded-host') || req.headers.get('host') || '';
+      const ns = tenantNsForHost(cfg, host);
+      if (!ns) return deny(403, 'not a workspace address');
+      // `?redirect=0`: the edge cannot relay a redirect from here (nginx auth_request treats a 3xx as an error and
+      // answers 500). It gets a 401 instead and sends the browser to /auth/login itself (auth-signin).
+      const noRedirect = url.searchParams.get('redirect') === '0';
+      const who = auth.principalFromCookieHeader(cookieHeader);
+      if (!who) {
+        if (noRedirect) return deny(401, 'sign in first');
+        const rd = safeReturnUrl(cfg, requestedUrl(cfg, host, req.headers.get('x-forwarded-uri')));
+        const login = `${cfg.publicUrl}/auth/login` + (rd ? `?rd=${encodeURIComponent(rd)}` : '');
+        return new Response(null, { status: 302, headers: { location: login, 'cache-control': 'no-store' } });
+      }
+      const t = store.findTenantByNs(ns);
+      // Owner of a personal tenant, or a member of a shared one (src/shared.ts decideAccess). Read fresh on every
+      // request — nothing is cached here, so removing a member shuts them out on their very next request.
+      // Same answer for "no such tenant" and "not yours": the gate does not reveal which addresses exist.
+      const access = decideAccess(t, who, t?.kind === 'shared' ? store.getMember(t.ns, who.email) : null);
+      if (!t || !access.allow) return deny(403, `this workspace is not open to ${who.email}`);
+      if (t.state !== 'running') {
+        const back = t.kind === 'shared' ? `/workspaces/${encodeURIComponent(t.name || '')}/open` : '/workspace';
+        // The sign-in this 401 leads to lands on /workspace for a workspace that is not running (/auth/callback).
+        if (noRedirect) return deny(401, 'this workspace is not running');
+        return new Response(null, { status: 302, headers: { location: `${cfg.publicUrl}${back}`, 'cache-control': 'no-store' } });
+      }
+      return new Response(null, { status: 200, headers: { 'cache-control': 'no-store' } });
+    }
+
+    // Admin forms are plain POSTs with the session cookie. Every u-<id>.<orgDomain> is same-site with this
+    // service (and, with CP_COOKIE_PARENT_DOMAIN, receives the cookie's scope), so SameSite=Lax alone does not
+    // stop a page served from a tenant from posting here. A browser always sends Origin on a POST.
+    if (req.method === 'POST' && (url.pathname.startsWith('/admin/') || url.pathname === '/workspaces/personal')) {
+      const origin = req.headers.get('origin');
+      if (origin && origin !== new URL(cfg.publicUrl).origin) return html(tpl.errorPage(403, 'cross-origin form post refused'), 403);
     }
 
     const principal = auth.principalFromCookieHeader(cookieHeader);
 
-    if (url.pathname === '/') {
+    // An org-admin has no workspace of their own by default (they land on /admin); /workspace gives them — or any
+    // signed-in user — the same "get me into my workspace" flow as /.
+    if (url.pathname === '/' || url.pathname === '/workspace') {
+      // /workspace is where a tenant sends a browser that opened it directly (ARIGAMI_SSO_URL): sign in, come back here.
+      if (!principal && url.pathname === '/workspace') return redirect(`/auth/login?rd=${encodeURIComponent('/workspace')}`);
       if (!principal) return html(tpl.loginPage(cfg.orgDomain));
-      if (principal.role === 'admin') return redirect('/admin');
-      const t = ensureTenant(principal.subject, principal.email);
+      if (principal.role === 'admin' && url.pathname === '/') return redirect('/admin');
       store.touchLastSeen(principal.subject);
-      if (t.state === 'provisioning') return html(tpl.startingPage());
-      if (t.state === 'dormant') {
-        provisioner.resumeTenant(cfg, t).then(
-          () => store.setTenantState(t.subject, 'running'),
-          (e) => log(`[provisioner] resume ${t.ns} failed: ${(e as Error).message}`),
-        );
-        return html(tpl.startingPage());
-      }
       // K8S-3: land the user INSIDE their workspace. They authenticated here
       // moments ago against the org IdP; making them hunt for a pairing code
       // that only exists inside the pod was the single worst step of the
       // flow. `signInUrl` mints a one-shot, short-lived, email-bound token the
       // tenant redeems for a session cookie (src/handoff.ts, server/handoff.ts).
-      if (t.state === 'running') return redirect(signInUrl(tenantUrl(cfg, t.ns), t.handoff_secret, t.email));
-      return html(tpl.unavailablePage(t.state));
+      const enter = (t: Tenant): Response => {
+        if (t.state === 'provisioning') return html(tpl.startingPage());
+        if (t.state === 'dormant') {
+          provisioner.resumeTenant(cfg, t).then(
+            () => store.setTenantState(t.subject, 'running'),
+            (e) => log(`[provisioner] resume ${t.ns} failed: ${(e as Error).message}`),
+          );
+          return html(tpl.startingPage());
+        }
+        if (t.state === 'running') return redirect(signInUrl(tenantUrl(cfg, t.ns), t.handoff_secret, t.email));
+        return html(tpl.unavailablePage(t.state));
+      };
+      // `auto` (and an org-admin's own workspace, whatever the mode): the workspace is made on demand, as ever.
+      if (cfg.personalWorkspaces === 'auto' || principal.role === 'admin') return enter(ensureTenant(principal.subject, principal.email));
+      // `choose` / `never`: /workspace means "my personal workspace" (also where the gate sends a personal tenant that is
+      // not running), so it never provisions one — without one it goes to the chooser (or says shared-only).
+      const mine = livePersonal(store, principal.subject);
+      const openShared = store.sharedFor(principal).filter((x) => x.tenant.state !== 'deleted');
+      if (url.pathname === '/workspace') {
+        if (mine) return enter(mine);
+        return cfg.personalWorkspaces === 'never' ? html(sharedOnlyPage(principal.email, openShared.length)) : redirect('/workspaces');
+      }
+      // `/`: exactly one place to go -> straight in; otherwise the person has a choice to make.
+      if (mine && !openShared.length) return enter(mine);
+      if (!mine && openShared.length === 1) return redirect(`/workspaces/${encodeURIComponent(openShared[0].tenant.name || '')}/open`);
+      if (!openShared.length && cfg.personalWorkspaces === 'never') return html(sharedOnlyPage(principal.email, 0));
+      return redirect('/workspaces');
+    }
+
+    // "Create my workspace" on the chooser. Self-service only (the subject is the session's, never a form field) and
+    // idempotent: a double click or a refresh finds the tenant the first one made; after a deletion it starts fresh.
+    if (url.pathname === '/workspaces/personal' && req.method === 'POST') {
+      if (!principal) return redirect('/');
+      if (cfg.personalWorkspaces === 'never' && principal.role !== 'admin') return html(tpl.errorPage(403, 'this organisation uses shared workspaces only'), 403);
+      ensureTenant(principal.subject, principal.email);
+      store.touchLastSeen(principal.subject);
+      return new Response(null, { status: 303, headers: { location: '/workspace' } });
     }
 
     // Feeds the progress view on the starting page. Returns the SAME shape
@@ -128,7 +246,7 @@ export function createApp(cfg: Config, store: Store, provisioner: Provisioner, l
     // `redirect` is only ever present once the tenant is genuinely ready.
     if (url.pathname === '/api/progress') {
       if (!principal) return json({ phase: 'unavailable', steps: [], title: 'Signed out', detail: 'Sign in again to continue.', slow: false, failed: true }, 401);
-      const t = store.findTenantBySubject(principal.subject);
+      const t = store.findPersonalTenant(principal.subject);
       if (!t) return json({ phase: 'queued', steps: [], title: 'Setting up your workspace', detail: 'Getting started…', slow: false, failed: false });
       const snap = t.state === 'provisioning' || t.state === 'dormant'
         ? await adminOps.podSnapshot(cfg, t).catch(() => EMPTY_SNAPSHOT)
@@ -141,6 +259,9 @@ export function createApp(cfg: Config, store: Store, provisioner: Provisioner, l
       });
     }
 
+    const shared = await handleShared(req, url, principal, { deps: sharedDeps, resumeTenant: provisioner.resumeTenant });
+    if (shared) return shared;
+
     if (url.pathname === '/admin') {
       if (!principal) return redirect('/');
       if (principal.role !== 'admin') return html(tpl.errorPage(403, 'org-admin only'), 403);
@@ -150,7 +271,31 @@ export function createApp(cfg: Config, store: Store, provisioner: Provisioner, l
         const list = adminOps.listBackups(cfg, t.ns);
         backups[t.ns] = { count: list.length, newestMs: list[0]?.mtimeMs ?? null };
       }
-      return html(tpl.adminPage(tenants, principal.email, backups));
+      const desired = rolloutEnabled(cfg) ? store.getMeta<DesiredRecord>(DESIRED_META_KEY) : null;
+      const profile: tpl.ProfileView | null = rolloutEnabled(cfg)
+        ? {
+            ref: desired?.ref ?? cfg.arigamiBundleRef,
+            commit: desired?.commit || '',
+            resolvedAt: desired?.resolvedAt || 0,
+            ...(desired?.error ? { error: desired.error } : {}),
+            haltedBy: desired?.commit ? haltingTenant(tenants, desired.commit)?.ns ?? null : null,
+          }
+        : null;
+      const tiers = Object.keys(cfg.tiers).length ? { names: Object.keys(cfg.tiers), def: cfg.defaultTier } : null;
+      return html(tpl.adminPage(tenants, principal.email, backups, profile, adminSection(store), tiers, cfg.personalWorkspaces));
+    }
+
+    // Profile rollout: "retry now" for a tenant whose apply failed — drops the
+    // backoff wait, keeps the failure (and so the halt) until the retry passes.
+    const profileRetry = /^\/admin\/tenants\/([^/]+)\/profile-retry$/.exec(url.pathname);
+    if (profileRetry && req.method === 'POST') {
+      if (!principal) return redirect('/');
+      if (principal.role !== 'admin') return html(tpl.errorPage(403, 'org-admin only'), 403);
+      const t = store.findTenantBySubject(profileRetry[1]);
+      if (!t) return html(tpl.errorPage(404, 'no such tenant'), 404);
+      store.clearProfileBackoff(t.subject);
+      log(`[admin] ${t.ns} profile retry requested by ${principal.email}`);
+      return redirect('/admin');
     }
 
     // K8S-3 §2: set the digest the reconcile loop converges this tenant to.
@@ -160,7 +305,7 @@ export function createApp(cfg: Config, store: Store, provisioner: Provisioner, l
     if (digestAction && req.method === 'POST') {
       if (!principal) return redirect('/');
       if (principal.role !== 'admin') return html(tpl.errorPage(403, 'org-admin only'), 403);
-      const subject = digestAction[1];
+      const subject = pathSubject(digestAction[1]);
       const t = store.findTenantBySubject(subject);
       if (!t) return html(tpl.errorPage(404, 'no such tenant'), 404);
       if (t.state === 'deleted') return html(tpl.errorPage(409, 'tenant is deleted'), 409);
@@ -172,12 +317,34 @@ export function createApp(cfg: Config, store: Store, provisioner: Provisioner, l
       return redirect('/admin');
     }
 
+    // Hardware tier: helm upgrade with the new overlay through the same guarded path as an image upgrade
+    // (src/tier.ts) — refused while a turn is in flight, rolled back if the tenant is not healthy afterwards.
+    const tierAction = /^\/admin\/tenants\/([^/]+)\/tier$/.exec(url.pathname);
+    if (tierAction && req.method === 'POST') {
+      if (!principal) return redirect('/');
+      if (principal.role !== 'admin') return html(tpl.errorPage(403, 'org-admin only'), 403);
+      const t = store.findTenantBySubject(pathSubject(tierAction[1]));
+      if (!t) return html(tpl.errorPage(404, 'no such tenant'), 404);
+      const form = await req.formData().catch(() => null);
+      const tier = String(form?.get('tier') || '').trim();
+      try {
+        const r = await setTier(cfg, store, adminOps.tierDeps ?? realTierDeps(cfg), t, tier);
+        log(`[admin] ${t.ns} tier ${r.from} -> ${r.to}${r.disk.grew ? ` (disk ${r.disk.from} -> ${r.disk.to})` : ''} by ${principal.email}`);
+      } catch (e) {
+        if (e instanceof TierError) return html(tpl.errorPage(e.status, e.message), e.status);
+        if (e instanceof UpgradeBlockedError) return html(tpl.errorPage(409, `${e.message}. Try again when the user is idle.`), 409);
+        if (e instanceof UpgradeRolledBackError || e instanceof UpgradeFailedError) return html(tpl.errorPage(500, e.message), 500);
+        return html(tpl.errorPage(500, (e as Error).message), 500);
+      }
+      return redirect('/admin');
+    }
+
     // K8S-3 §3: on-demand backup (scheduled ones run from src/reconcile.ts).
     const backupAction = /^\/admin\/tenants\/([^/]+)\/backup$/.exec(url.pathname);
     if (backupAction && req.method === 'POST') {
       if (!principal) return redirect('/');
       if (principal.role !== 'admin') return html(tpl.errorPage(403, 'org-admin only'), 403);
-      const t = store.findTenantBySubject(backupAction[1]);
+      const t = store.findTenantBySubject(pathSubject(backupAction[1]));
       if (!t) return html(tpl.errorPage(404, 'no such tenant'), 404);
       if (t.state !== 'running') return html(tpl.errorPage(409, `cannot back up a tenant in state ${t.state}`), 409);
       try {
@@ -193,7 +360,8 @@ export function createApp(cfg: Config, store: Store, provisioner: Provisioner, l
     if (adminAction && req.method === 'POST') {
       if (!principal) return redirect('/');
       if (principal.role !== 'admin') return html(tpl.errorPage(403, 'org-admin only'), 403);
-      const [, subject, action] = adminAction;
+      const [, rawSubject, action] = adminAction;
+      const subject = pathSubject(rawSubject);
       const t = store.findTenantBySubject(subject);
       if (!t) return html(tpl.errorPage(404, 'no such tenant'), 404);
       const nextState = action === 'suspend' ? 'dormant' : action === 'resume' ? 'running' : 'deleted';
@@ -212,7 +380,7 @@ export function createApp(cfg: Config, store: Store, provisioner: Provisioner, l
     return html(tpl.errorPage(404, 'not found'), 404);
   }
 
-  return { handle, ensureTenant, auth };
+  return { handle, ensureTenant, auth, sharedDeps };
 }
 
 export type App = ReturnType<typeof createApp>;

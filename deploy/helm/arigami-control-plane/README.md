@@ -79,6 +79,7 @@ Set `rbac.create=false` to bind an existing, hand-reviewed ClusterRole instead.
 |---|---|
 | `config.allowedEmailDomains` | Empty means **nobody can sign up**. That is the safe default, not a bug. |
 | `config.orgDomain` | Tenants are addressed at `u-<id>.<orgDomain>` — needs a wildcard DNS record and a matching certificate, or per-tenant DNS from external-dns. Required. |
+| `config.cookieParentDomain` | `"1"` scopes the session cookie to `orgDomain` so an edge can gate every tenant request on `GET /auth/verify` (owner only). Needs `ingress.host` under `orgDomain`. Default `"0"`. See docs/CONTROL-PLANE.md. |
 | `config.publicUrl` | Baked into the OIDC `redirect_uri`; must match what the IdP has registered *exactly*. Derived from `ingress.host` when unset. |
 | `config.tenantIngressNamespaces` | Required. The tenant NetworkPolicy has no default (arigami-tenant 0.2.0) — with the wrong value every object is healthy and the tenant is unreachable. |
 | `config.arigamiBundle` | Its `git clone` has **no timeout** (known gap, `docs/DEVOPS-HANDOFF.md`). An unreachable URL leaves each new tenant short of Ready with empty logs. Verify reachability *from a pod*. |

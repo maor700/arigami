@@ -1,37 +1,47 @@
 import { useState, useRef, useMemo, useEffect } from 'react';
-import Markdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
+import Md from './Md.jsx';
 import { api } from '../lib/api.js';
 import { relTime } from '../lib/time.js';
 import { toastError } from '../lib/toast.js';
 import { errText } from '../lib/errors.js';
-import { useStore, listenersForSession, fullCapabilities, ensureFullCapabilities, getDraft, setDraft, setLastSent, interruptSession, openScreenRequest, screenPanelOpen, setScreenPanel, setChatMode, needsAttention } from '../lib/store.js';
+import { useStore, listenersForSession, fullCapabilities, ensureFullCapabilities, getDraft, setDraft, setLastSent, interruptSession, openScreenRequest, screenPanelOpen, setScreenPanel, setChatMode, needsAttention, restartSession, clearSessionConversation } from '../lib/store.js';
 import { useIsDesktop } from '../lib/useMedia.js';
 import { chatModeOf } from '../lib/chatMode.js';
+import { ChatModeItems, ChatTextSizeSub } from './ChatReadingMenu.jsx';
 import { engineLabel, engineTermName } from '../lib/engines.js';
 import { providerForEngine, providerOf } from '../lib/providers.js';
 import { tabSrc } from '../lib/hostUrl.js';
 import { extOfTab, findExtension, extSlashItems } from '../lib/ext.js';
 import { createExtBridge } from '../lib/ext-bridge.js';
 import { setDictationSink, appendDictation } from '../lib/voice.js';
-import MicButton from './MicButton.jsx';
+import { ChatFooter } from './Composer.jsx';
 import { HARD_CAP, shouldStream, fileToBase64, uploadAttachment, pendingAttachment, applyUploadEvent, isAlreadyAttached } from '../lib/attachments.js';
 import { Dot, TriggerTag } from './ui.jsx';
 import { t, useT, dirOf, currentLang } from '../lib/i18n.js';
-import { currentTheme, usePrefs } from '../lib/prefs.js';
+import { currentTheme, usePrefs, setPrefs, termViewFrom } from '../lib/prefs.js';
+import { CHAT_TEXT, stepChatText } from '../lib/chatText.js';
 import { statusLabel } from '../lib/status.js';
 import { Icon } from '../lib/icons.js';
-import { faArrowUp, faBoxArchive, faCaretDown, faCaretUp, faCheck, faCircleUser, faDisplay, faEye, faFile, faGripVertical, faHourglassHalf, faImage, faListCheck, faPaperclip, faPlay, faReply, faRotateRight, faStop, faTriangleExclamation, faXmark } from '@fortawesome/free-solid-svg-icons';
+import { ALargeSmall, Archive, Eraser, Check, CircleUser, Eye, ListChecks, Monitor, MoreHorizontal, Pencil, Plus, RefreshCw, RotateCcw, TriangleAlert, X } from 'lucide-react';
+import { Badge, StatusDot, badgeVariants } from './ui/badge.jsx';
+import { Button } from './ui/button.jsx';
+import { Checkbox } from './ui/checkbox.jsx';
+import { Label } from './ui/label.jsx';
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from './ui/dialog.jsx';
+import { Popover, PopoverContent, PopoverTrigger } from './ui/popover.jsx';
+import { Tip } from './ui/tooltip.jsx';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger } from './ui/dropdown-menu.jsx';
+import { faArrowUp, faBoxArchive, faCaretDown, faCaretUp, faCheck, faCircleUser, faDisplay, faEye, faFile, faGripVertical, faHourglassHalf, faImage, faPaperclip, faPlay, faReply, faRotateRight, faStop, faTriangleExclamation, faXmark } from '@fortawesome/free-solid-svg-icons';
 import TabBar from './TabBar.jsx';
 import ChatPane from './ChatPane.jsx';
 import ChangesTab from './ChangesTab.jsx';
 import OrchestrationTab from './OrchestrationTab.jsx';
 import { Truncate } from './Truncate.jsx';
 import { SlashPalette, CapabilitiesPanel, buildSlashItems, MentionPalette, TeamPanel } from './SlashCommands.jsx';
-import { useSkills, skillSlashItems, agentCommandItems, resolveSubmission, mentionQuery, completeMention, buildMentionItems, lastHumanText } from '../lib/composer.js';
+import { useSkills, skillSlashItems, agentCommandItems, resolveSubmission, mentionQuery, completeMention, buildMentionItems } from '../lib/composer.js';
 import { ProcessChip, BgProcessesPanel } from './BgProcesses.jsx';
-import TermControls from './TermControls.jsx';
-import LadderBadge from './LadderBadge.jsx';
+import TermControls, { ChatDisplayItems } from './TermControls.jsx';
+import LadderBadge, { ladderText } from './LadderBadge.jsx';
 import { ActionBar } from './ActionCard.jsx';
 import { AgentAvatar } from './AgentCard.jsx';
 import { openAgent } from './DelegatedLine.jsx';
@@ -63,6 +73,21 @@ export function resolveTabs(session, hasChildren = false) {
 
 /* ---------- terminal header strip ---------------------------------------- */
 
+// The ONE status indicator of the header: a neutral chip with a status dot —
+// amber (pulsing) when it is waiting for you, green working, red dead, grey idle.
+// The chat has its own light/dark (per session, "follow app" by default); the composer under it must wear the SAME
+// theme, otherwise a dark transcript sits on a light footer. `data-theme` re-resolves every app token for the
+// subtree (custom properties inherit), and `contents` keeps the layout untouched.
+function ChatThemeScope({ sessionId, children }) {
+  const prefs = usePrefs();
+  const theme = termViewFrom(prefs, sessionId).theme;
+  return (
+    <div data-theme={theme} data-chat-theme-scope className="contents">
+      {children}
+    </div>
+  );
+}
+
 function StatusChip({ session }) {
   const t = useT();
   const cState = session.claude?.state;
@@ -73,61 +98,27 @@ function StatusChip({ session }) {
   const attention = !restarting && needsAttention(session);
   const status = restarting ? t('rail.statusRestartingDots') : attention ? t('status.needsYou') : statusLabel(session.status || cState) || t('rail.statusIdle');
   const awaiting = !restarting && (attention || /review/i.test(session.status || '') || cState === 'awaiting-input');
-  const dotColor = awaiting
-    ? '#F9D312'
-    : cState === 'working'
-      ? '#3C9A4E'
-      : cState === 'dead'
-        ? '#B23B30'
-        : '#c4c4c4';
+  const dot = awaiting ? 'warn' : cState === 'working' ? 'ok' : cState === 'dead' ? 'err' : 'idle';
   return (
-    <span
-      className={`ms-auto flex shrink-0 items-center gap-[7px] rounded-full border-[1.5px] px-[11px] py-[3px] whitespace-nowrap ${
-        awaiting ? 'border-ink bg-chip' : 'border-border bg-panel'
-      }`}
-    >
-      {restarting ? (
-        <span className="host-spinner h-[9px] w-[9px]" />
-      ) : (
-        <span
-          className={`h-[7px] w-[7px] rounded-full ${awaiting ? 'pulse-yellow' : ''}`}
-          style={{ background: dotColor }}
-        />
-      )}
-      <span
-        className={`font-mono text-[11.5px] md:text-[10.5px] font-bold ${awaiting ? 'text-fg' : restarting ? 'text-[#ce8324]' : 'text-fgdim'}`}
-      >
-        {String(status).toLowerCase()}
-      </span>
-    </span>
+    <Badge variant="outline" className="shrink-0 text-foreground" data-session-status={restarting ? 'restarting' : awaiting ? 'needs-you' : cState || 'idle'}>
+      {restarting ? <span className="host-spinner size-2.5" /> : <StatusDot status={dot} pulse={awaiting} />}
+      <span className="max-w-[10rem] truncate">{String(status).toLowerCase()}</span>
+    </Badge>
   );
 }
 
 // Which account this session runs on. Reads the session's pinned accountId (or
 // the active account of the PROVIDER its engine consumes, if unpinned) so
 // switching accounts is VISIBLE per session — otherwise a switch looks like it
-// did nothing. A codex session never shows a Claude login here.
-function AccountChip({ session }) {
-  const t = useT();
+// did nothing. A codex session never shows a Claude login here. D11: it lives
+// in the header's "…" menu now (one click there opens the accounts page).
+function useSessionAccount(session) {
   const { accounts } = useStore();
   const list = accounts?.accounts || [];
   const provider = providerForEngine(session.engine);
   const pinned = session.claude?.accountId;
   const pinnedAcc = pinned ? list.find((a) => a.id === pinned) : null;
-  const acc = (pinnedAcc && providerOf(pinnedAcc) === provider ? pinnedAcc : null) || list.find((a) => a.active && providerOf(a) === provider) || null;
-  if (!acc) return null;
-  const name = acc.email || acc.label || t('rail.accountFallback');
-  return (
-    <span
-      className="hidden items-center gap-1 font-mono text-[11.5px] md:text-[10px] text-fgdim sm:flex"
-      title={t('rail.runsOn', { name }) + (acc.active ? t('rail.activeAccountSuffix') : '')}
-      onClick={() => window.dispatchEvent(new CustomEvent('host:open-accounts'))}
-      style={{ cursor: 'pointer' }}
-    >
-      <span><Icon icon={faCircleUser} /></span>
-      <span className="max-w-[90px] truncate sm:max-w-[150px]">{name}</span>
-    </span>
-  );
+  return (pinnedAcc && providerOf(pinnedAcc) === provider ? pinnedAcc : null) || list.find((a) => a.active && providerOf(a) === provider) || null;
 }
 
 // Mobile stand-in for the full listeners row: one "👀 N" chip in the terminal
@@ -141,17 +132,18 @@ function ListenersChipCompact({ session }) {
   const errored = listeners.some((l) => l.status === 'errored');
   return (
     <>
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        title={listeners.length > 1 ? t('rail.listenersWatching', { n: listeners.length }) : t('rail.listenerWatching', { n: listeners.length })}
-        className={`flex shrink-0 cursor-pointer items-center gap-1 rounded-full border px-1.5 py-0.5 text-[11.5px] md:text-[10px] sm:hidden ${
-          errored ? 'border-danger/40 bg-danger/10 text-danger' : 'border-hair bg-white text-[#555]'
-        }`}
-      >
-        <span><Icon icon={errored ? faTriangleExclamation : faEye} /></span>
-        <span className="font-mono font-bold">{listeners.length}</span>
-      </button>
+      <Tip label={listeners.length > 1 ? t('rail.listenersWatching', { n: listeners.length }) : t('rail.listenerWatching', { n: listeners.length })}>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => setOpen(true)}
+          aria-label={listeners.length > 1 ? t('rail.listenersWatching', { n: listeners.length }) : t('rail.listenerWatching', { n: listeners.length })}
+          className={`shrink-0 gap-1 px-1.5 sm:hidden ${errored ? 'text-destructive' : 'text-muted-foreground'}`}
+        >
+          {errored ? <TriangleAlert /> : <Eye />}
+          <span className="text-xs tabular-nums">{listeners.length}</span>
+        </Button>
+      </Tip>
       {open && <ListenersPanel session={session} onClose={() => setOpen(false)} />}
     </>
   );
@@ -162,15 +154,16 @@ function ListenersChipCompact({ session }) {
 function LangToggle({ value, onChange, disabled }) {
   const t = useT();
   return (
-    <span className="inline-flex shrink-0 items-center overflow-hidden rounded-[5px] border border-border" title={t('rail.summaryLanguage')}>
-      {[['auto', t('rail.auto')], ['he', t('rail.hebrew')], ['en', t('rail.english')]].map(([key, label], i) => (
+    <span role="group" aria-label={t('rail.summaryLanguage')} className="inline-flex shrink-0 items-center gap-0.5 rounded-md bg-muted p-0.5">
+      {[['auto', t('rail.auto')], ['he', t('rail.hebrew')], ['en', t('rail.english')]].map(([key, label]) => (
         <button
           key={key}
           type="button"
+          aria-pressed={value === key}
           onClick={() => value !== key && onChange(key)}
           disabled={disabled}
-          className={`cursor-pointer px-1.5 py-[1px] text-[11.5px] md:text-[10.5px] leading-none disabled:opacity-50 ${i ? 'border-l border-border' : ''} ${
-            value === key ? 'bg-ink text-white' : 'bg-panel text-fgdim hover:text-fg'
+          className={`h-5 cursor-pointer rounded-sm px-1.5 text-2xs leading-none outline-none focus-visible:outline-2 focus-visible:outline-ring disabled:opacity-50 coarse:h-9 coarse:px-3 ${
+            value === key ? 'bg-background font-medium text-foreground shadow-xs' : 'text-muted-foreground hover:text-foreground'
           }`}
         >
           {label}
@@ -186,16 +179,6 @@ function LangToggle({ value, onChange, disabled }) {
 function SummaryChip({ session }) {
   const t = useT();
   const [open, setOpen] = useState(false);
-  const ref = useRef(null);
-  useEffect(() => {
-    if (!open) return undefined;
-    const onDown = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
-    const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); setOpen(false); } };
-    document.addEventListener('mousedown', onDown);
-    document.addEventListener('keydown', onKey, true);
-    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey, true); };
-  }, [open]);
-
   const summary = session.statusSummary;
   const busy = !!session.summarizing;
   const on = !!summary;
@@ -213,81 +196,79 @@ function SummaryChip({ session }) {
   const lang = summary?.lang || 'auto';
 
   return (
-    <span ref={ref} className="relative flex items-center">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        title={t('rail.statusSummary')}
-        className={`flex shrink-0 cursor-pointer items-center gap-1 rounded-full border px-2 py-1.5 text-[11.5px] md:px-1.5 md:py-0.5 md:text-[10px] ${
-          on ? 'border-ink bg-chip text-fg' : 'border-hair bg-white text-[#555]'
-        }`}
-      >
-        {busy ? <span className="host-spinner h-2.5 w-2.5" /> : <Icon icon={faListCheck} />}
-        <span className="hidden font-mono sm:inline">{t('rail.summary')}</span>
-      </button>
-      {open && (
-        <div className="absolute top-[28px] end-0 z-30 w-[340px] max-w-[86vw] overflow-hidden rounded-lg border-[1.5px] border-ink bg-panel shadow-[3px_3px_0_rgba(42,42,42,0.18)]">
-          <div className="flex items-center gap-2 border-b border-hair px-3 py-2">
-            <span className="font-mono text-[11px] font-bold text-fg">{t('rail.statusSummary')}</span>
-            <span className="ms-auto flex items-center gap-1.5">
-              {on && (
-                <button type="button" onClick={updateNow} disabled={busy} title={t('rail.updateNow')}
-                  className="cursor-pointer rounded px-1 text-[11px] text-fgdim hover:text-fg disabled:opacity-40">
-                  <Icon icon={faRotateRight} className={busy ? 'animate-spin' : ''} />
-                </button>
-              )}
-              <button type="button" onClick={() => setOpen(false)} title={t('rail.close')}
-                className="cursor-pointer rounded px-1 text-[11px] text-fgdim hover:text-fg">
-                <Icon icon={faXmark} />
-              </button>
-            </span>
-          </div>
-          <div className="max-h-[42vh] overflow-y-auto px-3 py-2.5">
-            {!on ? (
-              <div className="text-[12px] text-fgdim">
-                <p className="mb-2.5">{t('rail.summaryIntro')}</p>
-                <div className="mb-2.5 flex items-center gap-2">
-                  <span>{t('rail.language')}</span>
-                  <LangToggle value={pendingLang} onChange={setPendingLang} />
-                </div>
-                <button type="button" onClick={enable}
-                  className="cursor-pointer rounded-md border-2 border-ink bg-brand px-3 py-1.5 text-[12px] font-bold text-[#1a1a1a] shadow-[2px_2px_0_#2a2a2a] active:translate-x-[1px] active:translate-y-[1px]">
-                  {t('rail.summarizeConversation')}
-                </button>
-              </div>
-            ) : busy && !summary.text ? (
-              <div className="flex items-center gap-2 text-[12px] text-fgdim"><span className="host-spinner h-3 w-3" /> {t('rail.generating')}</div>
-            ) : (
-              <div className="md text-[12.5px]" dir="auto">
-                <Markdown remarkPlugins={[remarkGfm]}>{summary.text || '…'}</Markdown>
-              </div>
+    <Popover open={open} onOpenChange={setOpen}>
+      <Tip label={t('rail.statusSummary')}>
+        <PopoverTrigger asChild>
+          <Button
+            variant="ghost"
+            size="sm"
+            data-summary-chip
+            aria-label={t('rail.statusSummary')}
+            className={`shrink-0 gap-1.5 px-2 ${on ? 'text-foreground' : 'text-muted-foreground'} aria-expanded:bg-muted aria-expanded:text-foreground`}
+          >
+            {busy ? <span className="host-spinner size-3" /> : <ListChecks />}
+            <span className="hidden sm:inline">{t('rail.summary')}</span>
+          </Button>
+        </PopoverTrigger>
+      </Tip>
+      <PopoverContent align="end" className="w-[21.25rem] max-w-[calc(100vw-1rem)] p-0">
+        <div className="flex items-center gap-2 border-b border-border px-3 py-2">
+          <span className="text-sm font-medium text-foreground">{t('rail.statusSummary')}</span>
+          <span className="ms-auto flex items-center gap-0.5">
+            {on && (
+              <Tip label={t('rail.updateNow')}>
+                <Button variant="ghost" size="icon-xs" onClick={updateNow} disabled={busy} aria-label={t('rail.updateNow')} className="text-muted-foreground">
+                  <RefreshCw className={busy ? 'animate-spin' : ''} />
+                </Button>
+              </Tip>
             )}
-          </div>
-          {on && (
-            <div className="flex items-center gap-2 border-t border-hair px-3 py-2 text-[11.5px] md:text-[10.5px] text-fgdim">
-              <label className="flex cursor-pointer items-center gap-1.5">
-                <input type="checkbox" className="accent-brand" checked={!!summary.autoUpdate} onChange={toggleAuto} />
-                {t('rail.autoUpdateEachTurn')}
-              </label>
-              {/* Output language: Auto (follow the conversation) | English */}
-              <span className="ms-auto">
-                <LangToggle value={lang} onChange={setLang} disabled={busy} />
-              </span>
+            <Button variant="ghost" size="icon-xs" onClick={() => setOpen(false)} aria-label={t('rail.close')} className="text-muted-foreground">
+              <X />
+            </Button>
+          </span>
+        </div>
+        <div className="max-h-[42vh] overflow-y-auto px-3 py-2.5">
+          {!on ? (
+            <div className="text-xs text-muted-foreground">
+              <p className="mb-2.5">{t('rail.summaryIntro')}</p>
+              <div className="mb-2.5 flex items-center gap-2">
+                <span>{t('rail.language')}</span>
+                <LangToggle value={pendingLang} onChange={setPendingLang} />
+              </div>
+              <Button variant="default" onClick={enable}>{t('rail.summarizeConversation')}</Button>
             </div>
-          )}
-          {on && (
-            <div className="border-t border-hair px-3 py-1.5 text-end">
-              <button type="button" onClick={turnOff} className="cursor-pointer text-[11.5px] md:text-[10.5px] text-danger hover:underline">{t('rail.turnOff')}</button>
+          ) : busy && !summary.text ? (
+            <div className="flex items-center gap-2 text-xs text-muted-foreground"><span className="host-spinner size-3" /> {t('rail.generating')}</div>
+          ) : (
+            <div className="md text-sm" dir={dirOf(summary.text || '')}>
+              <Md>{summary.text || '…'}</Md>
             </div>
           )}
         </div>
-      )}
-    </span>
+        {on && (
+          <div className="flex items-center gap-2 border-t border-border px-3 py-2 text-xs text-muted-foreground">
+            <span className="flex items-center gap-1.5">
+              <Checkbox id={`sum-auto-${sid}`} checked={!!summary.autoUpdate} onCheckedChange={toggleAuto} />
+              <Label htmlFor={`sum-auto-${sid}`} className="cursor-pointer text-xs font-normal">{t('rail.autoUpdateEachTurn')}</Label>
+            </span>
+            {/* Output language: Auto (follow the conversation) | English */}
+            <span className="ms-auto">
+              <LangToggle value={lang} onChange={setLang} disabled={busy} />
+            </span>
+          </div>
+        )}
+        {on && (
+          <div className="border-t border-border px-3 py-1.5 text-end">
+            <Button variant="link" size="xs" onClick={turnOff} className="text-destructive">{t('rail.turnOff')}</Button>
+          </div>
+        )}
+      </PopoverContent>
+    </Popover>
   );
 }
 
 // 🖥 "Machine" — toggles the session side panel with the live shared desktop
-// (ScreenSidePanel.jsx). Highlighted while a request_screen is waiting on you.
+// (ScreenSidePanel.jsx). Amber dot (pulsing) while a request_screen is waiting on you.
 function MachineChip({ session }) {
   const t = useT();
   const s = useStore();
@@ -295,23 +276,20 @@ function MachineChip({ session }) {
   const open = screenPanelOpen(s, session.id);
   const pending = !!openScreenRequest(s, session.id);
   return (
-    <button
-      type="button"
-      onClick={() => setScreenPanel(!open)}
-      title={open ? t('screen.hidePanel') : t('screen.showPanel')}
-      aria-label={open ? t('screen.hidePanel') : t('screen.showPanel')}
-      aria-pressed={open}
-      className={`hidden h-6 cursor-pointer items-center gap-1 rounded-md border px-1.5 font-mono text-[11.5px] md:text-[10.5px] md:flex ${
-        pending
-          ? 'pulse-yellow border-ink bg-brand font-bold text-[#1a1a1a]'
-          : open
-            ? 'border-ink bg-bg text-fg'
-            : 'border-hair text-fgdim hover:border-ink hover:text-fg'
-      }`}
-    >
-      <Icon icon={faDisplay} />
-      <span>{t('screen.panelTitle')}</span>
-    </button>
+    <Tip label={open ? t('screen.hidePanel') : t('screen.showPanel')}>
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={() => setScreenPanel(!open)}
+        aria-label={open ? t('screen.hidePanel') : t('screen.showPanel')}
+        aria-pressed={open}
+        data-machine-chip
+        className={`hidden shrink-0 gap-1.5 px-2 md:inline-flex ${open ? 'bg-muted text-foreground' : 'text-muted-foreground'}`}
+      >
+        {pending ? <StatusDot status="warn" pulse /> : <Monitor />}
+        <span>{t('screen.panelTitle')}</span>
+      </Button>
+    </Tip>
   );
 }
 
@@ -321,101 +299,185 @@ function MachineChip({ session }) {
  * to the agent surface. The agent's own home chat never renders this header (it
  * is the Home tab of the agent surface instead).
  */
-export function BornFromChip({ session, className = '' }) {
-  const tt = useT();
+function useBornFrom(session) {
   const { agents } = useStore();
   const slug = session.metadata?.agent;
   if (!slug || session.metadata?.agentHome) return null;
   const agent = (agents || []).find((a) => a.slug === slug) || { slug, name: slug };
-  const name = agent.name || slug;
+  return { slug, agent, name: agent.name || slug };
+}
+
+export function BornFromChip({ session, className = '' }) {
+  const tt = useT();
+  const born = useBornFrom(session);
+  if (!born) return null;
+  const { slug, agent, name } = born;
   return (
-    <button
-      type="button"
-      data-born-from={slug}
-      title={tt('session.bornFromTitle', { name })}
-      onClick={(e) => { e.stopPropagation(); openAgent(slug); }}
-      className={`flex shrink-0 cursor-pointer items-center gap-1 rounded-full border px-1.5 py-px font-mono text-[11px] md:text-[9.5px] leading-none whitespace-nowrap hover:opacity-80 ${className}`}
-      style={{ borderColor: `${agent.color || '#c4c4c4'}66`, background: `${agent.color || '#c4c4c4'}14` }}
-    >
-      <AgentAvatar agent={agent} size={12} />
-      {tt('session.bornFrom', { name })}
-    </button>
+    <Tip label={tt('session.bornFromTitle', { name })}>
+      <button
+        type="button"
+        data-born-from={slug}
+        onClick={(e) => { e.stopPropagation(); openAgent(slug); }}
+        className={`${badgeVariants()} max-w-[14rem] cursor-pointer hover:text-foreground ${className}`}
+      >
+        <AgentAvatar agent={agent} size={12} />
+        <span className="truncate">{tt('session.bornFrom', { name })}</span>
+      </button>
+    </Tip>
   );
 }
 
-/* ---------- SIMPLE1: chat view toggle (Simple | Terminal) --------------------- */
+/* ---------- SIMPLE1: chat view (Simple | Terminal) ---------------------------- */
 
 // Per-session, persisted in metadata.chatMode (the host reads it every turn).
 // The Simple default for an unset session on a phone-width viewport is what
 // the human actually sees — persist it, so the model answers briefly too.
-export function ChatModeToggle({ session }) {
-  const t = useT();
+// D9: the control is a radio group inside the header's "…" menu now; the
+// effect below keeps running because the header is always mounted.
+function useChatModeDefault(session) {
   const isDesktop = useIsDesktop();
-  const mode = chatModeOf(session, isDesktop);
   const stored = session.metadata?.chatMode;
   useEffect(() => {
     if (!isDesktop && stored == null && !session.archived) setChatMode({ id: session.id }, 'simple');
   }, [session.id, isDesktop, stored, session.archived]);
-  const seg = (value, label) => {
-    const active = mode === value;
-    return (
-      <button
-        type="button"
-        data-chat-mode-btn={value}
-        aria-pressed={active}
-        onClick={() => { if (!active) setChatMode(session, value); }}
-        className={`h-full cursor-pointer px-2 text-[11.5px] md:text-[10.5px] leading-none ${active ? 'bg-chip font-bold text-fg' : 'text-fgdim hover:text-fg'}`}
-      >
-        {label}
-      </button>
-    );
-  };
+  return chatModeOf(session, isDesktop);
+}
+
+// The chat-view radio items and the text-size submenu live in ChatReadingMenu.jsx (the terminal
+// gear shows the same ones — one "reading" group, two doors).
+export { ChatModeItems };
+
+// The "…" menu: everything that is not state and not daily. Each item is two
+// clicks away (… then the item).
+function HeaderMenu({ session, mode, meta, onEdit, onArchive, onRestore, setAddTabOpen }) {
+  const t = useT();
+  const isDesktop = useIsDesktop();
+  const born = useBornFrom(session);
+  const ladder = ladderText(session.claude?.ladder, t);
+  const account = useSessionAccount(session);
+  const accountName = account ? account.email || account.label || t('rail.accountFallback') : null;
   return (
-    <span
-      role="group"
-      aria-label={t('rail.chatMode')}
-      title={t('rail.chatModeHint')}
-      data-chat-mode-toggle={mode}
-      className="flex h-[30px] shrink-0 overflow-hidden rounded-full border-[1.5px] border-border bg-bg font-mono md:h-[22px]"
-    >
-      {seg('simple', t('rail.chatModeSimple'))}
-      {seg('full', t('rail.chatModeTerminal'))}
-    </span>
+    <DropdownMenu>
+      <Tip label={t('rail.sessionActions')}>
+        <DropdownMenuTrigger asChild>
+          <Button variant="ghost" size="icon-sm" aria-label={t('rail.sessionActions')} data-header-menu className="shrink-0 text-muted-foreground aria-expanded:text-foreground">
+            <MoreHorizontal />
+          </Button>
+        </DropdownMenuTrigger>
+      </Tip>
+      <DropdownMenuContent align="end" className="w-64">
+        <DropdownMenuLabel className="flex flex-col gap-0.5 font-normal">
+          <span className="text-2xs text-muted-foreground">{engineTermName(session.engine)}</span>
+          {meta && <bdi className="truncate text-xs text-foreground">{meta}</bdi>}
+          {/* phones show only the model's name in the header chip — the whole sentence lives here */}
+          {!isDesktop && ladder && <span data-header-menu-ladder className="text-xs text-[#d9a521]">{ladder.full}</span>}
+        </DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        {/* phones: the "born from <agent>" chip does not fit the header row */}
+        {!isDesktop && born && (
+          <DropdownMenuItem data-header-menu-born-from onSelect={() => openAgent(born.slug)}>
+            <AgentAvatar agent={born.agent} size={16} /> <span className="min-w-0 truncate">{t('session.bornFrom', { name: born.name })}</span>
+          </DropdownMenuItem>
+        )}
+        {onEdit && (
+          <DropdownMenuItem onSelect={() => onEdit(session)}>
+            <Pencil /> {t('rail.editDetails')}
+          </DropdownMenuItem>
+        )}
+        {setAddTabOpen && (
+          <DropdownMenuItem onSelect={() => setAddTabOpen(true)}>
+            <Plus /> {t('rail.openUrlAsTab')}
+            <DropdownMenuShortcut>⌘T</DropdownMenuShortcut>
+          </DropdownMenuItem>
+        )}
+        {accountName && (
+          <DropdownMenuItem onSelect={() => window.dispatchEvent(new CustomEvent('host:open-accounts'))}>
+            <CircleUser /> <span className="min-w-0 truncate">{t('rail.runsOn', { name: accountName })}</span>
+          </DropdownMenuItem>
+        )}
+        <DropdownMenuSeparator />
+        <ChatModeItems
+          M={{ Group: DropdownMenuGroup, Label: DropdownMenuLabel, RadioGroup: DropdownMenuRadioGroup, RadioItem: DropdownMenuRadioItem }}
+          session={session}
+          mode={mode}
+        />
+        <ChatTextSizeSub />
+        <DropdownMenuSub>
+          <DropdownMenuSubTrigger data-chat-display-menu>{t('rail.chatDisplay')}</DropdownMenuSubTrigger>
+          <DropdownMenuSubContent>
+            <ChatDisplayItems
+              M={{ Group: DropdownMenuGroup, Label: DropdownMenuLabel, RadioGroup: DropdownMenuRadioGroup, RadioItem: DropdownMenuRadioItem }}
+              session={session}
+            />
+          </DropdownMenuSubContent>
+        </DropdownMenuSub>
+        {!session.archived && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem disabled={session.claude?.state === 'restarting'} onSelect={() => restartSession(session)}>
+              <RefreshCw /> {session.claude?.state === 'restarting' ? t('rail.restartingEllipsis') : t('rail.restartSession')}
+            </DropdownMenuItem>
+            <DropdownMenuItem variant="destructive" disabled={session.claude?.state === 'restarting'} onSelect={() => clearSessionConversation(session)}>
+              <Eraser /> {t('rail.clearConversation')}
+            </DropdownMenuItem>
+          </>
+        )}
+        {(session.archived ? onRestore : onArchive) && <DropdownMenuSeparator />}
+        {session.archived
+          ? onRestore && (
+            <DropdownMenuItem onSelect={() => onRestore(session)}>
+              <RotateCcw /> {t('rail.restoreSession')}
+            </DropdownMenuItem>
+          )
+          : onArchive && (
+            <DropdownMenuItem onSelect={() => onArchive(session)}>
+              <Archive /> {t('rail.archiveSession')}
+            </DropdownMenuItem>
+          )}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
-function TerminalHeader({ session }) {
+function TerminalHeader({ session, onEdit, onArchive, onRestore, setAddTabOpen }) {
+  const isDesktop = useIsDesktop();
   const [procPanel, setProcPanel] = useState(false);
+  const mode = useChatModeDefault(session);
   // Same derivation the rail row uses (Rail.jsx Row) — the header had no
   // session identifier at all when the rail (the only other place showing it)
   // is collapsed behind the mobile hamburger.
   const name = session.metadata?.ticket || session.title || session.id;
   const meta = [session.metadata?.ticket, session.metadata?.branch].filter(Boolean).join(' · ');
   return (
-    <div className="flex shrink-0 flex-wrap items-center gap-x-2.5 gap-y-1 border-b border-hair bg-panel px-3.5 py-2 text-xs text-fg sm:flex-nowrap">
+    <div data-engine={engineTermName(session.engine)} className="flex min-h-11 shrink-0 items-center gap-x-2 border-b border-border bg-background px-3 text-sm text-foreground md:px-4">
       <Dot color={session.color} size={9} />
-      <span className="shrink-0 font-bold whitespace-nowrap">{engineTermName(session.engine)}</span>
-      <Truncate text={name} className="min-w-0 font-mono text-[11px] font-bold text-fg" />
-      <BornFromChip session={session} />
-      {/* LADDER1: "running on haiku · fable's quota resets at 18:50" while on a weaker rung */}
-      <LadderBadge session={session} />
-      {/* ticket · branch — desktop-only detail; `name` above already covers mobile */}
-      {meta && <Truncate text={meta} className="hidden min-w-0 font-mono text-[11.5px] md:text-[10.5px] text-fgdim sm:block" />}
-      {session.metadata?.fromTriggerName && (
-        <TriggerTag
-          name={session.metadata.fromTriggerName}
-          className="max-w-[160px] text-[11.5px] md:text-[10.5px]"
-        />
-      )}
-      <div className="ms-auto flex shrink-0 items-center gap-2">
-        <AccountChip session={session} />
+      <Tip label={meta || undefined}>
+        <span className="min-w-12 shrink-[20]">
+          <Truncate text={name} className="block text-sm font-medium text-foreground" />
+        </span>
+      </Tip>
+      {/* The chips give way (clipped) before the buttons do: a long status or
+          ladder sentence used to push ⋯ and the summary off a phone screen.
+          The title's larger shrink lets it truncate down to its min-w first. */}
+      <div className="flex min-w-0 shrink items-center gap-x-2 overflow-hidden">
+        <StatusChip session={session} />
+        {/* phones: born-from and the full ladder sentence move into the ⋯ menu */}
+        {isDesktop && <BornFromChip session={session} />}
+        {/* LADDER1: "running on haiku · fable's quota resets at 18:50" while on a weaker rung */}
+        <LadderBadge session={session} compact={!isDesktop} />
+        {session.metadata?.fromTriggerName && (
+          <TriggerTag
+            name={session.metadata.fromTriggerName}
+            className="hidden max-w-[10rem] text-xs text-muted-foreground sm:inline-flex"
+          />
+        )}
+      </div>
+      <div className="ms-auto flex shrink-0 items-center gap-0.5">
         <ProcessChip session={session} onClick={() => setProcPanel(true)} />
         <ListenersChipCompact session={session} />
         <SummaryChip session={session} />
         <MachineChip session={session} />
-        <ChatModeToggle session={session} />
-        <TermControls session={session} />
-        <StatusChip session={session} />
+        <HeaderMenu session={session} mode={mode} meta={meta} onEdit={onEdit} onArchive={onArchive} onRestore={onRestore} setAddTabOpen={setAddTabOpen} />
       </div>
       {procPanel && <BgProcessesPanel session={session} onClose={() => setProcPanel(false)} />}
     </div>
@@ -428,35 +490,35 @@ export function ProgressStrip({ progress }) {
   const steps = progress?.steps;
   if (!Array.isArray(steps) || steps.length === 0) return null;
   return (
-    <div className="flex shrink-0 items-stretch border-b border-hair bg-panel">
+    <div className="flex shrink-0 items-stretch border-b border-border bg-background">
       {steps.map((step, i) => {
         const st = step.state || 'pending';
         return (
           <div
             key={i}
-            className={`flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 sm:px-3.5 sm:py-2.5 ${
-              i < steps.length - 1 ? 'border-r border-hair' : ''
-            } ${st === 'active' ? 'bg-[#FEFBE8]' : ''}`}
+            className={`flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 sm:px-4 sm:py-2 ${
+              i < steps.length - 1 ? 'border-e border-border' : ''
+            } ${st === 'active' ? 'bg-muted/60' : ''}`}
           >
             {st === 'done' ? (
-              <span className="flex h-[14px] w-[14px] shrink-0 items-center justify-center rounded-full bg-[#3C9A4E] text-[11px] md:text-[9px] text-white sm:h-[18px] sm:w-[18px] sm:text-[11px]">
-                <Icon icon={faCheck} />
+              <span className="flex size-4 shrink-0 items-center justify-center rounded-full bg-muted text-ok">
+                <Check className="size-3" />
               </span>
             ) : st === 'active' ? (
-              <span className="host-spinner h-[14px] w-[14px] shrink-0 sm:h-[18px] sm:w-[18px]" />
+              <span className="host-spinner size-4 shrink-0" />
             ) : st === 'error' ? (
-              <span className="flex h-[14px] w-[14px] shrink-0 items-center justify-center rounded-full bg-danger text-[11px] md:text-[9px] text-white sm:h-[18px] sm:w-[18px] sm:text-[11px]">
-                <Icon icon={faXmark} />
+              <span className="flex size-4 shrink-0 items-center justify-center rounded-full bg-muted text-destructive">
+                <X className="size-3" />
               </span>
             ) : (
-              <span className="h-[14px] w-[14px] shrink-0 rounded-full border-2 border-dashed border-[#cfcfcf] sm:h-[18px] sm:w-[18px]" />
+              <span className="size-4 shrink-0 rounded-full border border-dashed border-input" />
             )}
             {/* on phones only the active step keeps its label — the others are
                 just state icons, so five steps never overflow the viewport */}
             <span
               className={`truncate text-xs ${
-                st === 'pending' ? 'text-[#999]' : 'text-[#333]'
-              } ${st === 'active' ? 'font-mono' : 'hidden sm:block'}`}
+                st === 'pending' ? 'text-muted-foreground' : 'text-foreground'
+              } ${st === 'active' ? 'font-medium' : 'hidden sm:block'}`}
             >
               {step.label || ''}
             </span>
@@ -513,35 +575,34 @@ export function ListenerChips({ session }) {
   };
   return (
     // Desktop-only: on phones this whole row folds into the header's 👀 chip.
-    <div className="hidden shrink-0 flex-wrap items-center gap-1.5 border-b border-hair bg-panel px-3.5 py-2 sm:flex">
-      <span className="font-mono text-[11.5px] md:text-[10px] tracking-wide text-[#999] uppercase">{t('rail.watching')}</span>
+    <div className="hidden shrink-0 flex-wrap items-center gap-1.5 border-b border-border bg-background px-4 py-1.5 sm:flex">
+      <span className="text-xs text-muted-foreground">{t('rail.watching')}</span>
       {listeners.map((l) => {
         const errored = l.status === 'errored';
+        const contacts = listenerContacts(l);
         return (
-          <button
+          <Tip
             key={l.id}
-            type="button"
-            onClick={() => setOpenId(l.id)}
-            title={listenerContacts(l).length ? `${t('rail.contacts')} ${listenerContacts(l).map((c) => `${c.name || c.raw} (${(c.jids || []).join(', ')})`).join('; ')}` : t('rail.openListenerDetails')}
-            className={`inline-flex cursor-pointer items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] ${
-              errored
-                ? 'border-danger/40 bg-danger/10 text-danger'
-                : 'border-hair bg-white text-[#555] hover:bg-chip'
-            }`}
+            label={contacts.length ? `${t('rail.contacts')} ${contacts.map((c) => `${c.name || c.raw} (${(c.jids || []).join(', ')})`).join('; ')}` : t('rail.openListenerDetails')}
           >
-            <span><Icon icon={errored ? faTriangleExclamation : faEye} /></span>
-            <span className="font-medium">{l.label}</span>
-            {l.firedCount > 0 && !errored && <span className="text-[#999]">{t('rail.firedCount', { n: l.firedCount })}</span>}
-            <span
-              role="button"
-              tabIndex={0}
-              onClick={(e) => cancel(l.id, e)}
-              title={t('rail.cancelListener')}
-              className="ml-0.5 cursor-pointer text-[#bbb] hover:text-danger"
-            >
-              <Icon icon={faXmark} />
+            <span aria-label={contacts.length ? `${t('rail.contacts')} ${contacts.map((c) => `${c.name || c.raw} (${(c.jids || []).join(', ')})`).join('; ')}` : undefined} className={`${badgeVariants({ variant: 'outline' })} h-6 gap-1.5 ps-2 pe-1 ${errored ? 'text-destructive' : 'text-foreground'}`}>
+              <button type="button" onClick={() => setOpenId(l.id)} className="inline-flex cursor-pointer items-center gap-1.5 outline-none focus-visible:outline-2 focus-visible:outline-ring">
+                {errored ? <TriangleAlert /> : <Eye />}
+                <span className="font-medium">{l.label}</span>
+                {l.firedCount > 0 && !errored && <span className="text-muted-foreground">{t('rail.firedCount', { n: l.firedCount })}</span>}
+              </button>
+              <Tip label={t('rail.cancelListener')}>
+                <button
+                  type="button"
+                  onClick={(e) => cancel(l.id, e)}
+                  aria-label={t('rail.cancelListener')}
+                  className="flex size-4 cursor-pointer items-center justify-center rounded-sm text-muted-foreground hover:bg-muted hover:text-destructive"
+                >
+                  <X className="size-3" />
+                </button>
+              </Tip>
             </span>
-          </button>
+          </Tip>
         );
       })}
       {openId && (
@@ -586,11 +647,6 @@ function ListenersPanel({ session, initialId, onClose }) {
     if (el) el.scrollTop = el.scrollHeight;
   }, [detail?.log?.length]);
 
-  useEffect(() => {
-    const onKey = (e) => e.key === 'Escape' && onClose();
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
 
   const cancel = async (lid) => {
     try {
@@ -604,27 +660,20 @@ function ListenersPanel({ session, initialId, onClose }) {
   const log = detail?.log || [];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-3 md:p-6" onMouseDown={onClose}>
-      <div
-        className="flex h-[78vh] w-[920px] max-w-full flex-col overflow-hidden rounded-[12px] border-[1.5px] border-ink bg-panel shadow-[4px_4px_0_rgba(0,0,0,0.25)]"
-        onMouseDown={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center gap-2.5 border-b border-hair px-4 py-3">
-          <span className="text-[13px] leading-none"><Icon icon={faEye} /></span>
-          <span className="font-mono text-[13px] font-bold text-fg">{t('rail.listeners')}</span>
-          <span className="font-mono text-[11.5px] md:text-[10.5px] text-fgdim">{t('rail.nWatching', { n: list.length })}</span>
-          <button
-            type="button"
-            onClick={onClose}
-            className="ms-auto flex h-7 w-7 cursor-pointer items-center justify-center rounded-md border border-hair text-fgdim hover:border-ink hover:text-fg"
-          >
-            <Icon icon={faXmark} />
-          </button>
+    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent showClose={false} className="flex h-[78vh] w-[min(57.5rem,calc(100vw-1.5rem))] max-w-none flex-col gap-0 overflow-hidden p-0">
+        <div className="flex items-center gap-2.5 border-b border-border px-4 py-3">
+          <Eye className="size-4 text-muted-foreground" />
+          <DialogTitle>{t('rail.listeners')}</DialogTitle>
+          <DialogDescription className="text-xs">{t('rail.nWatching', { n: list.length })}</DialogDescription>
+          <Button variant="ghost" size="icon-sm" onClick={onClose} aria-label={t('rail.close')} className="ms-auto text-muted-foreground">
+            <X />
+          </Button>
         </div>
 
         <div className="flex min-h-0 flex-1 flex-col md:flex-row">
           {/* left: listener list — stacks on top of the details on phones */}
-          <div className="thin-scroll max-h-[30vh] shrink-0 overflow-y-auto border-b border-hair bg-bg md:max-h-none md:w-[300px] md:border-r md:border-b-0">
+          <div className="thin-scroll max-h-[30vh] shrink-0 overflow-y-auto border-b border-hair bg-bg md:max-h-none md:w-[300px] md:border-e md:border-b-0">
             {list.map((l) => (
               <button
                 key={l.id}
@@ -662,7 +711,7 @@ function ListenersPanel({ session, initialId, onClose }) {
                       <button
                         type="button"
                         onClick={() => cancel(sel.id)}
-                        className="ms-auto flex shrink-0 cursor-pointer items-center gap-1.5 rounded-md border-[1.5px] border-danger bg-transparent px-2.5 py-1 text-[11.5px] md:text-[10.5px] font-bold text-danger hover:bg-danger/10"
+                        className="ms-auto flex shrink-0 cursor-pointer items-center gap-1.5 rounded-md border-[1.5px] border-danger bg-transparent px-2.5 py-1 text-[11.5px] md:text-[10.5px] font-bold text-danger hover:bg-danger/10 coarse:min-h-11"
                       >
                         <Icon icon={faStop} className="text-[11px] md:text-[9px]" /> {t('rail.cancelLower')}
                       </button>
@@ -718,8 +767,8 @@ function ListenersPanel({ session, initialId, onClose }) {
             )}
           </div>
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -745,710 +794,9 @@ function ArchivedFooter({ session }) {
       <span className="min-w-0 flex-1 basis-52 text-[12px] text-fgdim">
         {t('rail.sessionArchivedReadonly')}
       </span>
-      <button
-        type="button"
-        onClick={restore}
-        disabled={busy}
-        className="ms-auto cursor-pointer rounded-lg border-[1.5px] border-ink bg-brand px-3 py-1 text-[11.5px] font-bold text-[#1a1a1a] disabled:opacity-50"
-      >
+      <Button variant="primary" onClick={restore} disabled={busy} className="ms-auto">
         {busy ? t('rail.restoring') : t('rail.restoreSession')}
-      </button>
-    </div>
-  );
-}
-
-/* ---------- pending prompts (queued while busy) ---------------------------- */
-
-function PendingPromptsPanel({ session }) {
-  const t = useT();
-  const isDesktop = useIsDesktop();
-  const prompts = session.pendingPrompts || [];
-  const autoPlay = !!session.promptAutoPlay;
-  const [open, setOpen] = useState(false);
-  // Optimistic order mirror for drag-sort (same HTML5 pattern as the rail's
-  // Pending tasks list — no library, plain draggable + dataTransfer).
-  const [order, setOrder] = useState(prompts.map((p) => p.id));
-  const dragId = useRef(null);
-  const [overId, setOverId] = useState(null);
-  useEffect(() => {
-    setOrder(prompts.map((p) => p.id));
-  }, [prompts.map((p) => p.id).join('|')]);
-  if (!prompts.length) return null;
-  const byId = new Map(prompts.map((p) => [p.id, p]));
-  const rows = order.map((pid) => byId.get(pid)).filter(Boolean);
-
-  const play = (pid) => api.post(`/sessions/${session.id}/prompts/${pid}/play`).catch(toastError);
-  const del = (pid) => api.del(`/sessions/${session.id}/prompts/${pid}`).catch(toastError);
-  const toggleAuto = () =>
-    api.post(`/sessions/${session.id}/prompts/autoplay`, { on: !autoPlay }).catch(toastError);
-
-  const onDragStart = (e, pid) => {
-    dragId.current = pid;
-    e.dataTransfer.effectAllowed = 'move';
-    // Tag the drag so ancestors (the composer's attachment drop zone) can tell
-    // it apart from a file/session drag and ignore it.
-    e.dataTransfer.setData('application/x-arigami-prompt', pid);
-  };
-  const onDragOver = (e, pid) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (pid !== overId) setOverId(pid);
-  };
-  const onDropRow = (e, pid) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setOverId(null);
-    const from = order.indexOf(dragId.current);
-    const to = order.indexOf(pid);
-    dragId.current = null;
-    if (from === -1 || to === -1 || from === to) return;
-    const ids = [...order];
-    ids.splice(to, 0, ...ids.splice(from, 1));
-    setOrder(ids);
-    api.post(`/sessions/${session.id}/prompts/reorder`, { order: ids }).catch(toastError);
-  };
-
-  return (
-    <div className="relative">
-      {/* collapsed pill row */}
-      <div className="mb-1.5 flex items-center gap-2">
-        <button
-          type="button"
-          onClick={() => setOpen((v) => !v)}
-          className="flex cursor-pointer items-center gap-1.5 rounded-full border-[1.5px] border-border bg-bg px-2.5 py-1 text-[11px] text-fg hover:border-ink"
-          title={open ? t('rail.hideQueuedPrompts') : t('rail.showQueuedPrompts')}
-        >
-          <span><Icon icon={faHourglassHalf} /></span>
-          <span className="font-mono font-bold">{prompts.length}</span>
-          <span className="text-fgdim">{t('rail.queued')}</span>
-          <span className="text-[11px] md:text-[9px] text-fgdim"><Icon icon={open ? faCaretDown : faCaretUp} /></span>
-        </button>
-        <label
-          className="flex cursor-pointer items-center gap-1.5 text-[11.5px] md:text-[10.5px] text-fgdim"
-          title={t('rail.autoPlayPromptHint', { engine: engineLabel(session.engine) })}
-        >
-          <span
-            onClick={toggleAuto}
-            className="relative h-[13px] w-[22px] cursor-pointer rounded-full transition-colors"
-            style={{ background: autoPlay ? '#F9D312' : '#d6d6d6' }}
-          >
-            <span
-              className="absolute top-px h-[11px] w-[11px] rounded-full bg-white transition-[left]"
-              style={{ left: autoPlay ? 10 : 1, border: `1px solid ${autoPlay ? '#2a2a2a' : '#999'}` }}
-            />
-          </span>
-          {t('rail.autoPlay')}
-        </label>
-        {/* Auto-play is on and prompts wait, but the host is holding the queue
-            back until the human answers the action bar above — say so, instead
-            of leaving a queue that looks stuck on an idle session. */}
-        {autoPlay && session.autoPlayHold === 'action' && (
-          <span className="text-[11.5px] md:text-[10.5px] text-fgdim" title={t('rail.autoPlayHoldActionHint')}>
-            {t('rail.autoPlayHoldAction')}
-          </span>
-        )}
-      </div>
-      {/* floating list */}
-      {open && (
-        <div className="absolute bottom-full start-0 z-30 mb-1 w-full max-w-[560px] rounded-[10px] border-[1.5px] border-ink bg-panel p-2 shadow-[3px_3px_0_rgba(42,42,42,0.18)]">
-          <div className="mb-1.5 px-1 font-mono text-[11px] md:text-[9.5px] tracking-[0.08em] text-fgdim uppercase">
-            {t(isDesktop ? 'rail.queuedPromptsHint' : 'rail.queuedPromptsHintTouch')}
-          </div>
-          <div className="thin-scroll flex max-h-[38vh] flex-col gap-1 overflow-y-auto">
-            {rows.map((p) => (
-              <div
-                key={p.id}
-                draggable
-                onDragStart={(e) => onDragStart(e, p.id)}
-                onDragOver={(e) => onDragOver(e, p.id)}
-                onDrop={(e) => onDropRow(e, p.id)}
-                onDragEnd={() => setOverId(null)}
-                className={`flex items-start gap-2 rounded-lg border px-2 py-1.5 ${
-                  overId === p.id ? 'border-ink bg-chip/60' : 'border-hair bg-bg'
-                }`}
-              >
-                <span className="cursor-grab pt-px text-[11px] text-fgdim select-none" title={t('rail.dragToReorder')}>
-                  <Icon icon={faGripVertical} />
-                </span>
-                <span dir="auto" className="min-w-0 flex-1 text-[11.5px] leading-snug break-words text-fg">
-                  {p.text.length > 220 ? `${p.text.slice(0, 220)}…` : p.text}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => play(p.id)}
-                  title={
-                    session.claude?.state === 'working'
-                      ? t('rail.interruptSendNow')
-                      : t('rail.sendPromptNow')
-                  }
-                  className="flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-md border border-border bg-panel text-[11.5px] md:text-[10px] text-fg hover:border-ink"
-                >
-                  <Icon icon={faPlay} />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => del(p.id)}
-                  title={t('rail.removeFromQueue')}
-                  className="flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-md border border-border bg-panel text-[11.5px] md:text-[10px] text-fgdim hover:border-danger hover:text-danger"
-                >
-                  <Icon icon={faXmark} />
-                </button>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function ChatFooter({ session }) {
-  const t = useT();
-  // Draft text/attachments are mirrored into the global store keyed by session
-  // id, so they survive switching to another session and back — local state
-  // alone doesn't, since ChatFooter unmounts when the active session changes.
-  const [text, setTextLocal] = useState(() => getDraft(session.id).text);
-  const [active, setActive] = useState(0);
-  const [dismissed, setDismissed] = useState(false);
-  const [panelTab, setPanelTab] = useState(null); // null = closed; else a tab id
-  const [attachments, setAttachmentsLocal] = useState(() => getDraft(session.id).attachments);
-  const [dragging, setDragging] = useState(false);
-  const [quoted, setQuoted] = useState(null); // { kind, text, ts }
-  const isDesktop = useIsDesktop();
-  const taRef = useRef(null);
-  const fileRef = useRef(null);
-  const setText = (updater) =>
-    setTextLocal((prev) => {
-      const next = typeof updater === 'function' ? updater(prev) : updater;
-      setDraft(session.id, { text: next });
-      return next;
-    });
-  const setAttachments = (updater) =>
-    setAttachmentsLocal((prev) => {
-      const next = typeof updater === 'function' ? updater(prev) : updater;
-      setDraft(session.id, { attachments: next });
-      return next;
-    });
-  // VOICE1: the composer mic dictates — the transcript is appended to the draft
-  // (with a space) and the textarea gets focus; nothing is sent.
-  useEffect(() => setDictationSink((spoken) => {
-    setText((prev) => appendDictation(prev, spoken));
-    taRef.current?.focus();
-  }), [session.id]);
-  // Covers the case where ChatFooter stays mounted and only `session` changes.
-  const prevSessionId = useRef(session.id);
-  useEffect(() => {
-    if (prevSessionId.current === session.id) return;
-    prevSessionId.current = session.id;
-    const d = getDraft(session.id);
-    setTextLocal(d.text);
-    setAttachmentsLocal(d.attachments);
-  }, [session.id]);
-  const working = session.claude?.state === 'working';
-  // List payloads carry slim capabilities; the slash palette + Capabilities
-  // panel need the full command/tool lists — fetched lazily, cached in the store.
-  useStore(); // re-render when capsFull lands
-  const caps = fullCapabilities(session);
-  const capsSlim = !!session.claude?.capabilities?.slim;
-  const capsSessionId = session.claude?.sessionId;
-  useEffect(() => {
-    if (capsSlim) ensureFullCapabilities(session);
-  }, [session.id, capsSlim, capsSessionId]); // eslint-disable-line react-hooks/exhaustive-deps
-  // Rich command objects from the initialize handshake; fall back to legacy
-  // bare-string slashCommands captured before this shape existed.
-  const commands = caps?.commands || (caps?.slashCommands || []).map((name) => ({ name }));
-
-  // A4: host agent commands (/team, /as, /agent new) + skills with a `slash:`
-  // field (/plan, /review, user skills) join the palette; "@" suggests agents.
-  const { agents, sessions: sessionsAll, extensions } = useStore();
-  const skills = useSkills();
-  const [teamOpen, setTeamOpen] = useState(false);
-  // EXT: a manifest tab with openFrom:["slash:/pick"] joins the palette last —
-  // after the agent commands and the skills, which own their names first.
-  const extraItems = useMemo(
-    () => [...agentCommandItems(), ...skillSlashItems(skills), ...extSlashItems(extensions)],
-    [skills, extensions]
-  );
-
-  // The palette shows while the input is a single "/token" (no space yet) —
-  // "/agent new" is two words, so the second word is allowed for that one.
-  const slashMatch = /^\/([\w:-]*)$/.exec(text) || /^\/(agent(?: [a-z]*)?)$/.exec(text);
-  const query = slashMatch ? slashMatch[1] : '';
-  const items = useMemo(
-    () => (slashMatch ? buildSlashItems(query, commands, extraItems) : []),
-    [slashMatch, query, commands, extraItems]
-  );
-  const mq = mentionQuery(text);
-  const mentionItems = useMemo(() => (mq !== null ? buildMentionItems(mq, agents) : []), [mq, agents]);
-  const mentionOpen = mq !== null && !dismissed && mentionItems.length > 0;
-  const paletteOpen = !!slashMatch && !dismissed && items.length > 0;
-  useEffect(() => setActive(0), [query, mq]);
-  useEffect(() => { if (!slashMatch && mq === null) setDismissed(false); }, [slashMatch, mq]);
-
-  const focusInput = () => requestAnimationFrame(() => taRef.current?.focus());
-
-  // Command bus → focus the composer (voice: "let me type", "focus the input").
-  useEffect(() => {
-    const onFocus = () => focusInput();
-    window.addEventListener('host:focus-input', onFocus);
-    return () => window.removeEventListener('host:focus-input', onFocus);
-  }, []);
-
-  // Quote: ChatPane fires 'host:quote' when the user clicks ↩ on a message.
-  useEffect(() => {
-    const onQuote = (e) => {
-      const ev = e.detail?.event;
-      if (!ev) return;
-      const txt = ev.text ?? ev.content ?? ev.message ?? ev.output ?? '';
-      const text = typeof txt === 'string' ? txt : Array.isArray(txt) ? txt.map(p => typeof p === 'string' ? p : p?.text ?? '').join('\n') : String(txt);
-      setQuoted({ kind: ev.kind, text, ts: ev.ts });
-      focusInput();
-    };
-    window.addEventListener('host:quote', onQuote);
-    return () => window.removeEventListener('host:quote', onQuote);
-  }, []);
-
-
-  // Accept a palette item: host "inspect" commands open the panel; real
-  // commands are inserted as "/name " so the user can add args, then ↵ sends.
-  const accept = (item) => {
-    if (!item) return;
-    // EXT: an extension slash takes no arguments — picking it opens the tab.
-    if (item.extTab) { runHostCommand({ type: 'ext-tab', ...item.extTab }); setText(''); return; }
-    if (item.agentCmd) {
-      // A4: /team runs at once; /as and /agent new want arguments.
-      if (item.run) { runHostCommand({ type: item.agentCmd }); setText(''); return; }
-      setText('/' + item.name + ' ');
-      setDismissed(true);
-      focusInput();
-    } else if (item.host) {
-      setPanelTab(item.tab);
-      setText('');
-    } else {
-      setText('/' + item.name + ' ');
-      setDismissed(true);
-      focusInput();
-    }
-  };
-
-  const acceptMention = (a) => {
-    if (!a) return;
-    setText((t) => completeMention(t, a.slug));
-    setDismissed(true);
-    focusInput();
-  };
-
-  // A4: the host-side outcomes of a submission (never sent to claude).
-  const runHostCommand = async (r) => {
-    if (r.type === 'team') { setTeamOpen(true); return; }
-    if (r.type === 'as-usage') { toastError(t('dialogs.asUsage')); return; }
-    if (r.type === 'unknown-agent') { toastError(t('dialogs.unknownAgent', { name: r.name })); return; }
-    if (r.type === 'agent-new') {
-      // UX2: no session-spawning "interview" — opens the same agent surface an
-      // existing agent uses, just in create mode (AgentView, slug '__new__').
-      openAgent('__new__', 'persona', r.name || '');
-      return;
-    }
-    if (r.type === 'adopt-usage') { toastError(t('dialogs.adoptUsage')); return; }
-    if (r.type === 'adopt') {
-      await api.post(`/sessions/${session.id}/adopt-agent`, { agent: r.agent.slug });
-      return;
-    }
-    if (r.type === 'as') {
-      await api.post(`/sessions/${session.id}/delegate`, { agent: r.agent.slug, text: r.text, mode: 'as' });
-      return;
-    }
-    if (r.type === 'ext-tab') {
-      const tab = await api.post(`/sessions/${session.id}/tabs`, { type: 'ext', ext: r.ext, tab: r.tab });
-      if (tab?.id) await api.post(`/sessions/${session.id}/activate-tab`, { tabId: tab.id });
-      return;
-    }
-    if (r.type === 'mention') {
-      for (const a of r.agents) await api.post(`/sessions/${session.id}/delegate`, { agent: a.slug, text: r.text, mode: 'mention' });
-    }
-  };
-
-  // Insert a command from the Capabilities panel into the input.
-  const insertCommand = (name) => {
-    setPanelTab(null);
-    setText('/' + name + ' ');
-    focusInput();
-  };
-
-  const isArchiveName = (name) => /\.(zip|tar|tar\.gz|tgz)$/i.test(name || '');
-
-  // ---- attachments (file picker / drag-drop / paste) ----
-  // ZIP: anything under STREAM_THRESHOLD still rides inline as base64 in the
-  // message body; at/past it, it streams to .../attachments first (needed for
-  // archives — the 32MB JSON body cap made anything but a small screenshot
-  // fail outright) and the chip tracks upload progress until the server's
-  // descriptor comes back (with the extracted tree, for a zip/tar).
-  const addFiles = async (fileList) => {
-    const arr = Array.from(fileList || []);
-    // ZIP2: a re-drag of a file already in the draft (same name+size) is
-    // dropped here instead of spooling another full copy server-side.
-    const fresh = arr.filter((f) => !isAlreadyAttached(attachments, f));
-    const oversized = fresh.filter((f) => f.size > HARD_CAP);
-    for (const f of oversized) toastError(new Error(t('rail.attachTooLarge', { name: f.name })));
-    const accepted = fresh.filter((f) => f.size <= HARD_CAP);
-    const small = accepted.filter((f) => !shouldStream(f));
-    const big = accepted.filter(shouldStream);
-
-    if (small.length) {
-      const read = await Promise.all(
-        small.map(async (f) => ({ name: f.name, type: f.type || 'application/octet-stream', size: f.size, dataBase64: await fileToBase64(f) }))
-      );
-      setAttachments((a) => [...a, ...read.filter((x) => x.dataBase64)].slice(0, 10));
-    }
-    for (const f of big) {
-      const placeholder = pendingAttachment(f);
-      setAttachments((a) => [...a, placeholder].slice(0, 10));
-      try {
-        const descriptor = await uploadAttachment(session.id, f, {
-          onProgress: (p) => setAttachments((a) => applyUploadEvent(a, placeholder.uid, { type: 'progress', progress: p })),
-        });
-        setAttachments((a) => applyUploadEvent(a, placeholder.uid, { type: 'done', descriptor }));
-      } catch (e) {
-        setAttachments((a) => applyUploadEvent(a, placeholder.uid, { type: 'fail', error: errText(e) }));
-      }
-    }
-  };
-  const removeAttachment = (i) => {
-    // ZIP2: a streamed upload already landed on disk (has `.path`) — reclaim
-    // the spooled copy + extraction dir now that the chip is gone, instead of
-    // leaving it in ~/.arigami/uploads until someone cleans it up by hand.
-    const item = attachments[i];
-    if (item?.path && !item.uploading) {
-      api.del(`/sessions/${session.id}/attachments?path=${encodeURIComponent(item.path)}`).catch(() => {});
-    }
-    setAttachments((a) => a.filter((_, k) => k !== i));
-  };
-
-  // Guards against a double-fire from the Enter-keydown handler and the Send
-  // button's onClick landing in the same tick, before React re-renders to
-  // reflect the cleared `text` — without this, one submission could POST twice.
-  const sendingRef = useRef(false);
-  const send = async () => {
-    if (sendingRef.current) return;
-    // NOTE: `t` is the i18n function in this component — the composer text is
-    // `draft` (it used to shadow `t`, so nothing here could be translated).
-    const draft = text.trim();
-    if (!draft && !attachments.length) return;
-    if (attachments.some((a) => a.uploading || a.failed)) {
-      toastError(new Error(t('rail.attachStillUploading')));
-      return;
-    }
-    sendingRef.current = true;
-    const sentAttachments = attachments;
-    // Prepend the quoted message as a blockquote so the model sees context.
-    const quotedPrefix = quoted
-      ? `> ${quoted.text.split('\n').join('\n> ')}\n\n`
-      : '';
-    // A4: slash-commands / @mentions the host answers itself (see lib/composer.js).
-    const resolved = resolveSubmission(draft, { skills, agents, extensions });
-    if (resolved.type !== 'plain' && resolved.type !== 'skill') {
-      setText('');
-      try {
-        await runHostCommand(resolved.type === 'mention' ? { ...resolved, text: quotedPrefix + resolved.text } : resolved);
-      } catch (e) {
-        // A5 (#10): a FAILED command must never go back into the box. It used to
-        // be restored there, so the next thing the human typed was appended to it
-        // and Enter silently re-ran the same failing slash line instead of sending
-        // a message. Say what happened; put the text back only if they ask.
-        toastError(t('chat.commandFailed', { msg: errText(e) }), {
-          action: { label: t('chat.commandRestore'), onClick: () => { setText(draft); focusInput(); } },
-        });
-      } finally {
-        sendingRef.current = false;
-      }
-      return;
-    }
-    // A skill slash (/plan …) is rewritten to its plugin command (/arigami:dispatch …).
-    const fullText = quotedPrefix + (resolved.type === 'skill' ? resolved.text : draft);
-    const payload = {
-      text: fullText,
-      attachments: sentAttachments.map(({ name, type, dataBase64, path }) => (path ? { name, type, path } : { name, type, dataBase64 })),
-    };
-    setLastSent(session.id, { text: fullText, attachments: sentAttachments });
-    setText('');
-    setAttachments([]);
-    setQuoted(null);
-    try {
-      await api.post(`/sessions/${session.id}/message`, payload);
-    } catch (e) {
-      // Restore the draft — but SAY why it came back (a refused turn used to look
-      // like Enter did nothing at all): a budget 429 renders localized (A5 #11).
-      setText(draft);
-      setAttachments(sentAttachments);
-      toastError(e);
-    } finally {
-      sendingRef.current = false;
-    }
-  };
-
-  const interrupt = () => interruptSession(session.id);
-
-  // Queue the composer text as a pending prompt instead of interjecting into
-  // the running turn (attachments stay in the draft — the queue is text-only).
-  const queue = async () => {
-    const t = text.trim();
-    if (!t) return;
-    setText('');
-    try {
-      await api.post(`/sessions/${session.id}/prompts`, { text: t });
-    } catch (e) {
-      setText(t); // restore on failure
-      toastError(e);
-    }
-  };
-
-  // Stopping a running turn (Esc, ■, or a voice "stop") hands the in-flight
-  // prompt back to this session's draft — sync it in if we're still mounted.
-  useEffect(() => {
-    const onRestored = (e) => {
-      if (e.detail?.sessionId !== session.id) return;
-      const d = getDraft(session.id);
-      setTextLocal(d.text);
-      setAttachmentsLocal(d.attachments);
-    };
-    window.addEventListener('host:draft-restored', onRestored);
-    return () => window.removeEventListener('host:draft-restored', onRestored);
-  }, [session.id]);
-
-  const onDrop = (e) => {
-    e.preventDefault();
-    setDragging(false);
-    // A rail session row dropped here becomes an inline reference the agent can
-    // act on (it can read that session via the host MCP's list_sessions).
-    const sessRef = e.dataTransfer?.getData('application/x-arigami-session');
-    if (sessRef) {
-      try {
-        const { id: sid, title } = JSON.parse(sessRef);
-        if (sid && sid !== session.id) {
-          const ref = `[host session: "${title || sid}" — id ${sid}] `;
-          setText((t) => (t ? `${t} ${ref}` : ref));
-          focusInput();
-        }
-      } catch { /* malformed payload — ignore */ }
-      return;
-    }
-    if (e.dataTransfer?.files?.length) addFiles(e.dataTransfer.files);
-  };
-  const onPaste = (e) => {
-    const files = [...(e.clipboardData?.items || [])]
-      .filter((it) => it.kind === 'file')
-      .map((it) => it.getAsFile())
-      .filter(Boolean);
-    if (files.length) { e.preventDefault(); addFiles(files); }
-  };
-
-  const onKeyDown = (e) => {
-    if (mentionOpen) {
-      if (e.key === 'ArrowDown') { e.preventDefault(); setActive((i) => Math.min(mentionItems.length - 1, i + 1)); return; }
-      if (e.key === 'ArrowUp') { e.preventDefault(); setActive((i) => Math.max(0, i - 1)); return; }
-      if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); acceptMention(mentionItems[active]); return; }
-      if (e.key === 'Escape') { e.preventDefault(); setDismissed(true); return; }
-    }
-    if (paletteOpen) {
-      if (e.key === 'ArrowDown') { e.preventDefault(); setActive((i) => Math.min(items.length - 1, i + 1)); return; }
-      if (e.key === 'ArrowUp') { e.preventDefault(); setActive((i) => Math.max(0, i - 1)); return; }
-      if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); accept(items[active]); return; }
-      if (e.key === 'Escape') { e.preventDefault(); setDismissed(true); return; }
-    }
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      send();
-    }
-  };
-
-  return (
-    <div
-      // bottom padding grows by the home-indicator inset on phones (0 elsewhere)
-      className="relative shrink-0 border-t border-hair bg-panel px-2.5 pt-2 pb-[calc(0.5rem+env(safe-area-inset-bottom,0px))] sm:px-3.5 sm:pt-2.5 sm:pb-[calc(0.625rem+env(safe-area-inset-bottom,0px))]"
-      onDragOver={(e) => {
-        // Only react to drags this zone can accept — real files or a rail
-        // session row. Internal drags (queued-prompt reorder) fall through.
-        const types = e.dataTransfer?.types || [];
-        const kind = types.includes('application/x-arigami-session')
-          ? 'session'
-          : types.includes('Files')
-            ? 'file'
-            : null;
-        if (!kind) return;
-        e.preventDefault();
-        if (!dragging) setDragging(kind);
-      }}
-      onDragLeave={(e) => { if (e.currentTarget === e.target) setDragging(false); }}
-      onDrop={onDrop}
-    >
-      {paletteOpen && <SlashPalette items={items} active={active} onPick={accept} onHover={setActive} />}
-      {mentionOpen && !paletteOpen && <MentionPalette items={mentionItems} active={active} onPick={acceptMention} onHover={setActive} />}
-      {teamOpen && (
-        <TeamPanel agents={agents} sessions={sessionsAll} onClose={() => setTeamOpen(false)} onMention={(a) => { setText((t) => (t ? `${t} @${a.slug} ` : `@${a.slug} `)); focusInput(); }} />
-      )}
-      {panelTab && (
-        <CapabilitiesPanel capabilities={caps} session={session} initialTab={panelTab} onClose={() => setPanelTab(null)} onPickCommand={insertCommand} />
-      )}
-      {dragging && (
-        <div className="pointer-events-none absolute inset-1 z-20 flex items-center justify-center rounded-[10px] border-2 border-dashed border-ink bg-chip/80 font-mono text-[12px] font-bold text-[#4a3f12]">
-          {dragging === 'session' ? t('rail.dropReferenceSession') : t('rail.dropFilesToAttach')}
-        </div>
-      )}
-
-      <PendingPromptsPanel session={session} />
-
-      {attachments.length > 0 && (
-        <div className="mb-2 flex flex-wrap gap-2">
-          {attachments.map((a, i) => {
-            const archiveLike = a.archive || isArchiveName(a.name);
-            // ZIP3: a partial extraction (entriesTotal > entryCount, no hard
-            // error) must look like a problem, not a quiet success — the bug
-            // this fixes was a chip that reported 57/1335 as if nothing had
-            // gone wrong.
-            const archivePartial = !!(a.archive && !a.archive.error && a.archive.entriesTotal > 0 && a.archive.entriesTotal !== a.archive.entryCount);
-            const archiveProblem = !a.uploading && !!(a.failed || (a.archive && (a.archive.error || archivePartial)));
-            return (
-              <div
-                key={i}
-                title={a.archive?.dir || undefined}
-                className={`flex items-center gap-1.5 rounded-md border py-1 pe-1 ps-1.5 ${archiveProblem ? 'border-danger bg-[#fdf6f5]' : 'border-border bg-bg'}`}
-              >
-                {a.type?.startsWith('image/') && a.dataBase64 ? (
-                  <img src={`data:${a.type};base64,${a.dataBase64}`} alt="" className="h-6 w-6 shrink-0 rounded object-cover" />
-                ) : (
-                  <span className={`text-[12px] ${archiveProblem ? 'text-danger' : 'text-fgdim'}`}>
-                    <Icon icon={archiveLike ? faBoxArchive : a.type?.startsWith('image/') ? faImage : faFile} />
-                  </span>
-                )}
-                <span className="flex min-w-0 flex-col leading-tight">
-                  <span className="max-w-[160px] truncate font-mono text-[11.5px] md:text-[10.5px] text-fg">{a.name}</span>
-                  {a.uploading && (
-                    <span className="font-mono text-[11px] md:text-[9px] text-fgdim">{t('rail.attachUploading', { pct: Math.round((a.progress || 0) * 100) })}</span>
-                  )}
-                  {a.failed && (
-                    <span className="max-w-[160px] truncate font-mono text-[11px] md:text-[9px] text-danger">{t('rail.attachUploadFailed', { msg: a.error || '' })}</span>
-                  )}
-                  {!a.uploading && !a.failed && a.archive && (
-                    <span className={`font-mono text-[11px] md:text-[9px] ${archiveProblem ? 'text-danger' : 'text-fgdim'}`}>
-                      {a.archive.error
-                        ? t('rail.archiveExtractFailed')
-                        : archivePartial
-                          ? t('rail.archivePartial', { n: a.archive.entryCount, total: a.archive.entriesTotal })
-                          : a.archive.entryCount === 1
-                            ? t('rail.archiveOneEntry')
-                            : t('rail.archiveNEntries', { n: a.archive.entryCount })}
-                      {a.archive.rejectedCount > 0 && ` · ${t('rail.archiveRejected', { n: a.archive.rejectedCount })}`}
-                    </span>
-                  )}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => removeAttachment(i)}
-                  title={t('rail.remove')}
-                  className="flex h-4 w-4 shrink-0 cursor-pointer items-center justify-center rounded text-[11.5px] md:text-[10px] text-fgdim hover:bg-hair hover:text-danger"
-                >
-                  <Icon icon={faXmark} />
-                </button>
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      <div className="flex items-end gap-2">
-        <input
-          ref={fileRef}
-          type="file"
-          multiple
-          hidden
-          onChange={(e) => { addFiles(e.target.files); e.target.value = ''; }}
-        />
-        <button
-          type="button"
-          title={t('rail.attachFiles')}
-          onClick={() => fileRef.current?.click()}
-          className="flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-[9px] border-[1.5px] border-border bg-bg text-[14px] text-fgdim hover:border-ink hover:text-fg"
-        >
-          <Icon icon={faPaperclip} />
-        </button>
-        {/* phones: typing "/" opens the same palette — the button isn't worth
-            the composer width it costs */}
-        <button
-          type="button"
-          title={t('rail.slashCommandsCapabilities')}
-          onClick={() => setPanelTab('commands')}
-          className="hidden h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-[9px] border-[1.5px] border-border bg-bg font-mono text-[13px] text-fgdim hover:border-ink hover:text-fg sm:flex"
-        >
-          /
-        </button>
-        <div className="flex min-w-0 flex-1 flex-col rounded-[10px] border-[1.5px] border-border focus-within:border-[#9a9a9a]">
-          {quoted && (
-            <div className="flex items-start gap-2 border-b border-border bg-[var(--term-hover,#f5f5f5)] px-3 py-1.5">
-              <Icon icon={faReply} className="mt-0.5 text-[11.5px] md:text-[10px] text-brand opacity-70" />
-              <span dir="auto" className="min-w-0 flex-1 truncate font-mono text-[11.5px] md:text-[10.5px] text-fgdim">
-                {quoted.text.length > 120 ? quoted.text.slice(0, 120) + '…' : quoted.text}
-              </span>
-              <button
-                type="button"
-                onClick={() => setQuoted(null)}
-                className="shrink-0 cursor-pointer text-[11.5px] md:text-[10px] text-fgdim hover:text-fg"
-              >
-                <Icon icon={faXmark} />
-              </button>
-            </div>
-          )}
-          <div className="flex items-end gap-2 px-3 py-2">
-          <textarea
-            ref={taRef}
-            data-composer
-            rows={1}
-            dir={dirOf(text)}
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            onKeyDown={onKeyDown}
-            onPaste={onPaste}
-            placeholder={
-              isDesktop
-                ? t('rail.replyPlaceholder', { engine: engineLabel(session.engine) })
-                : t('rail.replyPlaceholderShort', { engine: engineLabel(session.engine) })
-            }
-            className="max-h-32 min-w-0 flex-1 resize-none bg-transparent text-[16px] leading-relaxed outline-none placeholder:text-[#aaa] sm:text-[11.5px]"
-            style={{ fieldSizing: 'content' }}
-          />
-          </div>
-        </div>
-        {working && (
-          <button
-            type="button"
-            title={t('rail.interruptClaude', { engine: engineLabel(session.engine) })}
-            onClick={interrupt}
-            className="flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-[9px] border-[1.5px] border-danger bg-bg text-[11px] text-danger hover:bg-[#fdf6f5]"
-          >
-            <Icon icon={faStop} />
-          </button>
-        )}
-        {working && (
-          <button
-            type="button"
-            title={t('rail.queuePendingHint')}
-            onClick={queue}
-            disabled={!text.trim()}
-            className="flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-[9px] border-[1.5px] border-border bg-bg text-[13px] text-fgdim hover:border-ink hover:text-fg disabled:cursor-default disabled:opacity-40"
-          >
-            <Icon icon={faHourglassHalf} />
-          </button>
-        )}
-        <MicButton mode="dictate" />
-        <button
-          type="button"
-          title={t('rail.send')}
-          onClick={send}
-          disabled={(!text.trim() && !attachments.length) || attachments.some((a) => a.uploading)}
-          className="flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-[9px] border-[1.5px] border-border bg-bg text-sm text-fgdim hover:border-ink hover:text-fg disabled:cursor-default disabled:opacity-40"
-        >
-          <Icon icon={faArrowUp} />
-        </button>
-      </div>
+      </Button>
     </div>
   );
 }
@@ -1534,6 +882,39 @@ function UrlTab({ tab, active, session }) {
       bridgeRef.current = null;
     };
   }, [extName, session?.id, tab.id]);
+  // The host's own PR / ticket pages (server/assets/card.jsx) may hand this session's chat a prompt — the PR tab's
+  // "Merge via chat". Only from that iframe, and only while it still shows one of those pages (a same-origin
+  // proxied site could post too, so the document's path is checked, not just the window).
+  useEffect(() => {
+    if (extName || !session?.id || !/^\/__(pr|ticket)\//.test(String(tab.url || ''))) return;
+    const onMsg = async (e) => {
+      const w = iframeRef.current?.contentWindow;
+      const d = e.data;
+      if (!w || e.source !== w || !d || d.type !== 'arigami:host-page') return;
+      let path = '';
+      try { path = w.location.pathname; } catch { return; }
+      if (!/^\/__(pr|ticket)\//.test(path)) return;
+      const reply = (m) => { try { w.postMessage({ type: 'arigami:host-page', ...m }, '*'); } catch { /* gone */ } };
+      if (d.op === 'hello') return reply({ op: 'hello-ack' });
+      if (d.op !== 'sendPrompt') return;
+      try {
+        const text = String(d.text || '').slice(0, 8000);
+        if (!text.trim()) throw new Error('empty prompt');
+        const s = liveRef.current?.session;
+        // the host's own delivery rule: an idle session gets it now; a busy one queues it and plays it when the turn ends
+        if (s?.claude?.state === 'idle') await api.post(`/sessions/${s.id}/message`, { text });
+        else {
+          await api.post(`/sessions/${s.id}/prompts`, { text });
+          await api.post(`/sessions/${s.id}/prompts/autoplay`, { on: true });
+        }
+        reply({ op: 'sent', id: d.id, delivered: s?.claude?.state === 'idle' ? 'now' : 'queued' });
+      } catch (err) {
+        reply({ op: 'sent', id: d.id, error: String(err?.message || err) });
+      }
+    };
+    window.addEventListener('message', onMsg);
+    return () => window.removeEventListener('message', onMsg);
+  }, [extName, session?.id, tab.url]);
   // A live theme switch must reach the tab: it is a separate document that
   // cannot see our CSS, so without this it keeps the palette it booted with.
   // Re-sending the context is enough — the SDK treats init as idempotent.
@@ -1563,17 +944,18 @@ function UrlTab({ tab, active, session }) {
   const src = tabSrc(tab.url);
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-bg">
-      <div className="flex h-8 shrink-0 items-center gap-2 border-b border-hair bg-panel px-2.5">
+      <div className="flex h-8 shrink-0 items-center gap-2 border-b border-hair bg-panel px-2.5 coarse:h-11">
         <button
           type="button"
           onClick={() => { setLoading(true); setReloadKey((k) => k + 1); }}
           title={t('rail.reloadPreview')}
           aria-label={t('rail.reloadPreviewAria')}
-          className="shrink-0 cursor-pointer rounded-[5px] border border-border px-1.5 leading-[18px] text-fgdim hover:border-ink hover:text-fg"
+          className="flex shrink-0 cursor-pointer items-center justify-center rounded-[5px] border border-border px-1.5 leading-[18px] text-fgdim hover:border-ink hover:text-fg coarse:h-10 coarse:min-w-11"
         >
           <Icon icon={faRotateRight} />
         </button>
-        <span className="min-w-0 flex-1 truncate font-mono text-[11.5px] md:text-[10px] text-fgdim">{tab.url}</span>
+        {/* an address reads left-to-right even in a Hebrew cockpit (else "/__pr/…" renders as "pr/…__/") */}
+        <span className="min-w-0 flex-1 truncate text-start font-mono text-[11.5px] md:text-[10px] text-fgdim"><span dir="ltr">{tab.url}</span></span>
         <a
           /* proxied so it opens from any device — the raw tab.url may point at
              the HOST's localhost, which a phone over VPN can't reach */
@@ -1582,7 +964,7 @@ function UrlTab({ tab, active, session }) {
           rel="noreferrer"
           title={t('rail.openInNewTab')}
           aria-label={t('rail.openInNewTab')}
-          className="shrink-0 cursor-pointer rounded-[5px] border border-border px-1.5 leading-[18px] text-fgdim hover:border-ink hover:text-fg"
+          className="flex shrink-0 cursor-pointer items-center justify-center rounded-[5px] border border-border px-1.5 leading-[18px] text-fgdim hover:border-ink hover:text-fg coarse:h-10 coarse:min-w-11"
         >
           ↗
         </a>
@@ -1642,9 +1024,9 @@ function ContentTab({ tab }) {
     );
   }
   return (
-    <div className="thin-scroll min-h-0 flex-1 overflow-y-auto bg-white">
+    <div className="thin-scroll min-h-0 flex-1 overflow-y-auto bg-bg">
       <div className="md-light mx-auto max-w-[860px] px-7 py-6">
-        <Markdown>{tab.body || ''}</Markdown>
+        <Md>{tab.body || ''}</Md>
       </div>
     </div>
   );
@@ -1657,29 +1039,10 @@ function ContentTab({ tab }) {
  * The same transcript and composer a session has, minus the session chrome (no
  * tab bar, no "claude-code" terminal header): this is a DM with the agent, not a
  * job. It is no longer reachable as a rail row — the surface owns it.
- *
- * The hint chip above the composer is the bridge to the other half of the model:
- * one click turns the human's last message into a real work session born from
- * the agent (`/as` under the hood), which then lives in the Sessions section.
  */
 export function AgentHomeChat({ session, events, loading, agent, onOpenSession }) {
   const tt = useT();
   const isDesktop = useIsDesktop();
-  const [busy, setBusy] = useState(false);
-  const ask = lastHumanText(events);
-  const toWork = async () => {
-    if (busy) return;
-    if (!ask) return toastError(tt('agent.surface.homeHintEmpty'));
-    setBusy(true);
-    try {
-      const r = await api.post(`/sessions/${session.id}/delegate`, { agent: agent.slug, text: ask, mode: 'as' });
-      if (r?.target) onOpenSession?.(r.target);
-    } catch (e) {
-      toastError(e);
-    } finally {
-      setBusy(false);
-    }
-  };
   return (
     <div data-agent-home={agent.slug} className="flex min-h-0 flex-1 flex-col">
       <div className="flex shrink-0 items-center justify-end gap-1.5 border-b border-hair px-3.5 py-1">
@@ -1696,19 +1059,9 @@ export function AgentHomeChat({ session, events, loading, agent, onOpenSession }
         action={session.action}
         mode={chatModeOf(session, isDesktop)}
       />
-      <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-t border-hair bg-panel px-3.5 pt-1.5 text-[11.5px] md:text-[10.5px] text-fgdim">
-        <button
-          type="button"
-          data-home-to-work
-          disabled={busy}
-          title={tt('agent.surface.homeHintAction')}
-          onClick={toWork}
-          className="flex cursor-pointer items-center gap-1.5 rounded-full border border-dashed border-border px-2 py-0.5 font-mono text-[11.5px] md:text-[10px] hover:border-ink hover:text-fg disabled:opacity-50"
-        >
-          <Icon icon={faListCheck} /> {tt(isDesktop ? 'agent.surface.homeHint' : 'agent.surface.homeHintTouch')}
-        </button>
-      </div>
-      {session.archived ? <ArchivedFooter session={session} /> : <ChatFooter session={session} />}
+      <ChatThemeScope sessionId={session.id}>
+        {session.archived ? <ArchivedFooter session={session} /> : <ChatFooter session={session} />}
+      </ChatThemeScope>
     </div>
   );
 }
@@ -1718,7 +1071,12 @@ export function AgentHomeChat({ session, events, loading, agent, onOpenSession }
 // header) and the TabBar is `embedded`; every other tab (desktop, artifacts,
 // url, changes…) is the same component a work session gets, so the human can
 // see what the agent opened.
-export default function SessionView({ session, events, chatLoading, addTabOpen, setAddTabOpen, homeAgent = null, onOpenSession }) {
+// `visible` (KEEP-ALIVE): App keeps the last few visited sessions mounted but
+// hidden (lib/sessionPool.js), so their iframe tabs don't reload and their
+// Changes tab keeps its place. A hidden view renders no tab bar and no chat
+// (the transcript remounts on return, as before — its draft lives in the
+// store), answers no window-wide command, and freezes its tab bodies.
+export default function SessionView({ session, events, chatLoading, addTabOpen, setAddTabOpen, homeAgent = null, onOpenSession, onEdit, onArchive, onRestore, visible = true }) {
   const isDesktop = useIsDesktop();
   const tt = useT();
   const { sessions: allSessions } = useStore();
@@ -1748,18 +1106,29 @@ export default function SessionView({ session, events, chatLoading, addTabOpen, 
 
   // Auto-focus the composer whenever the chat (session) tab is the active tab —
   // on a session switch or when the user switches to that tab. All tabs stay
-  // mounted (hidden via CSS), so this is driven by the active tab, not mount.
+  // mounted (hidden via .kept-hidden), so this is driven by the active tab, not mount.
   // Defer while the session is awaiting an answer — the permission / question
   // card grabs focus instead and hands it back here once answered. Desktop
   // only: on mobile this pops the on-screen keyboard on every session switch,
   // which is disruptive — mobile users focus the composer explicitly by tapping it.
   const chatTabId = tabs.find((t) => t.type === 'session')?.id;
   useEffect(() => {
-    if (isDesktop && activeTabId === chatTabId && session.claude?.state !== 'awaiting-input') {
+    if (visible && isDesktop && activeTabId === chatTabId && session.claude?.state !== 'awaiting-input') {
       window.dispatchEvent(new CustomEvent('host:focus-input'));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTabId, session.id, isDesktop]);
+  }, [activeTabId, session.id, isDesktop, visible]);
+
+  // ChatPane's large-diff card asks to jump to the Changes tab.
+  useEffect(() => {
+    const onOpen = (ev) => {
+      // addressed to a session → that one; unaddressed → the visible one only
+      if (ev.detail?.sessionId ? ev.detail.sessionId !== session.id : !visible) return;
+      if (tabs.some((t) => t.id === CHANGES_TAB_ID)) setLocalActive(CHANGES_TAB_ID);
+    };
+    window.addEventListener('host:open-changes', onOpen);
+    return () => window.removeEventListener('host:open-changes', onOpen);
+  });
 
   const onActivate = (tab) => {
     if (tab.id === CHANGES_TAB_ID || tab.id === ORCH_TAB_ID) {
@@ -1788,6 +1157,7 @@ export default function SessionView({ session, events, chatLoading, addTabOpen, 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session.id]);
   useEffect(() => {
+    if (!visible) return;
     const base = `#/session/${encodeURIComponent(session.id)}`;
     const cur = window.location.hash || '';
     if (cur !== base && !cur.startsWith(`${base}/tab/`)) return; // another view owns the URL
@@ -1796,45 +1166,46 @@ export default function SessionView({ session, events, chatLoading, addTabOpen, 
     if (cur !== want) {
       try { window.history.replaceState(null, '', want); } catch { /* very old engines */ }
     }
-  }, [activeTabId, session.id, chatTabId]);
+  }, [activeTabId, session.id, chatTabId, visible]);
 
   // Command bus → tab activation (voice: "open the changes tab", "go to terminal").
   // The command handler dispatches a window event after selecting this session;
   // route it through onActivate so local (Changes) and server tabs both work.
   useEffect(() => {
     const onCmd = (e) => {
-      if (e.detail?.sessionId && e.detail.sessionId !== session.id) return;
+      if (e.detail?.sessionId ? e.detail.sessionId !== session.id : !visible) return;
       if (e.detail?.tabId) onActivate({ id: e.detail.tabId });
     };
     window.addEventListener('host:activate-tab', onCmd);
     return () => window.removeEventListener('host:activate-tab', onCmd);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session.id, session.activeTabId]);
+  }, [session.id, session.activeTabId, visible]);
 
-  return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <TabBar
-        session={session}
-        tabs={tabs}
-        activeTabId={activeTabId}
-        onActivate={onActivate}
-        addOpen={addTabOpen}
-        setAddOpen={setAddTabOpen}
-        embedded={!!homeAgent}
-      />
+  // Hidden: render the bodies ONCE with visible=false (so their listeners and
+  // fetches stand down), then hand React the same element every render — an
+  // identical element skips reconciliation, so a hidden session costs nothing
+  // while the visible one streams. A tab the agent opens meanwhile mounts on return.
+  const frozenRef = useRef(null);
+  let bodies;
+  if (!visible && frozenRef.current) bodies = frozenRef.current;
+  else {
+    bodies = (
       <div className="relative min-h-0 flex-1">
         {tabs.map((tab) => {
           const active = tab.id === activeTabId;
+          // `live` = the tab the human is looking at: active AND this session shown
+          const live = active && visible;
           return (
             <div
               key={tab.id}
-              className={`absolute inset-0 flex-col bg-bg ${active ? 'flex' : 'hidden'}`}
+              data-tab-body={tab.id}
+              className={`absolute inset-0 flex flex-col bg-bg ${active ? '' : 'kept-hidden'}`}
             >
-              {tab.type === 'session' && homeAgent ? (
+              {tab.type === 'session' && !visible ? null : tab.type === 'session' && homeAgent ? (
                 <AgentHomeChat session={session} agent={homeAgent} events={events} loading={chatLoading} onOpenSession={onOpenSession} />
               ) : tab.type === 'session' ? (
                 <>
-                  <TerminalHeader session={session} />
+                  <TerminalHeader session={session} onEdit={onEdit} onArchive={onArchive} onRestore={onRestore} setAddTabOpen={setAddTabOpen} />
                   <ProgressStrip progress={session.progress} />
                   <ListenerChips session={session} />
                   <ChatPane
@@ -1846,14 +1217,16 @@ export default function SessionView({ session, events, chatLoading, addTabOpen, 
                     action={session.action}
                     mode={chatModeOf(session, isDesktop)}
                   />
-                  {session.archived ? <ArchivedFooter session={session} /> : <ChatFooter session={session} />}
+                  <ChatThemeScope sessionId={session.id}>
+                    {session.archived ? <ArchivedFooter session={session} /> : <ChatFooter session={session} />}
+                  </ChatThemeScope>
                 </>
               ) : tab.type === 'changes' ? (
-                <ChangesTab session={session} active={active} />
+                <ChangesTab key={session.id} session={session} active={live} />
               ) : tab.type === 'orchestration' ? (
-                <OrchestrationTab session={session} active={active} />
+                <OrchestrationTab session={session} active={live} />
               ) : tab.type === 'url' ? (
-                <UrlTab tab={tab} active={active} session={session} />
+                <UrlTab tab={tab} active={live} session={session} />
               ) : (
                 <ContentTab tab={tab} />
               )}
@@ -1861,6 +1234,24 @@ export default function SessionView({ session, events, chatLoading, addTabOpen, 
           );
         })}
       </div>
+    );
+    frozenRef.current = visible ? null : bodies;
+  }
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      {visible && (
+        <TabBar
+          session={session}
+          tabs={tabs}
+          activeTabId={activeTabId}
+          onActivate={onActivate}
+          addOpen={addTabOpen}
+          setAddOpen={setAddTabOpen}
+          embedded={!!homeAgent}
+        />
+      )}
+      {bodies}
     </div>
   );
 }

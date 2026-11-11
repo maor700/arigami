@@ -11,9 +11,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { runInChild } from './_child.js';
+import { tmpDir } from './_tmp.js';
 
 function inChild(body: string, env: Record<string, string> = {}) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-nwd-'));
+  const dir = tmpDir('arigami-nwd-');
   const r = runInChild(body, {
     ARIGAMI_DIR: dir,
     ARIGAMI_PORT: '',

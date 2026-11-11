@@ -43,6 +43,8 @@ export interface LinearFilterTrigger {
   skill?: string; // skill dir name to run (e.g. 'onboarding'); '' = plain ticket prompt
   model?: string; // engine model value; '' = engine default
   effort?: string; // reasoning-effort value; '' = engine default
+  folderId?: string | null;
+  folderName?: string | null;
   engine?: string; // 'claude' | 'codex' | '' (= cfg.defaultEngine) — which CLI its sessions run on
   filters: Record<string, unknown>; // FilterBar facet shape (assignee/state/labels/labelOp/…)
   seen: string[]; // high-water mark; dismissed items stay here
@@ -84,6 +86,8 @@ export interface CronTrigger {
   autonomous: boolean; // isolated runs only: bypassPermissions + no-questions directive
   bundleKey?: string; // "<bundle>/<slug>" when registered from a Profile Bundle — re-applying the bundle updates this trigger instead of adding another (F4 #2)
   agent?: string | null; // A2: isolated runs are born from this agent (create_session({agent}) path) — the agent's routine
+  folderId?: string | null;
+  folderName?: string | null;
   engine?: string; // 'claude' | 'codex' | '' (= the agent's engine, else cfg.defaultEngine) — isolated runs only
   createdAt: string;
   createdBySessionId?: string | null; // provenance; also what the create-guard checks upstream
@@ -103,11 +107,13 @@ export interface PendingItem {
   addedAt: string;
   ticket?: string; // kind 'ticket' — identifier, e.g. ENG-123 (uppercase)
   cwd?: string; // kind 'empty'
-  permissionMode?: string; // kind 'empty'
+  permissionMode?: string; // the launcher's pick (both kinds); unset → the start path's default
   prompt?: string; // custom starting prompt (overrides the default on start)
   skill?: string; // skill dir name to run; '' = plain prompt
   model?: string; // engine model value; '' = engine default
   effort?: string; // reasoning-effort value; '' = engine default
+  folderId?: string | null;
+  folderName?: string | null;
   engine?: string; // 'claude' (default) | 'codex' — which CLI the started session runs on
 }
 
@@ -290,12 +296,18 @@ function liveTicketSession(ticket: string): boolean {
   );
 }
 
-// Live sessions started FROM the queue (auto or manual Play) — the maxConcurrent
-// budget. Direct launcher ticket sessions don't count.
+// A session started FROM the queue (auto or manual Play) that is RUNNING a turn — what the
+// maxConcurrent budget limits. One that is idle (a review waiting on its PR, a question for
+// the human, a finished run kept open) is waiting, not working, and must not hold a slot
+// forever: that would starve both autoplay and the scheduled cron jobs that share the cap.
+export function isRunningQueueSession(s: any): boolean {
+  const st = s?.claude?.state;
+  return !!s?.metadata?.fromQueue && st !== 'dead' && st !== 'idle';
+}
+
+// Direct launcher ticket sessions don't count.
 function countQueueSessions(): number {
-  return state
-    .listSessions()
-    .filter((s: any) => s.metadata?.fromQueue && s.claude?.state !== 'dead').length;
+  return state.listSessions().filter(isRunningQueueSession).length;
 }
 
 async function fetchMatches(filters: Record<string, unknown>): Promise<any[]> {
@@ -319,6 +331,25 @@ function enqueue(item: Omit<PendingItem, 'id' | 'addedAt'>): void {
 function removePendingByTicket(ticket: string): void {
   const up = ticket.toUpperCase();
   db.pending = db.pending.filter((p) => p.ticket?.toUpperCase() !== up);
+}
+
+// Edit a queued item before it starts. Only fields the item can start with; a ticket item keeps its
+// ticket id (it IS the identity), an empty item can also change its title / cwd / permissions.
+const PENDING_TEXT_FIELDS = ['prompt', 'skill', 'model', 'effort', 'folderName'] as const;
+const PENDING_EMPTY_FIELDS = ['title', 'cwd', 'permissionMode'] as const;
+export function patchPending(id: string, patch: Record<string, unknown>): PendingItem | null {
+  const item = db.pending.find((p) => p.id === id);
+  if (!item) return null;
+  const rec = item as unknown as Record<string, unknown>;
+  for (const k of PENDING_TEXT_FIELDS) if (typeof patch[k] === 'string') rec[k] = (patch[k] as string).trim() === '' && k !== 'prompt' ? '' : patch[k];
+  if (item.kind === 'empty') for (const k of PENDING_EMPTY_FIELDS) if (typeof patch[k] === 'string' && (k !== 'title' || (patch[k] as string).trim())) rec[k] = patch[k];
+  const eng = triggerEngine(patch.engine);
+  if (eng !== undefined) item.engine = eng;
+  // A folder is chosen by NAME in the UI; an explicit name replaces any id the item carried.
+  if (typeof patch.folderName === 'string') delete (item as { folderId?: unknown }).folderId;
+  persist();
+  emitPending();
+  return item;
 }
 
 export function dismissPending(id: string): boolean {
@@ -360,7 +391,7 @@ export function deferTicket(
   ticket: string,
   title?: string,
   prompt?: string,
-  opts?: { skill?: string; model?: string; effort?: string; engine?: string }
+  opts?: { skill?: string; model?: string; effort?: string; engine?: string; folderId?: string | null; folderName?: string | null; permissionMode?: string }
 ): PendingItem | null {
   const up = String(ticket || '').toUpperCase();
   if (!up) return null;
@@ -376,6 +407,9 @@ export function deferTicket(
     model: opts?.model,
     effort: opts?.effort,
     engine: opts?.engine,
+    folderId: opts?.folderId,
+    folderName: opts?.folderName,
+    ...(opts?.permissionMode ? { permissionMode: opts.permissionMode } : {}),
   });
   persist();
   emitPending();
@@ -392,6 +426,8 @@ export function deferEmpty(opts: {
   skill?: string;
   model?: string;
   effort?: string;
+  folderId?: string | null;
+  folderName?: string | null;
   engine?: string;
 }): PendingItem {
   enqueue({
@@ -404,6 +440,8 @@ export function deferEmpty(opts: {
     model: opts.model,
     effort: opts.effort,
     engine: opts.engine,
+    folderId: opts.folderId,
+    folderName: opts.folderName,
     triggerId: null,
     triggerName: 'Manual',
   });
@@ -432,6 +470,8 @@ export async function startPending(
       model: item.model,
       effort: item.effort,
       engine: item.engine,
+      folderId: item.folderId,
+      folderName: item.folderName,
       metadata: { fromQueue: true },
     });
     db.pending = db.pending.filter((p) => p.id !== id);
@@ -459,6 +499,7 @@ export async function startPending(
     return { held: true, reason: 'workspace-not-ready' };
   }
 
+  const folder = item.folderId !== undefined || item.folderName !== undefined ? item : t;
   const { id: sessionId } = api.startTicketSession({
     ticket,
     title: item.title,
@@ -467,6 +508,9 @@ export async function startPending(
     model: item.model ?? t?.model,
     effort: item.effort ?? t?.effort,
     engine: item.engine ?? t?.engine,
+    permissionMode: item.permissionMode,
+    folderId: folder?.folderId,
+    folderName: folder?.folderName,
     metadata: {
       fromQueue: true,
       ...(item.triggerId
@@ -539,6 +583,8 @@ export async function createTrigger(input: {
   skill?: string;
   model?: string;
   effort?: string;
+  folderId?: string | null;
+  folderName?: string | null;
   engine?: string;
 }): Promise<LinearFilterTrigger> {
   const t: LinearFilterTrigger = {
@@ -552,6 +598,8 @@ export async function createTrigger(input: {
     model: typeof input.model === 'string' ? input.model : '',
     effort: typeof input.effort === 'string' ? input.effort : '',
     engine: triggerEngine(input.engine) ?? '',
+    folderId: input.folderId,
+    folderName: input.folderName,
     filters: input.filters && typeof input.filters === 'object' ? input.filters : {},
     seen: [],
     primed: false,
@@ -589,12 +637,18 @@ export async function createTrigger(input: {
 export function patchTrigger(id: string, patch: Record<string, unknown>): Trigger | null {
   const t = db.triggers.get(id);
   if (!t) return null;
+  // Validate the target before mutating any part of the record.
+  if (t.type === 'cron' && (typeof patch.sessionMode === 'string' || patch.enabled === true))
+    validateCronTarget(typeof patch.sessionMode === 'string' ? patch.sessionMode : t.sessionMode);
   if (typeof patch.name === 'string' && patch.name.trim()) t.name = patch.name.trim();
   if (typeof patch.enabled === 'boolean') t.enabled = patch.enabled;
   if (typeof patch.autonomous === 'boolean') t.autonomous = patch.autonomous;
   // Create falls back to the default on junk; PATCH ignores it so a typo never moves a live trigger to another CLI.
   const pe = triggerEngine(patch.engine);
   if (pe !== undefined) t.engine = pe;
+  for (const key of ['folderId', 'folderName'] as const) {
+    if (patch[key] === null || typeof patch[key] === 'string') t[key] = patch[key] as string | null;
+  }
   if (t.type === 'linear-filter') {
     if (typeof patch.injectPrompt === 'string') t.injectPrompt = patch.injectPrompt;
     if (typeof patch.skill === 'string') t.skill = patch.skill;
@@ -718,8 +772,11 @@ async function fireCron(
       tlog(t.id, 'warn', `held — maxConcurrent (${db.settings.maxConcurrent}) reached; will retry next poll`);
       return { ok: false, reason: 'at-capacity' };
     }
-    t.lastRun = Date.now();
-    const at = new Date(t.lastRun).toISOString();
+    const attemptedAt = Date.now();
+    // Recurring schedules retain their cadence on failure; a one-shot is
+    // consumed only once its prompt was accepted for delivery.
+    if (t.schedule.kind !== 'at') t.lastRun = attemptedAt;
+    const at = new Date(attemptedAt).toISOString();
     const api = await import('./api.js');
 
     if (t.sessionMode === 'isolated') {
@@ -736,6 +793,8 @@ async function fireCron(
         permissionMode: t.autonomous ? 'bypassPermissions' : undefined,
         agent: t.agent || null, // A2: same path as create_session({agent}) — persona, memory, model, color
         engine: t.engine || undefined,
+        folderId: t.folderId,
+        folderName: t.folderName,
         metadata: {
           fromQueue: true,
           fromCronTrigger: t.id, // guard: sessions spawned by cron can't create more cron jobs
@@ -744,6 +803,8 @@ async function fireCron(
           cronDeliver: t.deliver,
         },
       });
+      t.lastRun = attemptedAt;
+      t.lastError = null;
       recordCronRun(t, { at, sessionId, state: 'started' });
       tlog(t.id, 'fire', `started isolated session ${sessionId}${opts.manual ? ' (run now)' : ''}`);
       return { ok: true, sessionId };
@@ -753,7 +814,9 @@ async function fireCron(
     const targetId = t.sessionMode.slice('existing:'.length);
     const target = state.getSession(targetId);
     if (!target) {
-      recordCronRun(t, { at, sessionId: null, state: 'error', summary: `target session ${targetId} not found` });
+      t.lastError = `target session ${targetId} not found`;
+      if (t.schedule.kind === 'at') t.enabled = false; // repair and retry explicitly; avoid repeated failure notifications
+      recordCronRun(t, { at, sessionId: null, state: 'error', summary: t.lastError });
       tlog(t.id, 'error', `target session ${targetId} not found`);
       await deliverCronResult(t.name, t.id, t.deliver, { state: 'error', summary: `target session ${targetId} not found` });
       return { ok: false, reason: 'target-not-found' };
@@ -777,11 +840,15 @@ async function fireCron(
       tlog(t.id, 'fire', `interrupted busy session ${targetId} for immediate delivery`);
     }
     const delivered = api.deliverToSession(targetId, `[Cron: ${t.name}]\n\n${t.prompt}`);
+    t.lastRun = attemptedAt;
+    t.lastError = null;
     recordCronRun(t, { at, sessionId: targetId, state: 'started', summary: `delivered (${delivered.delivered})` });
     tlog(t.id, 'fire', `delivered to existing session ${targetId} (${delivered.delivered}${opts.manual ? ', run now' : ''})`);
     return { ok: true, sessionId: targetId };
   } catch (e) {
     const msg = (e as Error).message;
+    t.lastError = msg;
+    if (t.schedule.kind === 'at') t.enabled = false;
     recordCronRun(t, { at: new Date().toISOString(), sessionId: null, state: 'error', summary: msg });
     tlog(t.id, 'error', `fire failed: ${msg}`);
     await deliverCronResult(t.name, t.id, t.deliver, { state: 'error', summary: msg });
@@ -791,6 +858,14 @@ async function fireCron(
     persist();
     emitTriggers();
   }
+}
+
+function validateCronTarget(sessionMode: string): void {
+  if (sessionMode === 'isolated') return;
+  if (!sessionMode.startsWith('existing:') || sessionMode.length === 'existing:'.length)
+    throw new Error(`invalid sessionMode: "${sessionMode}" (expected "isolated" or "existing:<sessionId>")`);
+  const targetId = sessionMode.slice('existing:'.length);
+  if (!state.getSession(targetId)) throw new Error(`target session ${targetId} not found`);
 }
 
 export async function createCronTrigger(input: {
@@ -803,6 +878,8 @@ export async function createCronTrigger(input: {
   autonomous?: boolean;
   bundleKey?: string;
   agent?: string | null;
+  folderId?: string | null;
+  folderName?: string | null;
   engine?: string;
   createdBySessionId?: string;
 }): Promise<CronTrigger> {
@@ -821,8 +898,7 @@ export async function createCronTrigger(input: {
     throw new Error(`invalid schedule.kind: "${kind}" (expected "cron" | "interval" | "at")`);
   const schedule: Schedule = { kind, value: String(input.schedule?.value ?? '') };
   const sessionMode = String(input.sessionMode || 'isolated');
-  if (sessionMode !== 'isolated' && !(sessionMode.startsWith('existing:') && sessionMode.length > 'existing:'.length))
-    throw new Error(`invalid sessionMode: "${sessionMode}" (expected "isolated" or "existing:<sessionId>")`);
+  validateCronTarget(sessionMode);
   // A2: the agent the runs are born from. Explicit `agent` wins; a cron job
   // created FROM an agent's session defaults to that agent (its routine); an
   // unknown slug is refused. `agent: ''` = explicitly none.
@@ -861,6 +937,8 @@ export async function createCronTrigger(input: {
     ...(input.bundleKey ? { bundleKey: String(input.bundleKey) } : {}),
     ...(agent ? { agent } : {}),
     engine: triggerEngine(input.engine) ?? '',
+    folderId: input.folderId,
+    folderName: input.folderName,
     createdAt,
     createdBySessionId: input.createdBySessionId || null,
     lastRun: null,

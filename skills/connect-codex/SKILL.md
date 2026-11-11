@@ -13,8 +13,9 @@ Server side: `server/codex-account.ts` via `POST /__api/accounts/login/start|cod
 `GET /__api/accounts/login/status?id=`, `GET /__api/accounts`.
 
 ## Hard rules
-1. **Never type passwords / 2FA / OTP / email codes.** The OpenAI login screen is the
-   take-over boundary. "Continue with Google" is fine to click when `identity` is connected.
+1. **Never type passwords / 2FA / OTP / email codes.** "Continue with Google" is fine to click when `identity` is connected.
+   A vendor's own username / password / code form is not typed by you either: call
+   `sign_in({site, reason, browser:true})` for it and follow its answer (the sign-in runs in the owner's own Chrome, the host types vault values — you never see them), then reload the page here. A push approval or a CAPTCHA → take-over (`request_screen`).
 2. `export CONNECT_ALLOW="localhost auth.openai.com openai.com chatgpt.com accounts.google.com google.com"`.
 3. Consent first; ≤ 2 attempts; nothing written to disk by you — codex writes its own `auth.json`.
 4. Never paste the callback address into chat, an artifact or memory.
@@ -28,9 +29,9 @@ Server side: `server/codex-account.ts` via `POST /__api/accounts/login/start|cod
    `shot first`, `capture_screen({caption:"Codex sign-in page loaded"})`.
 3. Decide from the screenshot:
    - **Consent / "Continue" screen** (already signed in): click it.
-   - **Login screen** (email box / "Continue with Google"): with `identity` connected click
-     *Continue with Google* and pick the identity email; if a password/2FA/email-code screen
-     follows, or there is no identity: `capture_screen`,
+   - **Login screen** (email box / "Continue with Google"): with `identity` connected,
+     finish it in the owner's Chrome, where their identity's provider (Google / Microsoft / Apple — `GET /__api/setup/capabilities` → identity) is signed in; choose "Continue with <that provider>" when the page offers several: `sign_in({site:"<service>", url:"<the page's current URL>", reason})`, pick the identity email and Allow there (`desktop_screenshot` / `desktop_pointer` with shared:true), then `sign_in({site, done:true})` and continue polling here; an OpenAI email/password or code form →
+     `sign_in` (rule 1); anything else only the human can do: `capture_screen`,
      `request_screen({prompt:"Connecting your Codex account — OpenAI asks you to sign in.", reason:"login", hint:"Sign in and approve; the page ends on a 'signed in' screen. Then click Done."})`.
 4. The redirect goes to codex's loopback on this host, and the session Chrome IS on this host,
    so it completes by itself — nothing to paste. Poll the status every ~3 s (≤ 90 s) until `state:"done"`.

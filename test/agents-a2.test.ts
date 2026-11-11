@@ -13,8 +13,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { runInChild } from './_child.js';
+import { tmpDir } from './_tmp.js';
 
-const fresh = (): string => fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-a2-'));
+const fresh = (): string => tmpDir('arigami-a2-');
 const env = (dir: string) => ({
   ARIGAMI_DIR: dir,
   ARIGAMI_FUNNEL_QUIET: '1',

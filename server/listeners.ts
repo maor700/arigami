@@ -26,9 +26,16 @@ import {
 import {
   classifyGhError,
   diffPr,
+  buildPrBatchQuery,
+  parsePrBatch,
+  prKey,
+  quotaPausedUntil,
+  PR_BATCH_SIZE,
   type PrSnapshot,
   type PrWatermark,
   type PrDiff,
+  type PrTarget,
+  type RateLimitInfo,
 } from './listeners-pr.js';
 import {
   classifyLinearError,
@@ -43,6 +50,7 @@ import {
   type SlackSnapshot,
   type SlackWatermark,
   type SlackDiff,
+  type SlackMessage,
 } from './listeners-slack.js';
 import {
   fetchWhatsappMessages,
@@ -72,7 +80,7 @@ import * as slack from './slack.js';
 // extension's provider is dispatched through the registry with a deadline and
 // then rejoins this file's watermark/backoff/wake machinery unchanged.
 import * as registry from './listeners-registry.js';
-import { emitLocal } from './bus.js';
+import { emitLocal, subscribe as subscribeBus } from './bus.js';
 
 const execFileP = promisify(execFile);
 
@@ -146,13 +154,107 @@ async function fetchPrSnapshot(
   };
 }
 
+// Fold one snapshot (or the error that replaced it) into the shape pollOne's
+// shared outcome handling expects.
+// The self-filter is the host's own GitHub login, not the PR author: on a review
+// session the author is the other side, and their replies must wake it.
+function prOutcome(l: Listener, snap: PrSnapshot | undefined, err: { kind: PollOutcome['kind']; message?: string } | undefined, selfLogin?: string): PollOutcome {
+  if (!snap) return { kind: err?.kind || 'transient', error: err?.message };
+  const diff = diffPr(snap, l.watermark as PrWatermark, { fireOn: l.fireOn, ignoreLogin: selfLogin });
+  return { kind: 'ok', diff, ignoreLogin: selfLogin };
+}
+
+// Who `gh` is signed in as. Refreshed for free by every GraphQL batch (viewer);
+// the REST path asks `gh api user` at most once an hour. Unknown → no self-filter.
+const SELF_LOGIN_TTL_MS = 3_600_000;
+let selfLogin: { login: string; at: number } | null = null;
+function rememberSelfLogin(login: string | null | undefined): void {
+  if (login) selfLogin = { login, at: Date.now() };
+}
+async function ghSelfLogin(): Promise<string | undefined> {
+  if (selfLogin && Date.now() - selfLogin.at < SELF_LOGIN_TTL_MS) return selfLogin.login;
+  const me = await ghApi('user');
+  rememberSelfLogin(me.ok ? (me.data?.login as string | undefined) : null);
+  return selfLogin?.login;
+}
+
 async function pollGithubPr(l: Listener): Promise<PollOutcome> {
   const { owner, repo, number } = l.params as { owner: string; repo: string; number: number };
   const { snap, err } = await fetchPrSnapshot(owner, repo, number);
   if (err) return { kind: classifyGhError(err.status, err.stderr), error: err.stderr };
-  const ignoreLogin = snap!.meta?.user?.login as string | undefined;
-  const diff = diffPr(snap!, l.watermark as PrWatermark, { fireOn: l.fireOn, ignoreLogin });
-  return { kind: 'ok', diff, ignoreLogin };
+  return prOutcome(l, snap, undefined, await ghSelfLogin());
+}
+
+// ---- github-pr batch (one GraphQL query per tick) ---------------------------
+// Polling each github-pr listener on its own cost six REST calls every 30s —
+// with a few dozen live PRs that alone exhausted the 5000/hour budget. The tick
+// now groups the due listeners by PR, asks GitHub for all of them in one
+// GraphQL query (an alias per distinct PR) and runs diffPr per listener against
+// its own watermark. Registration (`fetchPrSnapshot`) stays on REST: it is a
+// one-off per listener, not a loop.
+
+// What the last response said was left of the GraphQL bucket (null = unknown).
+let ghRate: RateLimitInfo | null = null;
+
+async function ghGraphql(query: string, vars: Record<string, string | number>): Promise<GhResult> {
+  // -f sends a string, -F types it (so $n is an Int). Values go through argv,
+  // never a shell.
+  const args = ['api', 'graphql', '-f', `query=${query}`];
+  for (const [k, v] of Object.entries(vars)) args.push(typeof v === 'number' ? '-F' : '-f', `${k}=${v}`);
+  try {
+    const { stdout } = await execFileP('gh', args, { maxBuffer: 32e6, timeout: 30_000 });
+    return { ok: true, status: 200, data: JSON.parse(stdout) };
+  } catch (e: any) {
+    const stderr = `${e?.stderr || ''}${e?.message || ''}`;
+    const m = /HTTP (\d{3})/.exec(stderr);
+    // `gh api` exits non-zero on a partial GraphQL error but still prints the
+    // body — a NOT_FOUND for one alias must not discard the other results.
+    const body = String(e?.stdout || '').trim();
+    if (body.startsWith('{')) {
+      try {
+        return { ok: true, status: 200, data: JSON.parse(body) };
+      } catch {
+        /* fall through to the failure */
+      }
+    }
+    return { ok: false, status: m ? Number(m[1]) : 0, stderr };
+  }
+}
+
+// Fetch every distinct PR the due listeners watch; resolve to listenerId → outcome.
+async function pollGithubPrBatch(due: Listener[], now: number): Promise<Map<string, PollOutcome>> {
+  const out = new Map<string, PollOutcome>();
+  const byPr = new Map<string, { target: PrTarget; listeners: Listener[] }>();
+  for (const l of due) {
+    const t = l.params as unknown as PrTarget;
+    const k = prKey(t);
+    const g = byPr.get(k) || { target: { owner: t.owner, repo: t.repo, number: Number(t.number) }, listeners: [] };
+    g.listeners.push(l);
+    byPr.set(k, g);
+  }
+  const groups = [...byPr.values()];
+  for (let i = 0; i < groups.length; i += PR_BATCH_SIZE) {
+    const chunk = groups.slice(i, i + PR_BATCH_SIZE);
+    const { query, vars } = buildPrBatchQuery(chunk.map((g) => g.target));
+    const res = await ghGraphql(query, vars);
+    if (!res.ok) {
+      const err = { kind: classifyGhError(res.status, res.stderr), message: res.stderr };
+      for (const g of chunk) for (const l of g.listeners) out.set(l.id, prOutcome(l, undefined, err));
+      continue;
+    }
+    const { results, rate, viewer } = parsePrBatch(res.data?.data, res.data?.errors, chunk.length);
+    if (rate) ghRate = rate;
+    rememberSelfLogin(viewer);
+    const me = viewer || (await ghSelfLogin());
+    chunk.forEach((g, j) => {
+      const r = results[j];
+      for (const l of g.listeners)
+        out.set(l.id, 'snap' in r ? prOutcome(l, r.snap, undefined, me) : prOutcome(l, undefined, r.err));
+    });
+    // Stop spending the bucket mid-run: the rest waits for the next tick.
+    if (quotaPausedUntil(ghRate, now)) break;
+  }
+  return out;
 }
 
 // ---- linear-issue poller ------------------------------------------------------
@@ -593,7 +695,7 @@ export async function deliverExtWebhook(
 
 // ---- scheduler --------------------------------------------------------------
 
-async function pollOne(l: Listener): Promise<void> {
+async function pollOne(l: Listener, pre?: PollOutcome): Promise<void> {
   const now = Date.now();
   if (now > l.ttlAt) {
     llog(l.id, 'info', 'TTL expired — listener stopped');
@@ -685,7 +787,7 @@ async function pollOne(l: Listener): Promise<void> {
 
   let outcome: PollOutcome;
   try {
-    if (l.type === 'github-pr') outcome = await pollGithubPr(l);
+    if (l.type === 'github-pr') outcome = pre ?? (await pollGithubPr(l));
     else if (l.type === 'linear-issue') outcome = await pollLinearIssue(l);
     else if (l.type === 'slack') outcome = await pollSlack(l);
     else {
@@ -769,23 +871,105 @@ async function pollOne(l: Listener): Promise<void> {
   }
 
   // ok
-  const diff = outcome.diff!;
+  applyDiffOutcome(l, outcome.diff!, now);
+}
+
+// Shared by pollOne's "ok" path and any push-wake path that computed an
+// equivalent diff directly from a webhook payload (see onSlackWebhook) — same
+// fire/advance-watermark/reschedule semantics either way; only how the diff
+// was produced differs.
+function applyDiffOutcome(
+  l: Listener,
+  diff: { terminal: unknown; shouldFire: boolean; summary: string; nextWatermark: unknown },
+  now: number
+): void {
+  const nextWatermark = diff.nextWatermark as Record<string, unknown>;
+  const reschedule = (extra: Partial<Listener> = {}) =>
+    patchListener(l.id, {
+      lastPolledAt: now,
+      nextPollAt: now + l.intervalSec * 1000,
+      backoffLevel: 0,
+      ...extra,
+    });
   if (diff.terminal || diff.shouldFire) {
     // Don't advance the watermark here — that happens on delivery (at-least-once).
     llog(l.id, 'fire', diff.summary.split('\n')[0].replace(/^🔔 Listener: /, ''));
-    enqueue(l, diff.summary, diff.nextWatermark as Record<string, unknown>, !!diff.terminal);
+    enqueue(l, diff.summary, nextWatermark, !!diff.terminal);
     reschedule({ authFails: 0, lastError: null });
   } else {
     // New-but-non-firing events (e.g. our own comments): advance the watermark
     // now so we don't re-evaluate them, but don't wake anyone.
-    if (wmChanged(diff.nextWatermark, l.watermark))
+    if (wmChanged(nextWatermark, l.watermark))
       llog(l.id, 'info', 'new activity from a filtered author — watermark advanced, no wake');
-    reschedule({ watermark: diff.nextWatermark as Record<string, unknown>, authFails: 0, lastError: null });
+    reschedule({ watermark: nextWatermark, authFails: 0, lastError: null });
+  }
+}
+
+// ---- slack webhook push (fast-path wake) ------------------------------------
+// webhooks.ts emits 'webhook.received' for every inbound Slack event once its
+// signature verifies. A plain message event already carries everything
+// diffSlack needs, so feed it straight in as a one-message snapshot and skip
+// the Slack API round-trip pollSlack would otherwise make to refetch what we
+// already have — the webhook IS the data, not just a wake-up bell. Anything
+// that isn't a message (reactions, etc.) just nudges nextPollAt so the next
+// regular poll picks it up.
+function onSlackWebhook(msg: { type: string; kind?: string; body?: unknown }): void {
+  if (msg.type !== 'webhook.received' || msg.kind !== 'slack') return;
+  const event = (msg.body as any)?.event;
+  const channelId = event?.channel;
+  if (!channelId) return;
+  const threadTs = event?.thread_ts || event?.ts;
+  const now = Date.now();
+  const isMessage = typeof event?.type === 'string' && event.type.startsWith('message');
+  const webhookMsg: SlackMessage | null = isMessage
+    ? { ts: event.ts, user: event.user, text: event.text, thread_ts: event.thread_ts, subtype: event.subtype }
+    : null;
+  for (const l of listListeners()) {
+    if (l.type !== 'slack' || l.status !== 'watching') continue;
+    const p = l.params as { channelId: string; threadTs?: string; viewerId?: string; channelName?: string; isDm?: boolean };
+    if (p.channelId !== channelId) continue;
+    if (p.threadTs && threadTs && p.threadTs !== threadTs) continue;
+    if (!webhookMsg) { patchListener(l.id, { nextPollAt: now }); continue; }
+    const snap: SlackSnapshot = { channelId, channelName: p.channelName, isDm: p.isDm, messages: [webhookMsg] };
+    const diff = diffSlack(snap, l.watermark as SlackWatermark, { fireOn: l.fireOn, ignoreUserId: p.viewerId });
+    applyDiffOutcome(l, diff, now);
+  }
+}
+
+// ---- github webhook push (fast-path wake) -----------------------------------
+// webhooks.ts has verified+recorded inbound GitHub events since before this
+// file existed, but nothing ever consumed them for github-pr listeners — they
+// were pure interval polls the whole time. Unlike Slack's single-message diff,
+// reconstructing a PR's full review/CI state from one webhook payload isn't
+// worth it across the many event shapes (review, comment, check_run, status,
+// …) involved, so this just brings nextPollAt forward like the Slack path
+// used to: a wake-up bell, not the data itself. pollGithubPr still does the
+// real fetch, just promptly instead of on the next scheduled tick.
+function onGithubWebhook(msg: { type: string; kind?: string; body?: unknown }): void {
+  if (msg.type !== 'webhook.received' || msg.kind !== 'github') return;
+  const body = (msg.body ?? {}) as any;
+  const owner = body?.repository?.owner?.login;
+  const repo = body?.repository?.name;
+  if (!owner || !repo) return;
+  // pull_request* events carry pull_request.number; issue_comment on a PR
+  // carries issue.number (GitHub models a PR as an issue for comment events).
+  // check_run/check_suite/status events carry neither — those wake every PR
+  // listener on the repo, which is a few extra no-op polls, not a wrong fire.
+  const number: number | undefined = body?.pull_request?.number ?? body?.issue?.number;
+  const now = Date.now();
+  for (const l of listListeners()) {
+    if (l.type !== 'github-pr' || l.status !== 'watching') continue;
+    const p = l.params as { owner: string; repo: string; number: number };
+    if (p.owner !== owner || p.repo !== repo) continue;
+    if (number != null && p.number !== number) continue;
+    patchListener(l.id, { nextPollAt: now });
   }
 }
 
 let timer: NodeJS.Timeout | null = null;
 let ticking = false;
+let unsubSlackWebhook: (() => void) | null = null;
+let unsubGithubWebhook: (() => void) | null = null;
 
 async function tick(): Promise<void> {
   if (ticking) return;
@@ -797,11 +981,40 @@ async function tick(): Promise<void> {
       const live = new Set(listListeners().map((l) => l.id));
       for (const id of logs.keys()) if (!live.has(id)) logs.delete(id);
     }
-    const due = listListeners().filter((l) => l.status === 'watching' && l.nextPollAt <= now);
+    let due = listListeners().filter((l) => l.status === 'watching' && l.nextPollAt <= now);
+
+    // A github-pr listener whose session is gone (deleted, not merely archived)
+    // would poll GitHub forever for nobody — drop it.
+    for (const l of due.filter((x) => x.type === 'github-pr' && !getSession(x.sessionId))) {
+      llog(l.id, 'info', 'session no longer exists — listener removed');
+      stateRemoveListener(l.id);
+    }
+    due = due.filter((l) => l.type !== 'github-pr' || getSession(l.sessionId));
+
+    // github-pr: one GraphQL query for every due PR, unless the bucket is nearly
+    // empty — then they all wait for the window to reset (not an error).
+    let prOutcomes = new Map<string, PollOutcome>();
+    const pr = due.filter((l) => l.type === 'github-pr' && now <= l.ttlAt);
+    if (pr.length) {
+      const resumeAt = quotaPausedUntil(ghRate, now);
+      if (resumeAt) {
+        llog(pr[0].id, 'warn', `GitHub quota low (${ghRate?.remaining} left) — github-pr polling paused until ${new Date(resumeAt).toISOString()}`);
+        for (const l of pr) patchListener(l.id, { nextPollAt: resumeAt });
+        due = due.filter((l) => l.type !== 'github-pr' || now > l.ttlAt);
+      } else {
+        try {
+          prOutcomes = await pollGithubPrBatch(pr, now);
+        } catch (e: any) {
+          console.error('[listeners] github-pr batch failed:', e?.message);
+        }
+        // Over budget partway through: those the batch did not reach stay due.
+        due = due.filter((l) => l.type !== 'github-pr' || now > l.ttlAt || prOutcomes.has(l.id));
+      }
+    }
     // Sequential — small N, and keeps gh load gentle.
     for (const l of due) {
       try {
-        await pollOne(l);
+        await pollOne(l, prOutcomes.get(l.id));
       } catch (e: any) {
         console.error('[listeners] poll failed:', l.id, e?.message);
       }
@@ -816,6 +1029,8 @@ export function startListenerScheduler(): void {
   tick();
   timer = setInterval(tick, TICK_MS);
   if (timer.unref) timer.unref();
+  if (!unsubSlackWebhook) unsubSlackWebhook = subscribeBus(onSlackWebhook);
+  if (!unsubGithubWebhook) unsubGithubWebhook = subscribeBus(onGithubWebhook);
 
   // Auto-start bridge if a WhatsApp listener is already registered
   const waListeners = listListeners().filter((l) => l.type === 'whatsapp' && l.status === 'watching');
@@ -988,6 +1203,7 @@ export async function registerSlackListener(
     fire_on?: string[];
     ttl_days?: number;
     interval_sec?: number;
+    ignore_user_id?: string;
   }
 ): Promise<Listener> {
   const s = getSession(sessionId);
@@ -1019,7 +1235,13 @@ export async function registerSlackListener(
     );
   }
 
-  const viewerId = (await slack.viewerId().catch(() => null)) || undefined;
+  // The self-filter normally ignores the CONNECTED token's own user — right when
+  // that token also does the posting. When the connected user token belongs to a
+  // human (read access) while a separate bot token does the actual posting (this
+  // pipeline's setup), that default silently swallows the human's real replies
+  // instead of the bot's. ignore_user_id lets a caller that knows which identity
+  // is actually posting (e.g. the bot's user id) override it.
+  const viewerId = args.ignore_user_id || (await slack.viewerId().catch(() => null)) || undefined;
   const baseline = diffSlack(snap!, {}, { fireOn });
   const now = Date.now();
   const intervalSec = Number(args.interval_sec) > 0 ? Number(args.interval_sec) : DEFAULT_INTERVAL_SEC;

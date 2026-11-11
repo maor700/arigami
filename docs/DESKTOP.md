@@ -1065,3 +1065,87 @@ does leave the sidecar behind.
 
   Still unexercised: `wait_local_ready()`'s 60s local timeout — every local
   start in testing came up in well under a second.
+
+## A terminal on the X11 desktops
+
+Separate from the packaging above: the X11 desktops the host spawns — the
+global `:99` and every per-session desktop (`server/lib/desktops.ts`) — run
+openbox + tint2 and open a terminal from two places:
+
+- **the panel**: the first tint2 launcher icon (a `>_` glyph, tooltip "Terminal"),
+  next to the browser. The generated panel is one 56px bar along the whole
+  bottom edge, black at 50% over the wallpaper: an empty spacer sized so the
+  launcher (48px icons) sits at the centre of the screen, open windows after it,
+  the clock at the right edge (no tint2-settings icon, no window names);
+- **the right-click menu** on the desktop background: "Terminal" (then "Reconfigure").
+
+Both run `<ARIGAMI_DIR>/desktop/arigami-terminal`, which
+`server/lib/desktop-terminal.ts` (re)writes at every desktop start. The script
+picks, in order: `$ARIGAMI_TERMINAL` (any command), the system's
+`x-terminal-emulator`, then lxterminal / xfce4-terminal / gnome-terminal /
+konsole / mate-terminal / tilix / kitty / alacritty, then xterm (UTF-8, Xft
+monospace, 10k lines of scrollback), then urxvt — and shows an `xmessage` when
+none is installed. It forces a UTF-8 locale (`C.UTF-8`) when the inherited one
+isn't, and starts in the session's working directory on a per-session desktop
+(`ARIGAMI_TERMINAL_CWD`, with `ARIGAMI_SESSION_ID` set) or in `$HOME` on `:99`.
+It runs as the host's own user — in the image, the unprivileged `node` user.
+
+**In the Docker image** the terminal is `lxterminal` (it registers itself as
+`x-terminal-emulator`). Why it and not xterm: both add ~2.7 MB installed,
+because Chrome already brings GTK3, but lxterminal's VTE does real BiDi, so
+Hebrew/Arabic read in the right order; it also has Ctrl+Shift+C/V and a
+right-click Copy/Paste menu, tabs and a scrollbar out of the box. Its defaults
+come from `~/.config/lxterminal/lxterminal.conf`, written once only if absent:
+`Monospace 11` (Pango falls back to the Noto fonts for Hebrew/Arabic), 10,000
+lines of scrollback, 100×30.
+
+**Your own config wins.** The panel and menu entries come from generated
+configs (`<ARIGAMI_DIR>/desktop/tint2rc`, `openbox-rc.xml` + `openbox-menu.xml`
+— the stock `/etc/xdg` files with the terminal added) passed to tint2 with `-c`
+and to openbox with `--config-file` — and only when the user has no
+`~/.config/tint2/tint2rc` or `~/.config/openbox/{rc,menu}.xml` of their own.
+On a bare-VM install with a hand-tuned desktop nothing changes; the stock
+Debian openbox menu already has "Terminal emulator" → `x-terminal-emulator`.
+Missing stock files (non-Debian layouts) just mean no generated config — the
+desktop starts as before.
+
+Live-verified on a scratch display with a fresh `$HOME` (the image's
+situation): the panel shows the icon first; a click opens lxterminal in `$HOME`
+with `LANG=C.UTF-8`, rendering mixed Hebrew/English output in the right order;
+the right-click menu shows "Terminal" and opens a second window; a per-session
+desktop gets openbox + tint2 with the session's cwd and id, and
+`releaseDesktop()` takes them down with Xvfb/x11vnc.
+
+**The browser icon on a session's desktop** opens that session's own Chrome — its profile, on its desktop, the
+browser the agent drives — not the system launcher's default-profile Chrome. That one, on a host whose owner already
+runs it (the shared `:99`), only hands the click to the running instance, so a window opened on `:99` and nothing on
+the session's desktop. A per-session desktop runs `<ARIGAMI_DIR>/desktop/tint2rc-session`: the dock it would
+otherwise run (the user's own `~/.config/tint2/tint2rc`, or the generated one) with its browser launcher(s) swapped
+for `session-chrome.desktop` → `arigami-chrome`, which POSTs `/__api/sessions/<id>/browser` with `{"window":true}`
+(the desktop carries the session's `ARIGAMI_URL`/`ARIGAMI_TOKEN`, as its engine does). The host starts the session's
+Chrome, or — already running — opens a new window in it over DevTools, so a click always shows one. If the host does
+not answer, an `xmessage` says so. The user's own tint2rc is never written; the shared `:99` keeps its dock.
+
+## A wallpaper per desktop
+
+Every X11 desktop the host starts gets its own background, so a screenshot (or two VNC views side by side) says at a
+glance whose desktop it is: a landscape photo tinted in the session's color (the one the rail shows), with the
+session's title in the bottom-right corner and `<session id> · <display>` under it. The shared `:99` gets a neutral
+slate and "Shared desktop" — but only when the host started it; a `:99` somebody else runs keeps its own background.
+
+- **The photos** are a closed set of CC0 landscapes in `server/assets/wallpapers/` (stored grayscale; sources and
+  photographers in its `CREDITS.md`). Images (`.jpg`, `.png`, `.webp`) in `<ARIGAMI_DIR>/user/wallpapers/` join the
+  set — in the user repo, so they travel with it.
+- **The pick** is stable: a hash of the session id, so a session keeps its photo across restarts. Two sessions can
+  share a photo; their colors still tell them apart. `metadata.wallpaper` pins one by file name (`desert-dunes`
+  or `desert-dunes.jpg`), or `none` for a flat color.
+- **Repaint**: renaming or recoloring a session repaints its live desktop within half a second.
+- **How**: one `ffmpeg` run per paint (scale, gray, a duotone lut — shadows at a quarter of the color, highlights 60%
+  toward white — vignette, the title in Liberation Sans Bold, which covers Latin and Hebrew), raw BGRA piped into
+  `server/lib/x11-wallpaper.py`, which sets the root window's background pixmap through libX11 (ctypes, stdlib only;
+  it also sets `_XROOTPMAP_ID`, which is why the tint2 dock shows the photo through). About 200 ms. Without `ffmpeg`
+  the desktop gets the flat color; without `python3` it stays black. A failed paint is a warning in the host log,
+  never a failed desktop. `ARIGAMI_DESKTOP_WALLPAPER=0` turns it off.
+
+Verified on the VM: a session desktop painted with a Hebrew+English title in the right order; the test suite
+(`test/desktop-wallpaper.test.js`) paints a throwaway Xvfb and reads the pixels back.

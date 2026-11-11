@@ -24,6 +24,7 @@ import { cfg } from './lib/config.js';
 import { broadcast } from './bus.js';
 import { isSkillDir, NAME_RE as SKILL_NAME_RE } from './skills.js';
 import { CORE_TOOLS, RESTRICTED_BUILTINS, policyOf, toolAllowed } from './agent-policy.js';
+import { cleanLayer, type Layer } from './prompt-blocks.js';
 
 export const AGENTS_DIR = path.join(ARIGAMI_DIR, 'agents');
 // Same shape as bundle/skill slugs: lowercase, digits, hyphens; 1–40 chars.
@@ -69,6 +70,7 @@ export interface Agent {
   domains?: string[]; // allowlist for open_tab + WebFetch (A3: host-enforced)
   budget?: AgentBudget; // tokensPerDay (A3: enforced via the activity ledger, agent-ledger.ts)
   autoApprove?: string[]; // A3: request_action `kind`s the host answers with the primary button at once
+  prompts?: Layer; // PROMPT1 phase 2: this agent's layer over the instruction blocks (server/prompt-blocks.ts)
   toolsV?: number; // A5: allowlist generation — 2 = written after `publish` became a revocable family
   homeSessionId?: string | null; // the long-lived DM session (get-or-create)
   createdAt: string;
@@ -94,6 +96,7 @@ export interface AgentInput {
   domains?: string[];
   budget?: AgentBudget | null;
   autoApprove?: string[] | null;
+  prompts?: Layer | null;
   persona?: string;
 }
 
@@ -348,6 +351,11 @@ export function updateAgent(slug: string, patch: AgentInput & { homeSessionId?: 
     const l = cleanList(patch.autoApprove);
     if (l?.length) next.autoApprove = l;
     else delete next.autoApprove;
+  }
+  if (patch.prompts !== undefined) {
+    const l = cleanLayer(patch.prompts);
+    if (l) next.prompts = l;
+    else delete next.prompts;
   }
   if (patch.homeSessionId !== undefined) next.homeSessionId = patch.homeSessionId || null;
   next.updatedAt = new Date().toISOString();

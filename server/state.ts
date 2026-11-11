@@ -109,7 +109,7 @@ interface ClaudeState {
   // The request_screen call currently blocking this session (see api.ts
   // handleScreenRequest). Lives on the session (not only in the chat log) so
   // the rail can badge "needs you" on sessions whose chat isn't loaded.
-  screenRequest?: { requestId: string; reason?: string } | null;
+  screenRequest?: { requestId: string; reason?: string; shared?: boolean } | null;
   // S1: an open request_setup card this session is blocked on (manual/ask mode).
   setupRequest?: { id: string; capability: string } | null;
   // Auto-compact threshold (% of the window, and the token count it resolved to).
@@ -325,6 +325,8 @@ export interface Session {
   metadata: Record<string, unknown>;
   progress: unknown;
   action: unknown;
+  // VAULT1: an open sign-in card (lib/credentials.ts) — which fields, which origin; never a value.
+  credentialRequest?: import('./lib/credentials.js').CredentialRequest | null;
   tabs: Tab[];
   activeTabId: string;
   artifacts?: Artifact[];
@@ -409,13 +411,14 @@ function load(): void {
   // Forward-migrate before the first read. A file already at the current
   // version is not touched; anything older is backed up next to itself first.
   try {
-    migrateFile(stateFile(), STATE_SCHEMA);
+    const result = migrateFile(stateFile(), STATE_SCHEMA);
+    if (result.status === 'unreadable') throw new Error(result.error);
   } catch (e) {
     if (e instanceof SchemaVersionError) {
       refusedTooNew = true;
       console.error(`[state] ${e.message}`);
     }
-    throw e; // fatal: better to stop than to boot with an empty session list
+    throw new Error(`[state] Cannot load ${stateFile()}: ${(e as Error).message}. Recover from ${stateFile()}.bak before restarting`); // fatal: better to stop than to boot with an empty session list
   }
   try {
     const j = JSON.parse(fs.readFileSync(stateFile(), 'utf8')) as {
@@ -446,7 +449,10 @@ function load(): void {
         db.listeners.set(l.id, l);
       }
     }
-  } catch {}
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== 'ENOENT')
+      throw new Error(`[state] Cannot load ${stateFile()}: ${(e as Error).message}. Recover from ${stateFile()}.bak before restarting`);
+  }
 }
 load();
 
@@ -484,8 +490,23 @@ export function flushState(): void {
   if (refusedTooNew || dirSwapped) return;
   try {
     fs.mkdirSync(path.dirname(stateFile()), { recursive: true });
+    const file = stateFile();
+    const tmp = `${file}.tmp`;
+    // Preserve the previous complete database before atomically replacing it.
+    // Never promote unreadable bytes to the last-good backup.
+    let previous: string | undefined;
+    try {
+      previous = fs.readFileSync(file, 'utf8');
+      JSON.parse(previous);
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+    }
+    if (previous !== undefined) {
+      fs.writeFileSync(`${file}.bak.tmp`, previous, { mode: 0o600 });
+      fs.renameSync(`${file}.bak.tmp`, `${file}.bak`);
+    }
     fs.writeFileSync(
-      stateFile(),
+      tmp,
       JSON.stringify(
         stamp({
           colorIndex: db.colorIndex,
@@ -495,8 +516,10 @@ export function flushState(): void {
         }, STATE_SCHEMA),
         null,
         2
-      )
+      ),
+      { mode: 0o600 }
     );
+    fs.renameSync(tmp, file);
   } catch (e) {
     const error = e instanceof Error ? e : new Error(String(e));
     console.error('[state] persist failed:', error.message);
@@ -626,6 +649,7 @@ export function createSession({
   color,
   engine,
   folderId,
+  folderName,
 }: {
   title?: string;
   cwd?: string;
@@ -635,6 +659,7 @@ export function createSession({
   effort?: string | null;
   color?: string | null; // A1: a session born from an agent takes the agent's color
   engine?: string | null; // 'claude' | 'codex'; unset/unknown = cfg.defaultEngine — see Session.engine
+  folderName?: string | null; // trimmed exact name; create if missing
   folderId?: string | null; // generic creation-time project-folder assignment (any caller) — same field the make-project/dispatch paths patch in after the fact
 } = {}): Session {
   const eng = engine === 'codex' || engine === 'claude' ? engine : defaultEngine();
@@ -661,7 +686,7 @@ export function createSession({
     // Generic creation-time project-folder assignment — same validation the
     // move-to-folder path uses (an unknown id is silently dropped to root
     // rather than failing the whole session creation over a bad folder ref).
-    folderId: folderId && db.folders.has(folderId) ? folderId : null,
+    folderId: resolveSessionFolder({ folderId, folderName }),
     archived: false,
     createdAt: now,
     updatedAt: now,
@@ -691,10 +716,13 @@ export function createSession({
       // Claude token it could not use (server/lib/providers.ts).
       accountId: pickSessionAccount(providerForEngine(eng)) || null,
       // Seed the session's model from the caller's pick, falling back to the
-      // configured default (cfg.defaultModel); null means "no --model flag",
-      // so the CLI picks. The per-session dropdown can still override later.
+      // configured default (cfg.defaultModel, 'opus' unless set); 'default'
+      // means "no --model choice", so the CLI picks. The per-session dropdown can still override later.
       modelChoice: model || (eng === 'claude' ? cfg.defaultModel : null) || null,
-      effort: effort || null,
+      // Seed the effort the same way (cfg.defaultEffort, claude only — a codex
+      // model keeps its own default_reasoning_level); 'default' from a caller
+      // means "no override" and also gets the configured default.
+      effort: (effort && effort !== 'default' ? effort : eng === 'claude' ? cfg.defaultEffort : null) || null,
     },
     bg: [],
   };
@@ -715,6 +743,7 @@ const PATCHABLE = new Set([
   'progress',
   'archived',
   'action',
+  'credentialRequest',
   'folderId',
 ]);
 
@@ -1180,14 +1209,58 @@ export function folderChildren(id: string, { archived = false } = {}): Session[]
     .sort((a, b) => (a.sortOrder ?? 1e9) - (b.sortOrder ?? 1e9));
 }
 
+// Synchronous lookup/create keeps concurrent launches from duplicating a name.
+// An explicit id wins (including the legacy unknown-id → root behavior).
+export function resolveSessionFolder({ folderId, folderName }: {
+  folderId?: string | null;
+  folderName?: string | null;
+} = {}): string | null {
+  if (folderId) return db.folders.has(folderId) ? folderId : null;
+  const name = typeof folderName === 'string' ? folderName.trim() : '';
+  if (!name) return null;
+  return findFolderByName(name)?.id ?? createFolder({ name }).id;
+}
+
+// Folder (= project) names are unique — compared trimmed, whitespace-collapsed and
+// case-insensitively, so "CR", " cr " and "Cr" are the same folder.
+export const folderNameKey = (name: string): string => String(name || '').trim().replace(/\s+/g, ' ').toLowerCase();
+
+export function findFolderByName(name: string, exceptId?: string | null): Folder | null {
+  const key = folderNameKey(name);
+  if (!key) return null;
+  return [...db.folders.values()].find((f) => f.id !== exceptId && folderNameKey(f.name) === key) ?? null;
+}
+
+export class FolderNameTakenError extends Error {
+  existingId: string;
+  constructor(name: string, existingId: string) {
+    super(`A folder named "${name}" already exists`);
+    this.name = 'FolderNameTakenError';
+    this.existingId = existingId;
+  }
+}
+
+// For names the host makes up itself (a project controller's folder): never collide — "X", "X (2)", …
+export function uniqueFolderName(base: string): string {
+  const b = String(base || '').trim() || 'New folder';
+  if (!findFolderByName(b)) return b;
+  for (let n = 2; ; n++) {
+    const cand = `${b} (${n})`;
+    if (!findFolderByName(cand)) return cand;
+  }
+}
+
 export function createFolder({
   name,
   sortOrder,
 }: { name?: string; sortOrder?: number } = {}): Folder {
   const now = new Date().toISOString();
+  const wanted = (name || '').trim() || 'New folder';
+  const clash = findFolderByName(wanted);
+  if (clash) throw new FolderNameTakenError(wanted, clash.id);
   const folder: Folder = {
     id: 'fld_' + nano(),
-    name: (name || '').trim() || 'New folder',
+    name: wanted,
     collapsed: false,
     ...(sortOrder != null ? { sortOrder } : {}),
     controllerSessionId: null,
@@ -1208,6 +1281,10 @@ export function patchFolder(
 ): Folder | null {
   const f = db.folders.get(id);
   if (!f) return null;
+  if (typeof patch.name === 'string' && patch.name.trim()) {
+    const clash = findFolderByName(patch.name, id);
+    if (clash) throw new FolderNameTakenError(patch.name.trim(), clash.id);
+  }
   for (const [k, v] of Object.entries(patch)) {
     if (FOLDER_PATCHABLE.has(k)) (f as any)[k] = v;
   }

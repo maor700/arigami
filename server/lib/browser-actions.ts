@@ -19,18 +19,20 @@
 // SAME running Chrome (the one the human may be signing in to Google on) is
 // what these tools talk to over chrome-cdp.ts.
 import fs from 'node:fs';
-import { openChrome, closeChrome as closeChromeProcess, isChromeRunning, touch, chromeSessionDir } from './chrome.js';
-import { frontPage, pageNavigate, pageEvaluate, pageClick, pageScroll, pageScreenshot, typeIntoDesktop, type ChromeTab } from './chrome-cdp.js';
+import { openChrome, closeChromeGracefully, isChromeRunning, touch, chromeSessionDir } from './chrome.js';
+import { cdpPort, frontPage, pageNavigate, pageEvaluate, pageClick, pageScroll, pageScreenshot, typeIntoDesktop, type ChromeTab } from './chrome-cdp.js';
 import * as screens from '../screenshots.js';
 
 export interface HumanGate {
   needsHuman: boolean;
-  reason?: 'credentials' | 'captcha';
+  reason?: 'credentials' | 'captcha' | 'filled';
   hint?: string;
 }
 
 // Read the focused element + page for the tell-tale signs of a step only the
 // human may complete. Best-effort: any CDP failure just means "no gate".
+// VAULT3: a field the host filled from the vault carries data-arigami-filled — typing into it (arrow keys on a hidden
+// <select> would change the choice, and keys could reveal it) is refused too.
 const HUMAN_GATE_JS = `(() => {
   const el = document.activeElement;
   let credentialField = false;
@@ -40,15 +42,35 @@ const HUMAN_GATE_JS = `(() => {
     const name = ((el.name || '') + ' ' + (el.id || '')).toLowerCase();
     credentialField = type === 'password' || ac.indexOf('password') !== -1 || ac === 'one-time-code' || /otp|one.?time|verification.?code|2fa|mfa/.test(name);
   }
+  const filled = !!(el && el.closest && el.closest('[data-arigami-filled]'));
   const captcha = !!document.querySelector('iframe[src*="recaptcha" i],iframe[src*="hcaptcha" i],[class*="captcha" i],[id*="captcha" i]');
-  return { credentialField, captcha };
+  return { credentialField, captcha, filled };
 })()`;
+
+/**
+ * The spot of a click: a field the host filled from the vault is not a click target (a hidden <select> would open and
+ * show its choice). Checked by the element under the point AND by the filled elements' boxes — a filled select has
+ * pointer-events: none, so elementFromPoint would report what lies beneath it.
+ */
+export function clickGuardJs(x: number, y: number): string {
+  return `(() => {
+    const x = ${Number(x)}, y = ${Number(y)};
+    const el = document.elementFromPoint(x, y);
+    if (el && el.closest && el.closest('[data-arigami-filled]')) return true;
+    // the <label> of a filled field: a click on it would focus the field
+    const label = el && el.closest && el.closest('label');
+    if (label && ((label.control && label.control.closest('[data-arigami-filled]')) || label.querySelector('[data-arigami-filled]'))) return true;
+    return [...document.querySelectorAll('[data-arigami-filled]')].some((f) => { const r = f.getBoundingClientRect(); return r.width > 0 && r.height > 0 && x >= r.left && x <= r.right && y >= r.top && y <= r.bottom; });
+  })()`;
+}
 
 export async function humanGate(sessionId: string): Promise<HumanGate> {
   try {
-    const r = (await pageEvaluate(sessionId, HUMAN_GATE_JS)) as { credentialField?: boolean; captcha?: boolean } | undefined;
+    const r = (await pageEvaluate(sessionId, HUMAN_GATE_JS)) as { credentialField?: boolean; captcha?: boolean; filled?: boolean } | undefined;
+    if (r?.filled)
+      return { needsHuman: true, reason: 'filled', hint: 'The focused field holds a value the host filled from the vault — leave it as it is (do not type, click or read it); press the page\'s own button to go on.' };
     if (r?.credentialField)
-      return { needsHuman: true, reason: 'credentials', hint: 'This looks like a password/OTP field — never type credentials or codes here. Call request_screen and let the human do it.' };
+      return { needsHuman: true, reason: 'credentials', hint: 'This looks like a password/OTP field — never type credentials or codes here. Call sign_in({site}): a sign-in runs in the owner\'s own Chrome and the host types vault values (you never see them). A private detail that is not a sign-in (a card number, an ID number, a code the owner keeps): vault_fill({site, field}) — the host fills it from the vault into this field.' };
     if (r?.captcha)
       return { needsHuman: true, reason: 'captcha', hint: 'This page shows a CAPTCHA — call request_screen so the human can solve it.' };
     return { needsHuman: false };
@@ -57,13 +79,30 @@ export async function humanGate(sessionId: string): Promise<HumanGate> {
   }
 }
 
-function findClickableJs(text: string): string {
+// VAULT2: a field's VALUE is never what a click-by-text matches. It used to be (`el.innerText || el.value`), which made
+// browser_click({text:'4'}), ({text:'41'})… a prefix oracle on anything the host had filled into an input or textarea
+// (a password before, any named detail now). A text field is found by its aria-label / placeholder (or its <label>,
+// which is a node of its own here); a button-like input by its caption; a select by its options' text; and a masked
+// field (type=password, or drawn as dots after a vault fill) is not a click target by text at all.
+export function findClickableJs(text: string): string {
   return `(() => {
     const needle = ${JSON.stringify(String(text))}.toLowerCase();
     const nodes = document.querySelectorAll('a,button,[role="button"],input,label,summary,[onclick],select,textarea');
     let best = null, bestLen = Infinity;
     for (const el of nodes) {
-      const t = (el.innerText || el.value || el.getAttribute('aria-label') || el.placeholder || '').trim().toLowerCase();
+      if (el.closest && el.closest('[data-arigami-filled]')) continue; // a field the host filled from the vault, or its label-less wrapper
+      // a <label> of a filled field focuses it when clicked: not a target either
+      if (el.tagName === 'LABEL' && ((el.control && el.control.closest('[data-arigami-filled]')) || el.querySelector('[data-arigami-filled]'))) continue;
+      const tag = el.tagName;
+      const type = (el.type || '').toLowerCase();
+      const buttonLike = tag === 'INPUT' && ['button', 'submit', 'reset', 'image'].includes(type);
+      let t;
+      if ((tag === 'INPUT' && !buttonLike) || tag === 'TEXTAREA') {
+        if (type === 'password' || (getComputedStyle(el).webkitTextSecurity || 'none') !== 'none') continue;
+        t = el.getAttribute('aria-label') || el.placeholder || '';
+      } else if (tag === 'SELECT') t = el.innerText || el.getAttribute('aria-label') || '';
+      else t = el.innerText || el.value || el.getAttribute('aria-label') || el.placeholder || '';
+      t = String(t).trim().toLowerCase();
       if (t && t.includes(needle) && t.length < bestLen) { best = el; bestLen = t.length; }
     }
     if (!best) return null;
@@ -153,6 +192,8 @@ export async function click(sessionId: string, opts: { x?: number; y?: number; t
     ({ x, y } = found);
   }
   if (x === undefined || y === undefined) throw new Error('pass {x,y} or {text}');
+  // VAULT3: a field the host filled from the vault is not a click target — a hidden <select> would open and show its choice
+  if (await pageEvaluate(sessionId, clickGuardJs(x, y)).catch(() => false)) throw new Error('that element holds a value the host filled from the vault — it is hidden on purpose and not a click target; press the page\'s own button instead');
   await pageClick(sessionId, x, y);
   return { ok: true, x, y };
 }
@@ -178,8 +219,9 @@ export async function scroll(sessionId: string, opts: { x?: number; y?: number; 
   return { ok: true };
 }
 
-export function close(sessionId: string): { ok: true } {
-  closeChromeProcess(sessionId);
+/** Graceful (Browser.close over CDP) so the last cookies/storage reach disk — a SIGTERM loses a fresh login. */
+export async function close(sessionId: string): Promise<{ ok: true }> {
+  await closeChromeGracefully(sessionId, cdpPort(sessionId), 'browser_close');
   return { ok: true };
 }
 

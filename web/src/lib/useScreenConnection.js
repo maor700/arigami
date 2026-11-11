@@ -34,7 +34,8 @@
 // ownership, mirroring, teardown, the `data-vnc-input` hotkey guard — is
 // shared verbatim and neither transport has a special case in it.
 import { useEffect, useRef, useState } from 'react';
-import RFB from '@novnc/novnc';
+// noVNC is ~0.5 MB: fetched when the first x11 desktop connects, never for the rest of the app.
+const loadRFB = () => import('@novnc/novnc').then((m) => m.default);
 import { api } from './api.js';
 import { ScreencastConnection } from './screencastClient.js';
 
@@ -136,7 +137,7 @@ function connect(c, sessionId) {
   // `c.rfb` is null and runs again below once it isn't, so ownership settles
   // the same way it always did — just one tick later on the very first mount.
   const gen = ++c.generation;
-  void resolveTransport(scopeKey(sessionId), sessionId).then((t) => {
+  void resolveTransport(scopeKey(sessionId), sessionId).then(async (t) => {
     // Everything left while we were probing (fast tab switch): the teardown
     // already ran, and connecting now would leak a socket nobody closes.
     if (c.generation !== gen || c.consumers.length === 0) { c.connecting = false; return; }
@@ -168,9 +169,12 @@ function connect(c, sessionId) {
     // The transport name is here for the same reason: "which one did this tab
     // pick" is the first question when a screen is black on a desktop-app host.
     console.info('[screen] connecting to', sessionId ? `session ${sessionId}` : 'the global desktop', url, `(${t.transport})`);
-    const r = t.transport === 'screencast'
-      ? new ScreencastConnection(c.host, url)
-      : new RFB(c.host, url, { wsProtocols: ['binary'] });
+    const RFB = t.transport === 'screencast' ? null : await loadRFB();
+    // the user may have left while the chunk loaded: same rule as after the probe
+    if (c.generation !== gen || c.consumers.length === 0) { c.connecting = false; return; }
+    const r = RFB
+      ? new RFB(c.host, url, { wsProtocols: ['binary'] })
+      : new ScreencastConnection(c.host, url);
     c.rfb = r;
     attachClipboard(c, sessionId, t.transport);
     c.connecting = false;
@@ -226,7 +230,7 @@ function disconnect(c) {
 // Cmd reaches the page as a Super key nobody listens to. The screencast
 // transport already inserts on a native paste event, so V is left to it there.
 
-const XK = { Control_L: 0xffe3, a: 0x61, x: 0x78, z: 0x7a };
+const XK = { Control_L: 0xffe3, Return: 0xff0d, a: 0x61, v: 0x76, x: 0x78, z: 0x7a };
 
 function sendCtrl(rfb, key, code) {
   if (typeof rfb.sendKey !== 'function') return;
@@ -270,6 +274,54 @@ export function clipboardKey(e, transport) {
   return null;
 }
 
+/**
+ * Paste `text` into the remote screen. First choice: insert it at the cursor of the focused page over DevTools (exact,
+ * one call). If the screen has no DevTools Chrome (the shared desktop's Chrome icon, a terminal, a native dialog) fall
+ * back to the desktop's X clipboard plus a Ctrl+V sent over VNC. Pure over its two seams, so it is testable.
+ */
+export async function pasteIntoRemote(text, { post, ctrlV }) {
+  if (!text) return;
+  let first;
+  try {
+    first = await post('type', { text });
+  } catch (e) {
+    first = { ok: false, error: e?.message || String(e) };
+  }
+  if (first?.ok !== false) return;
+  if (!ctrlV) throw new Error(first.error || 'paste failed');
+  const set = await post('clipboard', { text });
+  if (set?.ok === false) throw new Error(set.error || first.error || 'paste failed');
+  ctrlV();
+}
+
+/**
+ * The take-over modal's "type into the screen" field: put `text` where the
+ * cursor is on a screen, then press Enter if asked. A session's desktop has its
+ * own route (CDP, else XTEST); the shared screen goes the paste way — DevTools
+ * if its Chrome has them, else the X clipboard plus Ctrl+V over this tab's VNC
+ * connection — and Enter is a key over the same connection. Keys need control:
+ * noVNC drops them in Watch.
+ */
+export async function typeIntoScreen(sessionId, text, { enter = false } = {}) {
+  if (sessionId) {
+    const r = await api.post(`/sessions/${encodeURIComponent(sessionId)}/desktop/type`, { text, enter: !!enter });
+    if (r?.ok === false) throw new Error(r.error || 'typing failed');
+    return;
+  }
+  const c = conns.get(scopeKey(null));
+  const rfb = c?.transport === 'rfb' ? c.rfb : null;
+  if (text) {
+    await pasteIntoRemote(text, {
+      post: (path, body) => api.post(`/desktop/${path}`, body),
+      ctrlV: rfb ? () => sendCtrl(rfb, 'v', 'KeyV') : null,
+    });
+  }
+  if (enter && typeof rfb?.sendKey === 'function') {
+    rfb.sendKey(XK.Return, 'Enter', true);
+    rfb.sendKey(XK.Return, 'Enter', false);
+  }
+}
+
 function attachClipboard(c, sessionId, transport) {
   const base = sessionId ? `/sessions/${encodeURIComponent(sessionId)}/desktop` : '/desktop';
   c.host.addEventListener(
@@ -294,10 +346,12 @@ function attachClipboard(c, sessionId, transport) {
         e.stopImmediatePropagation();
         const read = navigator.clipboard?.readText ? navigator.clipboard.readText() : Promise.reject(new Error('clipboard unavailable'));
         read
-          .then((txt) => (txt ? api.post(`${base}/type`, { text: txt }) : null))
-          .then((r) => {
-            if (r && r.ok === false) throw new Error(r.error || 'paste failed');
-          })
+          .then((txt) =>
+            pasteIntoRemote(txt, {
+              post: (path, body) => api.post(`${base}/${path}`, body),
+              ctrlV: transport === 'rfb' ? () => sendCtrl(c.rfb, 'v', 'KeyV') : null,
+            })
+          )
           .catch((err) => reportError('screen.pasteFailed', err));
         return;
       }

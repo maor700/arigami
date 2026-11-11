@@ -62,24 +62,24 @@ test('B18: diff code rows are forced LTR (the cockpit document is RTL in Hebrew)
     // the sign sits in the row, so it renders on the LEFT of the code
     const rows = html.match(/<div dir="ltr" class="[^"]*font-mono[^"]*"/g) || [];
     expect(rows.length).toBeGreaterThanOrEqual(4); // hunk + 3 lines (split: 5 cells)
-    expect(html).toMatch(/dir="ltr"[^>]*>(?:(?!<\/div>).)*text-fgdim">-<\/span><span class="text-fg"># audit repo/);
+    expect(html).toMatch(/dir="ltr"[^>]*>(?:(?!<\/div>).)*>−<\/span><span class="[^"]*text-foreground">(?:(?!<\/div>).)*# audit repo/);
     expect(html).not.toMatch(/<div class="[^"]*font-mono text-\[11px\][^"]*"[^>]*style="background/); // no row without dir
   }
 });
 
 test('B5: the rail scrolls the selected session row into view', () => {
   const rail = src('components/Rail.jsx');
-  expect(rail).toContain('data-session-row={session.id}');
+  expect(rail).toContain("'data-session-row': session.id");
   expect(rail).toMatch(/querySelector\(`\[data-session-row="\$\{selectedId\}"\]`\)/);
   expect(rail).toContain("scrollIntoView({ block: 'nearest' })");
 });
 
 test('B26: phone-sized inputs are 16px (no iOS auto-zoom), desktop keeps the compact size', () => {
-  const sv = src('components/SessionView.jsx');
-  expect(sv).toMatch(/resize-none bg-transparent text-\[16px\][^"]*sm:text-\[11\.5px\]/);
-  expect(sv).not.toMatch(/resize-none bg-transparent text-\[11\.5px\]/);
+  const sv = src('components/Composer.jsx'); // the composer moved out of SessionView (chat redesign)
+  expect(sv).toMatch(/resize-none bg-transparent[^"]*text-\[16px\][^"]*sm:text-\[14px\]/);
+  expect(sv).not.toMatch(/resize-none bg-transparent[^"]*text-\[11\.5px\]/);
   const rail = src('components/Rail.jsx');
-  expect(rail).toMatch(/flex-1 bg-transparent text-\[16px\] outline-none placeholder:text-fgdim sm:text-xs/);
+  expect(rail).toMatch(/className="ps-8 pe-8 text-base sm:text-sm"/); // the rail search field: 16px on a phone
 });
 
 // ---- LOW batch ---------------------------------------------------------------
@@ -148,7 +148,7 @@ test('B2/B3/B6/B9/B12/B13/B15/B27/B36: wiring', () => {
   expect(src('App.jsx')).toContain("if (ctx.railOpen) { e.preventDefault(); setRailOpen(false); return; }");
   expect(src('App.jsx')).toMatch(/useEffect\(\(\) => \{ setRailOpen\(false\); \}, \[selectedId/);
   expect(src('components/ChangesTab.jsx')).toContain("const noRepo = !loading && data?.emptyReason === 'no-repo';");
-  expect(src('components/ChangesTab.jsx')).toContain('{!noRepo && <div className="flex overflow-hidden');
+  expect(src('components/ChangesTab.jsx')).toContain('{!noRepo && (\n          <Tabs value={changesMode}');
   expect(src('components/ChangesTab.jsx')).toContain('{noRepo ? null : desktop ? (');
   expect(src('components/Rail.jsx')).not.toContain("if (!kids.length) api.del(`/folders/");
   expect(src('components/Rail.jsx')).toContain("setFolderDialog({ type: 'delete', folder, kids: folderKids.get(folder.id) || [] })");

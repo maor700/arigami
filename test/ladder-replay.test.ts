@@ -24,6 +24,7 @@ import { runInChild } from './_child.js';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { tmpDir } from './_tmp.js';
 
 const FABLE = 1_000_000;
 const HAIKU = 200_000;
@@ -202,7 +203,7 @@ describe('the badge in the session summary', () => {
     expect(ladderBadge({ modelRung: 1, modelChoice: 'sonnet', modelDowngradedFrom: 'fable', modelRestoreAt: null })).toEqual({ running: 'sonnet', configured: 'fable', resetAt: null, compacted: false });
   });
   test('toWireSession (what GET /__api/sessions and the WS broadcasts carry) exposes claude.ladder, and drops it on the climb back', () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-ladder1-'));
+    const dir = tmpDir('arigami-ladder1-');
     const r = runInChild(
       `const st = await import('./server/state.js');
        const s = st.createSession({ title: 'ladder', cwd: '/tmp' });

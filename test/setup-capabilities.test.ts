@@ -7,8 +7,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { runInChild } from './_child.js';
+import { tmpDir } from './_tmp.js';
 
-const fresh = (): string => fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-setup-'));
+const fresh = (): string => tmpDir('arigami-setup-');
 const env = (dir: string, extra: Record<string, string> = {}) => ({
   ARIGAMI_DIR: dir,
   ARIGAMI_FUNNEL_QUIET: '1',
@@ -21,7 +22,7 @@ const NONE =
   "const probes={identity:()=>null,claude:()=>({cli:true,authed:false}),codex:()=>({cli:true,authed:false}),git:()=>({authed:false,gh:false})," +
   "repos:()=>[{name:'app',present:false,dir:'/x/app',source:'https://example.invalid/app.git'}]," +
   "whatsapp:()=>({status:'disconnected',qr:null,user:null}),desktop:()=>({enabled:false,display:null,up:false})," +
-  "push:()=>false,remote:()=>({available:false,reason:'Tailscale is not installed'}),telemetry:()=>({enabled:false,reason:'config'})," +
+  "push:()=>false,remote:()=>({available:false,reason:'Tailscale is not installed'}),container:()=>false,telemetry:()=>({enabled:false,reason:'config'})," +
   'composioKey:()=>false,composioConnected:async()=>null};';
 // Everything connected.
 const ALL =
@@ -58,6 +59,21 @@ test('registry: every spec id resolves; statics + repos + known toolkits are lis
   expect(all).toContain('repo:app');
   expect(all).toContain('composio:gmail');
   expect(bad).toEqual([null, null, false]);
+});
+
+test('registry: in a container without a tailscale CLI, `remote` is not listed (but still resolves for a direct ask)', () => {
+  const r = runInChild(
+    `const c=await import('./server/capabilities.js');${NONE}` +
+      'const pod={...probes,container:()=>true};' +
+      "emit({pod:c.listCapabilities(pod).map(x=>x.id),withCli:c.listCapabilities({...pod,remote:()=>({available:true,loggedIn:false})}).map(x=>x.id),direct:!!c.getCapability('remote',pod)});",
+    env(fresh())
+  );
+  if (!r.ok) throw new Error(r.error);
+  const { pod, withCli, direct } = r.out[0];
+  expect(pod).not.toContain('remote');
+  expect(pod).toContain('desktop');
+  expect(withCli).toContain('remote');
+  expect(direct).toBe(true);
 });
 
 test('check(): nothing connected → all not ok with a human detail; everything connected → all ok; defaultMode follows identity+autoCapable', () => {
@@ -234,4 +250,23 @@ test('doctor: capabilities CLI lists the registry offline (no network) and the w
   for (const id of ['identity', 'claude', 'git', 'whatsapp', 'desktop', 'push', 'remote', 'telemetry', 'repo:app']) expect(text).toContain(id);
   expect(text).toContain('[auto]');
   expect(text).toMatch(/identity: none/);
+});
+
+test('identity.json: Google, Microsoft or Apple — the provider is kept, anything else refused; chrome:<dir> profile', () => {
+  const dir = fresh();
+  const r = runInChild(
+    `const c=await import('./server/capabilities.js');` +
+      "const ms=c.writeIdentity({email:'me@work.example',provider:'microsoft',chromeProfile:'chrome:Profile 2'});" +
+      "const kept=c.writeIdentity({email:'me@work.example'});" +
+      "const ap=c.writeIdentity({email:'me@icloud.example',provider:'apple'});" +
+      "let bad=null;try{c.writeIdentity({email:'me@x.example',provider:'yahoo'})}catch(e){bad=e.message}" +
+      'emit({ms,kept,ap,bad});',
+    env(dir)
+  );
+  if (!r.ok) throw new Error(r.error);
+  const o = r.out[0];
+  expect(o.ms).toMatchObject({ provider: 'microsoft', chromeProfile: 'chrome:Profile 2' });
+  expect(o.kept.provider).toBe('microsoft'); // same account, no provider given: kept
+  expect(o.ap.provider).toBe('apple');
+  expect(o.bad).toMatch(/provider is one of google, microsoft, apple/);
 });

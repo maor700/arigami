@@ -1,9 +1,13 @@
 // The ONE interactive view of the shared host desktop. Opened three ways:
 //   - the rail footer icon — the genuinely GLOBAL desktop, no sessionId
-//     (`modal = true` → `{}`) — plain enlarge/drive.
+//     (`modal = true` → `{}`).
 //   - "enlarge" on the session side panel (no open request) — that
-//     session's OWN machine (T8c), plain enlarge/drive (`modal =
-//     {sessionId}`).
+//     session's OWN machine (T8c) (`modal = {sessionId}`).
+//   Both plain views open in WATCH (view-only): other sessions may be driving
+//   that machine, so a stray click must not land in their browser. The header
+//   says whose machine it is and which mode you are in; "Take control" makes
+//   it interactive, "Release" hands it back (`{control:true}` opens it already
+//   in control — "My browser", where the human opened it to drive it).
 //   - "Take over" on a request_screen card / side panel — that session's
 //     machine PLUS the request's context (reason chip, prompt/hint) and a
 //     footer: optional note, "Cancel request" and "Done" (`modal =
@@ -18,16 +22,16 @@
 // Fullscreen API toggle (the canvas benefits from true fullscreen / pointer
 // lock). Mounted ONCE, in App.jsx, from store.screen.modal.
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { createPortal, flushSync } from 'react-dom';
 import ScreenView from './ScreenView.jsx';
-import { SCREEN_PRIORITY } from '../lib/useScreenConnection.js';
-import { answerScreenRequest, cancelScreenRequest, openScreenRequest, setScreenModal, useStore } from '../lib/store.js';
+import { SCREEN_PRIORITY, typeIntoScreen } from '../lib/useScreenConnection.js';
+import { answerScreenRequest, cancelScreenRequest, loadSharedDesktop, openScreenRequest, releaseSharedDesktop, setScreenModal, useStore } from '../lib/store.js';
 import * as setupApi from '../lib/setup-api.js';
 import { api } from '../lib/api.js';
 import { useT } from '../lib/i18n.js';
 import { engineLabel } from '../lib/engines.js';
-import { Icon } from '../lib/icons.js';
-import { faXmark, faExpand, faCompress, faDisplay } from '@fortawesome/free-solid-svg-icons';
+import { EyeIcon, KeyboardIcon, MaximizeIcon, MinimizeIcon, MonitorIcon, MousePointerClickIcon, XIcon } from 'lucide-react';
+import { Badge, Button, Input, StatusDot } from './ui/index.js';
 
 // `context` — store.screen.modal: {} for the global view, {sessionId} for a
 // session's own machine (no open request), {sessionId, requestId} when
@@ -43,16 +47,24 @@ export default function ScreenModal({ context, onClose }) {
   const [setupErr, setSetupErr] = useState(null);
   // F8: "type into the desktop" — the human's clipboard never crosses VNC, so
   // a code copied on their own machine can be typed here and inserted where
-  // the cursor is on the session desktop.
+  // the cursor is on the machine. On a phone it is also THE keyboard: the
+  // remote field's focus cannot open the phone's own. Shown by default on a
+  // session's machine in control; the keyboard button shows / hides it on any
+  // screen, the shared one included (`typeOpen` null = the default).
   const [typed, setTyped] = useState('');
   const [typeBusy, setTypeBusy] = useState(false);
   const [typeErr, setTypeErr] = useState(null);
+  const [typeOpen, setTypeOpen] = useState(null);
+  const typeRef = useRef(null);
+  // On a phone the request's prompt is clamped to two lines (the screen gets
+  // the room); a tap opens it in full.
+  const [bannerOpen, setBannerOpen] = useState(false);
   const typeIt = async (enter) => {
-    if (!typed || !context?.sessionId) return;
+    if ((!typed && !enter) || !interactive) return;
     setTypeBusy(true);
     setTypeErr(null);
     try {
-      await api.post(`/sessions/${context.sessionId}/desktop/type`, { text: typed, enter: !!enter });
+      await typeIntoScreen(screenSessionId, typed, { enter });
       setTyped('');
     } catch (e) {
       setTypeErr(String(e?.message || e).replace(/^HTTP \d+ — /, ''));
@@ -71,6 +83,53 @@ export default function ScreenModal({ context, onClose }) {
   // The note goes back to whichever engine drives THIS session, not to "Claude".
   const engine = engineLabel(s.sessions.find((x) => x.id === context?.sessionId)?.engine);
   const req = openReq && openReq.requestId === context.requestId ? openReq : null;
+  // A request on the shared desktop (the session held its lease) shows THAT screen, not the session's own machine.
+  const screenSessionId = req?.shared ? undefined : context?.sessionId;
+  const globalView = !screenSessionId;
+  const lease = s.sharedDesktop;
+  const leaseHolder = lease?.holder ? s.sessions.find((x) => x.id === lease.holder.sessionId) : null;
+  useEffect(() => {
+    if (globalView) loadSharedDesktop();
+  }, [globalView]);
+  const [releasing, setReleasing] = useState(false);
+  const releaseLease = async () => {
+    setReleasing(true);
+    try {
+      await releaseSharedDesktop();
+    } finally {
+      setReleasing(false);
+    }
+  };
+
+  // Watch vs control. A take-over (request) or a setup sign-in is control by
+  // definition — the human clicked to drive. A plain view starts in Watch.
+  const [control, setControl] = useState(!!context?.control);
+  const interactive = !!req || !!setupCtx || control;
+  const plain = !req && !setupCtx;
+  const typeShown = typeOpen ?? (!!screenSessionId && interactive);
+  // Typing is driving: opening the field in Watch takes control. flushSync so
+  // the field exists when it is focused — a phone opens its keyboard only for a
+  // focus() inside the tap itself.
+  const toggleType = () => {
+    const next = !typeShown;
+    flushSync(() => {
+      setTypeOpen(next);
+      if (next && plain) setControl(true);
+    });
+    if (next) typeRef.current?.focus();
+  };
+  const ownerSession = context?.sessionId ? s.sessions.find((x) => x.id === context.sessionId) : null;
+  const owner = context?.sessionId && !openReq?.shared
+    ? t('screen.ownerSession', { title: ownerSession?.title || context.sessionId })
+    : t('screen.ownerShared');
+
+  // Switching session / tab (a hash route change) leaves this view: a modal
+  // that stays up over a different session reads as THAT session's machine.
+  useEffect(() => {
+    const onNav = () => onClose();
+    window.addEventListener('hashchange', onNav);
+    return () => window.removeEventListener('hashchange', onNav);
+  }, [onClose]);
 
   useEffect(() => {
     const onFsChange = () => setFullscreen(!!document.fullscreenElement);
@@ -138,111 +197,169 @@ export default function ScreenModal({ context, onClose }) {
     error: t('rail.screenError'),
   }[status];
   const reasonLabel = req?.reason ? t(`chat.screenReason.${req.reason}`) : '';
-  const iconBtn =
-    'flex h-7 w-7 cursor-pointer items-center justify-center rounded-md border border-hair text-fgdim hover:border-ink hover:text-fg';
-  const btnPrimary =
-    'cursor-pointer rounded-[7px] border-[1.5px] border-ink bg-brand px-3.5 py-1.5 text-[11.5px] font-bold text-[#1a1a1a] shadow-[2px_2px_0_#2a2a2a] disabled:opacity-50';
-  const btnSecondary =
-    'cursor-pointer rounded-[7px] border-[1.5px] border-border bg-transparent px-3 py-1.5 text-[11.5px] font-bold text-fg hover:bg-bg disabled:opacity-50';
 
-  // Portaled to <body> so no ancestor transform/overflow can clip it.
+  // Portaled to <body> so no ancestor transform/overflow can clip it. The shell
+  // is also the Fullscreen API target, so its buttons keep native `title`s: a
+  // kit tooltip portals to <body> and would sit behind a fullscreen element.
+  // On a phone the shell is the whole screen (no backdrop margin, no rounded
+  // card, one header row) so the desktop gets every pixel; pinch zooms it.
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-3 md:p-6" onMouseDown={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 md:p-6" onMouseDown={onClose}>
       <div
         ref={shellRef}
-        className="flex h-[86vh] w-[1100px] max-w-full flex-col overflow-hidden rounded-[12px] border-[1.5px] border-ink bg-panel shadow-[4px_4px_0_rgba(0,0,0,0.25)]"
+        data-screen-modal=""
+        className="flex h-[100dvh] w-full max-w-full flex-col overflow-hidden bg-popover pb-[env(safe-area-inset-bottom,0px)] text-popover-foreground md:h-[86vh] md:w-[1100px] md:rounded-xl md:border md:border-border md:pb-0 md:shadow-dialog"
         onMouseDown={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center gap-2.5 border-b border-hair px-4 py-3">
-          <span className={`text-[13px] leading-none ${req ? 'text-red-500' : ''}`}><Icon icon={faDisplay} /></span>
-          <span className="font-mono text-[13px] font-bold text-fg">{req ? t('screen.takeoverTitle') : t('rail.screen')}</span>
-          {reasonLabel && (
-            <span className="rounded-full border border-border px-1.5 py-[1px] text-[9.5px] font-bold uppercase tracking-wide text-fgdim">
-              {reasonLabel}
+        <div className="flex min-h-10 items-center gap-x-2.5 gap-y-1.5 border-b border-border px-3 py-1 md:min-h-12 md:flex-wrap md:px-4 md:py-2">
+          {req ? <StatusDot status="warn" pulse className="size-2" /> : <MonitorIcon className="size-4 text-muted-foreground" aria-hidden="true" />}
+          <span className="whitespace-nowrap text-base font-semibold text-foreground max-md:hidden">{req ? t('screen.takeoverTitle') : context?.sessionId ? t('screen.panelTitle') : t('rail.screen')}</span>
+          {reasonLabel && <Badge variant="outline">{reasonLabel}</Badge>}
+          {/* whose machine this is — the shared one may have other sessions on
+              it — and whether your input reaches it. On a phone only the mode
+              stays, in the same row: the header is one line there. */}
+          <span className="flex min-w-0 items-center gap-2">
+            <Badge variant="outline" data-screen-owner="" className="min-w-0 max-w-[16rem] truncate max-md:hidden" title={owner}>{owner}</Badge>
+            <span
+              data-screen-mode={interactive ? 'control' : 'watch'}
+              title={interactive ? t('screen.modeControl') : t('chat.screenModeWatch')}
+              className={`inline-flex shrink-0 items-center gap-1 text-xs ${interactive ? 'font-medium text-warn' : 'text-muted-foreground'}`}
+            >
+              {interactive ? <MousePointerClickIcon className="size-3.5" aria-hidden="true" /> : <EyeIcon className="size-3.5" aria-hidden="true" />}
+              <span className="max-md:hidden">{interactive ? t('screen.modeControl') : t('chat.screenModeWatch')}</span>
             </span>
+          </span>
+          {statusLabel && status !== 'connected' && <span className="hidden text-xs text-muted-foreground md:inline">{statusLabel}</span>}
+          {plain && (
+            <Button
+              variant={control ? 'outline' : 'primary'}
+              size="sm"
+              data-screen-control-toggle=""
+              onClick={() => setControl((c) => !c)}
+              title={control ? t('screen.releaseHint') : t('screen.takeControlHint')}
+              className="ms-auto"
+            >
+              {control ? t('screen.release') : t('screen.takeControl')}
+            </Button>
           )}
-          {statusLabel && status !== 'connected' && <span className="font-mono text-[10.5px] text-fgdim">{statusLabel}</span>}
-          <button
-            type="button"
+          <Button
+            variant={typeShown ? 'outline' : 'ghost'}
+            size="icon"
+            data-screen-type-toggle=""
+            onClick={toggleType}
+            title={t('screen.typeInto')}
+            aria-label={t('screen.typeInto')}
+            aria-pressed={typeShown}
+            className={plain ? '' : 'ms-auto'}
+          >
+            <KeyboardIcon className="size-4" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
             onClick={toggleFullscreen}
             title={fullscreen ? t('chat.exitFullscreen') : t('chat.fullscreen')}
             aria-label={fullscreen ? t('chat.exitFullscreen') : t('chat.fullscreen')}
-            className={`ms-auto ${iconBtn}`}
           >
-            <Icon icon={fullscreen ? faCompress : faExpand} />
-          </button>
-          <button
-            type="button"
+            {fullscreen ? <MinimizeIcon className="size-4" /> : <MaximizeIcon className="size-4" />}
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
             onClick={onClose}
             title={req ? t('screen.closeKeepOpen') : t('dialogs.close')}
             aria-label={req ? t('screen.closeKeepOpen') : t('dialogs.close')}
-            className={iconBtn}
           >
-            <Icon icon={faXmark} />
-          </button>
+            <XIcon className="size-4" />
+          </Button>
         </div>
 
+        {globalView && lease && (lease.holder || lease.queue?.length || lease.parked?.length || lease.humanActive) ? (
+          <div className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-2 text-sm" data-shared-desktop-lease="">
+            <span dir="auto" className="min-w-0 flex-1 text-muted-foreground">
+              {lease.holder
+                ? t('screen.leaseHeld', { title: leaseHolder?.title || lease.holder.sessionId, site: lease.holder.site || '—' })
+                : t('screen.leaseFree')}
+              {lease.queue?.length ? ` · ${t('screen.leaseQueue', { n: lease.queue.length })}` : ''}
+              {lease.parked?.length ? ` · ${t('screen.leaseParked', { n: lease.parked.length })}` : ''}
+              {lease.humanActive ? ` · ${t('screen.leaseYou')}` : ''}
+            </span>
+            {lease.holder && (
+              <Button variant="outline" size="sm" disabled={releasing} onClick={releaseLease} title={t('screen.leaseReleaseHint')} data-shared-desktop-release="">
+                {t('screen.leaseRelease')}
+              </Button>
+            )}
+          </div>
+        ) : null}
+
         {req && (
-          <div className="flex items-start gap-2 border-b border-hair bg-red-500/10 px-4 py-2 text-[11.5px] leading-snug">
-            <span className="pulse-yellow mt-[5px] h-[7px] w-[7px] shrink-0 rounded-full bg-red-500" />
-            <div className="min-w-0">
-              <div className="font-bold text-fg">{t('chat.screenControlBanner')}</div>
-              {req.prompt && <div dir="auto" className="mt-0.5 text-fg">{req.prompt}</div>}
+          <div
+            className="flex items-start gap-2.5 border-b border-[var(--hb-warn-line)] bg-[var(--hb-warn-bg)] px-3 py-1.5 text-sm leading-snug md:px-4 md:py-2.5"
+            data-screen-control-banner=""
+            onClick={() => setBannerOpen((o) => !o)}
+          >
+            <div className={`min-w-0 ${bannerOpen ? '' : 'max-md:line-clamp-2'}`}>
+              <div className="font-medium text-foreground max-md:hidden">{t('chat.screenControlBanner')}</div>
+              {req.prompt && <div dir="auto" className="text-foreground md:mt-0.5">{req.prompt}</div>}
               {req.hint && (
-                <div dir="auto" className="mt-0.5 text-fgdim">
-                  <span className="font-bold">{t('chat.screenHint')}:</span> {req.hint}
+                <div dir="auto" className={`mt-0.5 text-muted-foreground ${bannerOpen ? '' : 'max-md:hidden'}`}>
+                  <span className="font-medium">{t('chat.screenHint')}:</span> {req.hint}
                 </div>
               )}
             </div>
           </div>
         )}
 
-        <ScreenView priority={SCREEN_PRIORITY.modal} sessionId={context?.sessionId} className="min-h-0 flex-1" onStatusChange={onStatusChange} />
+        <ScreenView priority={SCREEN_PRIORITY.modal} viewOnly={!interactive} sessionId={screenSessionId} zoomable className="min-h-0 flex-1" onStatusChange={onStatusChange} />
 
-        {context?.sessionId && (
-          <div className="flex items-center gap-2 border-t border-hair px-4 py-2" title={t('screen.typeIntoHint')}>
-            <input
+        {typeShown && (
+          <div className="flex items-center gap-2 border-t border-border px-3 py-1.5 md:px-4 md:py-2" title={t('screen.typeIntoHint')} data-screen-type="">
+            <Input
+              ref={typeRef}
               value={typed}
+              disabled={!interactive}
               onChange={(e) => setTyped(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && !typeBusy && typeIt(true)}
+              enterKeyHint="send"
               placeholder={t('screen.typeInto')}
               dir="auto"
               spellCheck={false}
-              className="min-w-0 flex-1 rounded-[7px] border-[1.5px] border-border bg-transparent px-2.5 py-1 font-mono text-[11.5px] text-fg outline-none placeholder:font-sans placeholder:text-fgdim"
+              className="min-w-0 flex-1 font-mono text-xs placeholder:font-sans"
             />
-            <button type="button" disabled={typeBusy || !typed} onClick={() => typeIt(false)} className={btnSecondary}>{t('screen.typeSend')}</button>
-            {typeErr && <span className="text-[11px] text-[#9c3b33]">{typeErr}</span>}
+            <Button variant="outline" disabled={typeBusy || !typed} onClick={() => typeIt(false)}>{t('screen.typeSend')}</Button>
+            {typeErr && <span className="text-xs text-destructive">{typeErr}</span>}
           </div>
         )}
         {setupCtx && (
-          <div className="flex flex-wrap items-center gap-2 border-t border-hair px-4 py-2.5">
-            <span dir="auto" className="min-w-0 flex-1 text-[11.5px] text-fgdim">
-              {setupErr ? <span className="text-[#9c3b33]">{setupErr}</span> : t('setup.card.identityHint')}
+          <div className="flex flex-wrap items-center gap-2 border-t border-border px-4 py-2.5">
+            <span dir="auto" className="min-w-0 flex-1 text-sm text-muted-foreground">
+              {setupErr ? <span className="text-destructive">{setupErr}</span> : t('setup.card.identityHint')}
             </span>
-            <button type="button" disabled={busy} onClick={setupDone} title={t('setup.card.identityHint')} className={btnPrimary}>
+            <Button variant="primary" disabled={busy} onClick={setupDone} title={t('setup.card.identityHint')}>
               {busy ? t('setup.takeover.verifying') : t('setup.takeover.modalDone')}
-            </button>
+            </Button>
           </div>
         )}
         {req && (
-          <div className="flex items-center gap-2 border-t border-hair px-4 py-2.5">
-            <input
+          <div className="flex items-center gap-2 border-t border-border px-3 py-1.5 md:px-4 md:py-2.5">
+            <Input
               value={note}
               onChange={(e) => setNote(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && !busy && done()}
               placeholder={t('chat.screenRequestNotePlaceholder', { engine })}
-              className="min-w-0 flex-1 rounded-[7px] border-[1.5px] border-border bg-transparent px-2.5 py-1.5 text-[11.5px] text-fg outline-none placeholder:text-fgdim"
+              dir="auto"
+              className="min-w-0 flex-1"
             />
-            <button type="button" disabled={busy} onClick={cancel} title={t('screen.cancelRequestHint')} className={btnSecondary}>
+            <Button variant="outline" disabled={busy} onClick={cancel} title={t('screen.cancelRequestHint')}>
               {t('screen.cancelRequest')}
-            </button>
-            <button type="button" disabled={busy} onClick={done} title={t('screen.doneHint')} className={btnPrimary}>
+            </Button>
+            <Button variant="primary" disabled={busy} onClick={done} title={t('screen.doneHint')}>
               {t('chat.screenRequestDone')}
-            </button>
+            </Button>
           </div>
         )}
         {req && doneErr && (
-          <div data-screen-done-error dir="auto" className="border-t border-hair px-4 py-2 text-[11px] font-bold text-[#9c3b33]">{doneErr}</div>
+          <div data-screen-done-error dir="auto" className="border-t border-border px-4 py-2 text-xs font-medium text-destructive">{doneErr}</div>
         )}
       </div>
     </div>,

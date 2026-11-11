@@ -8,10 +8,14 @@
 //   bun test/fixtures/live-pilot.ts <cp-url> <email> [timeout-sec]
 // Prints JSON evidence; exit 0 only when the flow reached its terminal page
 // (admin page for the first-ever user, tenant URL for everyone else).
+// LIVE_PILOT_COOKIE=1 adds the control-plane session cookie to the JSON, for a
+// caller that goes on through the tenant gate (deploy/local-k3s/e2e.sh).
+// Behind an HTTP proxy (the local stack's port-forward), set HTTP_PROXY.
 const cp = (process.argv[2] || 'http://127.0.0.1:18090').replace(/\/$/, '');
 const email = process.argv[3] || 'alice@fake-org.test';
 const timeoutSec = Number(process.argv[4] || 300);
 const sub = `sub-${email}`;
+const withCookie = process.env.LIVE_PILOT_COOKIE === '1';
 
 const cookieOf = (r: Response) => (r.headers.get('set-cookie') || '').split(';')[0];
 
@@ -42,10 +46,10 @@ while (Date.now() < deadline) {
     const loc = r.headers.get('location')!;
     if (loc === '/admin') {
       const admin = await fetch(`${cp}/admin`, { headers: { cookie: sid } });
-      console.log(JSON.stringify({ email, sub, landed: 'admin', adminStatus: admin.status }, null, 2));
+      console.log(JSON.stringify({ email, sub, landed: 'admin', adminStatus: admin.status, ...(withCookie ? { cookie: sid } : {}) }, null, 2));
       process.exit(admin.status === 200 ? 0 : 1);
     }
-    console.log(JSON.stringify({ email, sub, landed: 'tenant', tenantUrl: loc }, null, 2));
+    console.log(JSON.stringify({ email, sub, landed: 'tenant', tenantUrl: loc, ...(withCookie ? { cookie: sid } : {}) }, null, 2));
     process.exit(0);
   }
   const body = await r.text();

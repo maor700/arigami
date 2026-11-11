@@ -265,6 +265,18 @@ async function evalIn(cdp: Cdp, sid: string, expression: string, timeoutMs = 60_
 export const STATE_CAP_BYTES = 25 * 1024 * 1024;
 
 /**
+ * The IndexedDB database names of one origin, read in a page of it. (IndexedDB.requestDatabaseNames on the
+ * browser-level target answers "wasn't found": the domain lives on page targets. Its error was swallowed, so an
+ * unknown site's names always read as none, and its storage was dropped from the copy.)
+ */
+export async function idbNames(cdp: Cdp, origin: string): Promise<string[]> {
+  const json = await withPage(cdp, `${origin}/robots.txt`, (sid) =>
+    evalIn(cdp, sid, `(async () => JSON.stringify(indexedDB.databases ? (await indexedDB.databases()).map((d) => d.name).filter(Boolean) : []))()`, 15_000)
+  );
+  return JSON.parse(json);
+}
+
+/**
  * Everything one site needs, read from a running Chrome.
  * `cookieFilter` picks the site's cookies; `origins` the storage to read.
  */

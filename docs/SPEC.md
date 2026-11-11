@@ -94,6 +94,7 @@ POST   /__api/sessions/:id/interrupt                       → SIGINT-equivalent
 GET    /__api/sessions/:id/chat?since=N      → chat events tail (rehydration; live = WS)
 GET    /__api/linear/tickets?filter=assigned → launcher picker (reuse PoC Linear fetch/cache)
 GET    /__api/config                         → {defaultCwd, palette, …}
+POST   /__api/config/notify                  {whatsappJid} → {notify}   (owner's WhatsApp target for notify.ts; admin)
 GET    /__api/sessions/:id/artifacts         → [artifact]                (A1)
 POST   /__api/sessions/:id/artifacts         {path, title, entry?, open?, notify?, share?, share_days?} → {artifact_id, path, version, bytes, files, warnings, share_url, share_exp}
 DELETE /__api/sessions/:id/artifacts/:aid
@@ -117,6 +118,27 @@ Server → client events: `{type:'state', sessions}` on connect, then granular:
 `permission-request:<sessionId>` {requestId, toolName, input},
 `action:<sessionId>`, `progress:<sessionId>`.
 Client → server: none (use REST). Reconnect = full state replay.
+
+Fast resume (wire v2, opt-in per socket — `server/lib/wire-resume.ts`,
+`web/src/lib/resume.js`): `/__ws?wire=2[&z=1][&since=<rev>&boot=<id>][&open=<sid>&seq=<n>&clip=<c>]`.
+- v2 sessions (replay, broadcasts, `GET /__api/sessions?wire=2`) drop what the
+  rail never renders: `claude.capabilities.skills/mcpServers` → `counts`,
+  `claude.mcp.servers` → `{sig, count}`, `claude.mcpLoaded` → `{at, count}`,
+  `changesExplanations` → `changesExplained {mode: generatedAt}`. The open
+  session's come from `GET /__api/sessions/:id?fields=changesExplanations,claude.capabilities`.
+- The replay carries `{v:2, rev, boot}`; every session-scoped broadcast carries
+  `wrev`. Reconnecting with `since`+`boot` gets `{delta:true, sessions:[changed], deleted:[ids]}`
+  (listeners/folders/triggers/pending whole); an unknown boot or a too-old
+  cursor gets the full replay. `open`+`seq` adds `{chat:{sessionId, since, events}}`
+  — the open chat's gap (≤300 events, else the client refills it over REST).
+- `z=1`: frames ≥4KB go out as one binary gzip frame (Bun's `ws` shim never
+  negotiates permessage-deflate). REST JSON and the web bundle are gzip/br when
+  the request asks for it (`Vary: Accept-Encoding`).
+- No params = the old v1 wire, unchanged — an old cockpit against a new host
+  keeps working, and a new cockpit treats a replay without `v` as an old host
+  (full merge + REST list, REST chat gap fill).
+- Measure it: `bun scripts/bench-resume.ts --root <checkout> --label <name>`
+  (isolated host on a copy of the state, Slow-4G shaping proxy, phone profile).
 
 ## Claude process manager (server/claude.js)
 
@@ -200,6 +222,14 @@ open_tab({type:'url'|'content'|'ext', title, url?, format?, body?, badge?, ext?,
 update_tab({tab_id, …same fields…})   close_tab({tab_id})   activate_tab({tab_id})
 request_action({prompt, buttons:[{label,value,style?}], session_id?})
 request_screen({prompt, reason?, hint?, session_id?}) → {ok, takenOver, note?}
+// VAULT2 (docs/INSTRUCTIONS-AND-VAULT.md): the owner's named details — names and outcomes only, never a value
+vault_fields({site}) → {site, entries:[{id, title, origin, fields:[{name, type}]}]}     // GET /sessions/:id/vault/fields?site=
+vault_collect({site, fields:[{name, type?, label?, required?}], title?, reason?})       // POST /sessions/:id/vault/collect (blocking)
+   → {status:'saved', host, entry:{id?, title?, fields:[names]}, next} | {status:'cancelled'|'expired', host, reason} | {status:'blocked', reason}
+vault_fill({site, field, part?: 'value'|'month'|'year', entry?, target?, reason?})     // POST /sessions/:id/vault/fill (blocking); part = an expiry's month/year into a <select>, split in the vault worker
+   → {status:'filled', field, host, where:'session-browser', next} | {status:'manual', next} | {status:'blocked'|'cancelled'|'expired', reason}
+   // session browser only: refused (blocked + next) while the session drives a sign-in in the owner's Chrome
+   // owner only: PUT/GET /__api/vault/catalog (names-only catalog the cockpit uploads after each save)
    // reason: 'login'|'2fa'|'captcha'|'payment'|'other' (unknown → 'other')
    // hint: what exactly the human should complete. See "Screen share" below.
 capture_screen({caption?, session_id?}) → {ok, url, ts, width?, height?} | {ok:false, error}
@@ -1110,7 +1140,8 @@ request_setup → QR card); connected → proxied to the WhatsApp MCP server (`s
 stdio client, spawned lazily from `ARIGAMI_WA_MCP_DIR`). The first turn of every session carries an
 identity reminder ("the agent inside Arigami", answer in the human's language) plus the cached
 connectable-capabilities line (`refreshCapabilitiesHint()` in claude.js), so the model knows WhatsApp,
-Gmail… exist before they are connected.
+Gmail… exist before they are connected. The same blocks state the outbound principle: asked to reach someone, the
+agent initiates and sends through the card path — the card is the mechanism, never a reason to answer "no access".
 
 ### Claude PKCE without pasting (F8)
 Session Chrome starts with `--remote-debugging-port=0` (loopback; port in `<profile>/DevToolsActivePort`).

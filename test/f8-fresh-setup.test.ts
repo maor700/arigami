@@ -15,6 +15,7 @@ import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { hostDiag } from './_host-diag.js';
 import { runInChild } from './_child.js';
+import { tmpDir } from './_tmp.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let host: ChildProcess | null = null;
@@ -58,7 +59,7 @@ const git = (cwd: string, ...args: string[]) => {
 };
 
 beforeAll(async () => {
-  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-F8-'));
+  dir = tmpDir('arigami-F8-');
   const port = await freePort();
   base = `http://127.0.0.1:${port}`;
   const home = path.join(dir, 'home');
@@ -202,7 +203,7 @@ test('AUTH_RE catches the CLI "Not logged in · Please run /login" text', () => 
 
 // ---- Codex-only host: one connected engine opens the gate --------------------
 test('codex authed, claude absent → codex capability ok, claude rows optional; workspaceReady still needs git + a ready repo', () => {
-  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-F8-codex-'));
+  const d = tmpDir('arigami-F8-codex-');
   const bin = path.join(d, 'bin');
   const cxHome = path.join(d, 'codex-home');
   fs.mkdirSync(bin, { recursive: true });

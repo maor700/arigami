@@ -58,6 +58,9 @@ export function createExtBridge({
   // cockpit closes the launcher and opens it, the same handoff its own
   // built-in modes do.
   onCreated = () => {},
+  // The launcher's own engine/model/effort picker, beside the tab: what the HUMAN
+  // chose for the new session. The tab shapes the prompt; these are not its call.
+  getSessionOptions = () => null,
   api = defaultApi,
   subscribeWire = onWireEvent,
   onHello = () => {},
@@ -249,8 +252,19 @@ export function createExtBridge({
         // subtask, worktree…) that would let a tab graft itself into someone
         // else's dispatch tree.
         const body = {};
-        for (const k of ['title', 'cwd', 'prompt', 'skill', 'agent', 'engine', 'model', 'effort'])
+        for (const k of ['title', 'cwd', 'prompt', 'skill', 'agent', 'engine', 'model', 'effort', 'folderId', 'folderName'])
           if (spec[k] != null && spec[k] !== '') body[k] = String(spec[k]);
+        // The host-side picker wins for the fields it owns, so a tab never has to
+        // draw its own model/engine controls. (skill stays the tab's: it is part
+        // of how the tab shapes the prompt.)
+        const chosen = getSessionOptions() || {};
+        for (const k of ['engine', 'model', 'effort', 'folderName']) {
+          if (chosen[k]) {
+            body[k] = String(chosen[k]);
+            if (k === 'folderName') delete body.folderId;
+          }
+          else if (chosen[k] === '' && k !== 'engine' && k !== 'folderName') delete body[k];
+        }
         if (spec.permissionMode) body.permissionMode = String(spec.permissionMode);
         if (spec.metadata && typeof spec.metadata === 'object' && !Array.isArray(spec.metadata))
           body.metadata = spec.metadata;

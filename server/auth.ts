@@ -16,6 +16,7 @@
 // run/pairing-code). `createAuth()` is the factory the tests use with a tmp
 // dir; the default export `auth` is the singleton the server wires in.
 import fs from 'node:fs';
+import { maybeRedirectToSso } from './sso-redirect.js';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { isInboundWebhookPath } from './webhooks.js';
@@ -23,8 +24,40 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { requestIsSecure } from './lib/proxy-headers.js';
 import { cfg as liveCfg, type AuthConfig } from './lib/config.js';
 import { secret } from './lib/secrets.js';
+import * as orgAccess from './org-access.js';
 
-export type Role = 'admin' | 'user';
+// 'viewer' only ever comes from a shared workspace's handoff/roster (server/org-access.ts): it can look, not act.
+/**
+ * The ONE way the host reads a request's path. The auth gate decided on `req.url.split('?')[0]` while the API router
+ * used `new URL(req.url).pathname` — and the URL parser collapses dot segments, so `/__api/auth/../sessions` was a
+ * public path to the gate and `/__api/sessions` to the router: every API route without a credential. Now the gate
+ * REFUSES any path whose meaning depends on normalisation (dot segments in any encoding, backslashes, encoded
+ * slashes, NUL/control characters, an absolute-form target) and the rest is, by construction, identical in both
+ * readings. Nothing legitimate sends any of these.
+ */
+export function pathIsAmbiguous(rawPath: string): boolean {
+  if (!rawPath.startsWith('/')) return true; // absolute-form ("http://host/..") or garbage
+  if (/[\\\u0000-\u001f\u007f#]/.test(rawPath)) return true; // backslash, control chars, fragment
+  if (/%(?:2f|5c|00|0[0-9a-f]|1[0-9a-f]|7f)/i.test(rawPath)) return true; // encoded slash / backslash / control
+  for (const seg of rawPath.split('/')) {
+    let d = seg;
+    try {
+      d = decodeURIComponent(seg);
+    } catch {
+      return true; // malformed percent-encoding
+    }
+    if (d === '.' || d === '..') return true;
+  }
+  return false;
+}
+
+/** `{ path, ambiguous }` for a raw `req.url` — `path` is what every router and the gate must use. */
+export function requestPath(rawUrl: string | undefined): { path: string; ambiguous: boolean } {
+  const raw = (rawUrl || '/').split('?')[0];
+  return { path: raw, ambiguous: pathIsAmbiguous(raw) };
+}
+
+export type Role = 'admin' | 'user' | 'viewer';
 
 export interface ApiToken {
   id: string;
@@ -212,13 +245,37 @@ export function createAuth(opts: AuthOptions) {
     return true;
   }
 
+  // Shared workspaces: the control plane's roster/handoff decides roles here, and takes access away again.
+  function setRole(id: string, role: Role): User | undefined {
+    const u = getUser(id);
+    if (!u || u.role === role) return u;
+    u.role = role;
+    saveUsers();
+    return u;
+  }
+  /** Every way this user gets in — web sessions and API tokens — without deleting the user row itself. */
+  function revokeUser(id: string): { sessions: number; tokens: number } {
+    let n = 0;
+    for (const [t, s] of sessions) if (s.userId === id && sessions.delete(t)) n++;
+    if (n) saveSessions();
+    const u = getUser(id);
+    const tokens = (u?.tokens || []).length;
+    if (u && tokens) {
+      u.tokens = [];
+      saveUsers();
+    }
+    return { sessions: n, tokens };
+  }
+
   // ---- web sessions (cookie) -------------------------------------------------
   const cookieDays = () => opts.auth.cookieDays || 30;
-  function createWebSession(userId: string, ua?: string): WebSession {
+  // `ttlMs` caps the life below cookieDays — shared-workspace sign-ins are short (org-access.sharedSessionTtlMs).
+  function createWebSession(userId: string, ua?: string, ttlMs?: number): WebSession {
+    const life = cookieDays() * 86_400_000;
     const s: WebSession = {
       token: crypto.randomBytes(32).toString('base64url'),
       userId,
-      exp: Date.now() + cookieDays() * 86_400_000,
+      exp: Date.now() + (ttlMs && ttlMs > 0 ? Math.min(ttlMs, life) : life),
       createdAt: Date.now(),
       ua: ua ? ua.slice(0, 200) : undefined,
     };
@@ -419,9 +476,11 @@ export function createAuth(opts: AuthOptions) {
     // credential of ours, and is accepted only with the one-time `state` of a
     // sign-in the host itself started (lib/mcp-grants.ts finishLogin).
     if (pathname === '/__api/mcp-oauth/callback') return true;
-    // Pre-C3 phone webhook, unauthenticated for ONE more release (deprecation
-    // warning in the log; see docs/SECURITY.md). Remove with the legacy handler.
-    if (pathname === '/__api/sms/inbound' || pathname.startsWith('/__api/sms/inbound/')) return true;
+    // The control-plane's profile rollout: verifies its own operator token
+    // (server/handoff.ts verifyOperator) and refuses everything else.
+    if (pathname === '/__api/profiles/rollout') return true;
+    // The pre-C3 phone webhook (/__api/sms/inbound) used to be public with no credential at all: anyone could feed
+    // text into the agent's SMS sink. It now needs a normal principal; the signed route is /__api/webhooks/sms.
     if (pathname.startsWith('/__artifacts/')) return false; // K2: ?t= share tokens handled in gate() via shareGate
     if (pathname.startsWith('/__ext/')) return false; // EXT3: ~t/ asset tokens handled in gate() via extGate
     return false;
@@ -429,9 +488,24 @@ export function createAuth(opts: AuthOptions) {
 
   // Returns true when the request was answered (401/302) and must not be routed.
   function gate(req: IncomingMessage, res: ServerResponse): boolean {
-    const pathname = (req.url || '/').split('?')[0];
+    const rp = requestPath(req.url);
+    if (rp.ambiguous) {
+      res.writeHead(400, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+      res.end(JSON.stringify({ error: 'bad request path' }));
+      return true;
+    }
+    const pathname = rp.path;
     const p = principal(req);
     (req as any).auth = p;
+    const refused = orgAccess.refusal(req, p, pathname, { publicUrl: opts.publicUrl });
+    if (refused) {
+      res.writeHead(403, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+      res.end(JSON.stringify({ error: refused }));
+      return true;
+    }
+    // Orchestrated tenant (ARIGAMI_SSO_URL): a browser opening a page with no session goes through the control
+    // plane's SSO and the handoff instead of the pairing screen (server/sso-redirect.ts).
+    if (!p && maybeRedirectToSso(req, res, isHttps(req))) return true;
     if (p || isPublicPath(pathname)) return false;
     // K2: a signed share token opens ONE artifact without a cookie. Only
     // consulted when there is no principal, only on the artifacts route.
@@ -463,11 +537,20 @@ export function createAuth(opts: AuthOptions) {
 
   // WebSocket upgrades (/__ws, /__vnc, SW proxy): cookie or bearer, else 401 + close.
   function gateUpgrade(req: IncomingMessage, socket: { write: (s: string) => void; destroy: () => void }): boolean {
+    const rp = requestPath(req.url);
+    if (rp.ambiguous) {
+      try {
+        socket.write('HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
+        socket.destroy();
+      } catch {}
+      return true;
+    }
     const p = principal(req);
     (req as any).auth = p;
-    if (p) return false;
+    const refused = orgAccess.refusal(req, p, rp.path, { publicUrl: opts.publicUrl, upgrade: true });
+    if (p && !refused) return false;
     try {
-      socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
+      socket.write(refused ? 'HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n' : 'HTTP/1.1 401 Unauthorized\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
     } catch {}
     try {
       socket.destroy();
@@ -559,7 +642,7 @@ export function createAuth(opts: AuthOptions) {
 
   return {
     // users
-    listUsers, hasAdmin, getUser, findByEmail, createUser, removeUser,
+    listUsers, hasAdmin, getUser, findByEmail, createUser, removeUser, setRole, revokeUser,
     // web sessions
     createWebSession, sessionFromCookie, setCookie, clearCookie, logout, cookieHeader,
     // pairing

@@ -11,6 +11,7 @@ import net from 'node:net';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import * as ho from '../server/handoff.ts';
+import { tmpDir } from './_tmp.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SECRET = 'handoff-host-test-secret-32-chars';
@@ -44,7 +45,7 @@ const raw = (p: string, headers: Record<string, string> = {}) =>
   fetch(base + p, { redirect: 'manual', headers });
 
 beforeAll(async () => {
-  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-handoff-host-'));
+  dir = tmpDir('arigami-handoff-host-');
   const port = await freePort();
   base = `http://127.0.0.1:${port}`;
   const home = path.join(dir, 'home');

@@ -14,6 +14,26 @@ export const strings = {
 
   // App — ticket preview
   'chrome.ticket.pending': 'pending',
+  'chrome.pending.gone': 'This item is no longer in the queue.',
+  'chrome.pending.close': 'Close',
+  'chrome.pending.dismiss': 'Dismiss',
+  'chrome.pending.source': 'From',
+  'chrome.pending.manual': 'Manual',
+  'chrome.pending.engine': 'Engine',
+  'chrome.pending.model': 'Model',
+  'chrome.pending.effort': 'Effort',
+  'chrome.pending.folder': 'Folder',
+  'chrome.pending.cwd': 'Working dir',
+  'chrome.pending.permissions': 'Permissions',
+  'chrome.pending.queued': 'Queued',
+  'chrome.pending.prompt': 'Starting prompt',
+  'chrome.pending.noPrompt': '(no prompt — starts as a plain session)',
+  'chrome.pending.titleField': 'Title',
+  'chrome.pending.runWith': 'Skill · model · effort · folder',
+  'chrome.pending.extraPrompt': 'Extra instructions (added to the ticket prompt)',
+  'chrome.pending.saving': 'Saving…',
+  'chrome.pending.save': 'Save',
+  'chrome.pending.options': 'Options',
   'chrome.ticket.startSession': 'Start session →',
   'chrome.ticket.closePreview': 'Close preview',
   'chrome.ticket.iframeTitle': 'Ticket {id}',
@@ -71,6 +91,11 @@ export const strings = {
   'chrome.voice.hotkey.listening': 'Listening…',
   'chrome.voice.autoSend': 'Auto-send prompts',
   'chrome.voice.autoSend.hint': 'Automatically send voice-injected prompts without asking for confirmation.',
+  // Stage 1b — voice out
+  'chrome.voice.browserTts': 'Browser voice (free)',
+  'chrome.voice.browserTts.hint': 'Uses the voices built into this browser, no key needed. Quality varies in Hebrew.',
+  'chrome.voice.readAloud': 'Read answers aloud',
+  'chrome.voice.readAloud.hint': 'The agent\'s answers are spoken as they stream (this device only). The speaker button in the message box toggles it and stops a reading.',
 
   // Settings — remote access / Tailscale
   'chrome.remote.section': 'Remote access',
@@ -150,4 +175,10 @@ export const strings = {
   'chrome.webhooks.funnel.off': 'Off. Turns on `tailscale funnel` for /__api/webhooks only — nothing else leaves the tailnet.',
   'chrome.webhooks.funnel.on': 'On — {url} is reachable from the internet (webhook routes only).',
   'chrome.webhooks.funnel.confirm': 'Expose /__api/webhooks to the public internet via Tailscale Funnel? Every route there verifies its own token/signature; nothing else is exposed.',
+  'auth.login.phoneHint': 'On a phone? Ask whoever runs this host to send you the code, or get it from the computer the host runs on.',
+  // ---- redesign: shell ----
+  'chrome.palette.nextNeedsYou': 'Go to the next session that needs me',
+  'chrome.palette.nextNeedsYou.kw': 'attention waiting question permission',
+  'chrome.palette.language': 'Switch language (English / Hebrew)',
+  'chrome.palette.language.kw': 'locale hebrew english rtl ltr',
 };

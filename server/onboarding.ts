@@ -12,7 +12,8 @@ import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { isWin, which, shellArgs, toPosixPath, HOME, chromeCandidates } from './lib/platform.js';
 import { supervise } from './lib/children.js';
-import { cfg } from './lib/config.js';
+import { gitAuthEnv, gitEnvFor } from './lib/git-auth.js';
+import { cfg, setEngineReadiness } from './lib/config.js';
 import { syncComposioKey } from './lib/mcp-servers.js';
 import { hasCredentials, hasLocalCodexLogin } from './accounts.js';
 import * as funnel from './funnel.js';
@@ -160,7 +161,7 @@ export function repoPresent(r: RepoEntry): boolean {
 
 // Normalize a git source to a clonable https URL.
 function gitUrl(source: string): string {
-  if (/^(https?:|git@|ssh:)/.test(source)) return source;
+  if (/^(https?:|git@|ssh:|file:)/.test(source)) return source;
   const s = source.replace(/^github\.com\//, '').replace(/\.git$/, '');
   return `https://github.com/${s}.git`;
 }
@@ -360,12 +361,12 @@ export function listProfiles(): Profile[] {
     try {
       files = fs.readdirSync(dir).filter((f) => f.endsWith('.json'));
     } catch {
-      continue;
+      /* dir absent: still look for bundles below */
     }
     // Profile Bundles (K3, the primary form): <dir>/bundles/<name>/profile.json
     // for the shipped tree, <dir>/<name>/profile.json for installed ones —
     // listed first so a bundle wins over a thin <name>.json of the same name.
-    const bundleRoot = dir === SHIPPED_PROFILES ? path.join(dir, 'bundles') : dir;
+    const bundleRoot = dir === SHIPPED_PROFILES ? (process.env.ARIGAMI_SHIPPED_BUNDLES_DIR || path.join(dir, 'bundles')) : dir;
     let bundles: string[] = [];
     try {
       bundles = fs.readdirSync(bundleRoot).filter((n) => fs.existsSync(path.join(bundleRoot, n, 'profile.json')));
@@ -394,6 +395,7 @@ export function applyProfile(name: string): { applied: string; repos: string[] }
   const prof = listProfiles().find((p) => p.name === name);
   if (!prof) throw new Error(`no such profile: ${name}`);
   upsertRepos(prof.repos || []);
+  if (autoCloneEnabled()) cloneInBackground((prof.repos || []).map((r) => r.name));
   return { applied: prof.name, repos: (prof.repos || []).map((r) => r.name) };
 }
 
@@ -424,6 +426,7 @@ interface Job {
   output: string;
   startedAt: number;
   endedAt?: number;
+  done?: Promise<void>; // resolves when the job settles (either way)
 }
 const jobs = new Map<string, Job>(); // key: `${repo}:${action}`
 
@@ -437,15 +440,17 @@ export interface ActionResult {
   output?: string;
 }
 
-function startJob(key: string, cmd: string, cwd?: string): ActionResult {
+function startJob(key: string, cmd: string, cwd?: string, env: NodeJS.ProcessEnv = process.env): ActionResult {
   const existing = jobs.get(key);
   if (existing?.state === 'running') return { started: false, state: 'running' };
   const job: Job = { state: 'running', output: '', startedAt: Date.now() };
   jobs.set(key, job);
+  let settle: () => void = () => {};
+  job.done = new Promise<void>((r) => (settle = r));
   let child;
   try {
     const [sh, ...shArgs] = shellArgs(cmd);
-    child = spawn(sh, shArgs, { cwd, env: process.env });
+    child = spawn(sh, shArgs, { cwd, env });
     supervise(child, `onboarding:${key}`); // clone/install runs must not outlive us
   } catch (e) {
     // No POSIX shell on this machine — surface it as a failed job rather than
@@ -453,6 +458,7 @@ function startJob(key: string, cmd: string, cwd?: string): ActionResult {
     job.state = 'error';
     job.output = e instanceof Error ? e.message : String(e);
     job.endedAt = Date.now();
+    settle();
     return { started: false, state: 'error', output: job.output };
   }
   const cap = (d: Buffer): void => {
@@ -463,11 +469,13 @@ function startJob(key: string, cmd: string, cwd?: string): ActionResult {
   child.on('close', (code) => {
     job.state = code === 0 ? 'done' : 'error';
     job.endedAt = Date.now();
+    settle();
   });
   child.on('error', (e) => {
     job.state = 'error';
     job.output += `\n${e.message}`;
     job.endedAt = Date.now();
+    settle();
   });
   return { started: true, state: 'running' };
 }
@@ -497,10 +505,145 @@ export function cloneRepo(name: string): ActionResult {
   }
 
   const branch = r.branch ? `--branch ${JSON.stringify(assertBranch(r.branch))} ` : '';
+  const url = gitUrl(r.source);
+  // Credentials: the read-only ARIGAMI_GIT_TOKEN (env, never in the URL) for an allow-listed https host; else, when
+  // gh is signed in, gh's credential helper. Neither ⇒ git runs as-is (public repos still work) and a failure is
+  // classified by repoStatuses() into "connect GitHub first".
+  const useGh = !hasGitToken(url) && ghLoggedIn() && /^https:\/\//.test(url);
+  const helper = useGh ? `-c credential.helper= -c 'credential.helper=!gh auth git-credential' ` : '';
   return startJob(
     jobKey(name, 'clone'),
-    `git clone --quiet ${branch}${JSON.stringify(gitUrl(r.source))} ${sh(dir)}`
+    `git ${helper}clone --progress ${branch}${JSON.stringify(url)} ${sh(dir)}`,
+    undefined,
+    gitEnvFor(url)
   );
+}
+
+// ---- git access + per-repo status (what the Setup / wizard repo screens render) ----------------------------------
+
+const hasGitToken = (url: string): boolean => Object.keys(gitAuthEnv(url)).length > 0;
+const ghLoggedIn = (): boolean => !!which('gh') && ghCliAuthed();
+
+/** What this host can authenticate a clone of `url` with. */
+export function gitAccess(url: string): { token: boolean; gh: boolean; any: boolean } {
+  const token = hasGitToken(url);
+  const gh = ghLoggedIn() || gitAuthed();
+  return { token, gh, any: token || gh };
+}
+
+export type RepoState = 'cloned' | 'not_cloned' | 'cloning' | 'failed';
+export interface RepoStatus extends RepoEntry {
+  present: boolean;
+  state: RepoState;
+  local: boolean;
+  dir: string;
+  /** Last line of the clone job's output while it runs (git --progress). */
+  progress?: string;
+  /** Why the last clone failed — a plain sentence when the cause is missing git access, else git's own message. */
+  error?: string;
+  /** 'git_auth_missing' ⇒ the UI offers "connect GitHub"; 'git_auth_rejected' ⇒ credentials exist but cannot read it. */
+  errorCode?: 'git_auth_missing' | 'git_auth_rejected' | 'clone_failed';
+}
+
+const AUTH_FAIL_RE =
+  /could not read (username|password)|authentication failed|terminal prompts disabled|repository not found|returned error: (401|403|404)|invalid username or password|permission denied \(publickey\)/i;
+
+/** Turn a failed clone's raw output into what the UI shows. */
+export function classifyCloneFailure(
+  output: string,
+  source: string
+): { error: string; errorCode: NonNullable<RepoStatus['errorCode']> } {
+  const raw = output.replace(/\r/g, '\n').split('\n').map((l) => l.trim()).filter(Boolean).slice(-3).join(' ').slice(0, 400);
+  if (!isLocalPath(source) && AUTH_FAIL_RE.test(output)) {
+    const a = gitAccess(gitUrl(source));
+    return a.any
+      ? {
+          errorCode: 'git_auth_rejected',
+          error: 'This host has git credentials, but they cannot read this repository. Check that the connected GitHub account (or the access token) has access to it.',
+        }
+      : {
+          errorCode: 'git_auth_missing',
+          error: 'This repository is private and this host has no git access: connect GitHub first (the git connection), then download it again.',
+        };
+  }
+  return { errorCode: 'clone_failed', error: raw || 'clone failed' };
+}
+
+export function repoStatus(stored: RepoEntry): RepoStatus {
+  const r = resolveRepo(stored);
+  const present = repoPresent(r);
+  const job = jobFor(r.name, 'clone');
+  const base = { ...r, present, local: isLocalPath(r.source), dir: repoDir(r) };
+  if (present) return { ...base, state: 'cloned' };
+  if (job?.state === 'running') {
+    const last = job.output.replace(/\r/g, '\n').split('\n').map((l) => l.trim()).filter(Boolean).pop();
+    return { ...base, state: 'cloning', progress: last };
+  }
+  if (job?.state === 'error') return { ...base, state: 'failed', ...classifyCloneFailure(job.output, r.source) };
+  return { ...base, state: 'not_cloned' };
+}
+
+export const repoStatuses = (): RepoStatus[] => listRepos().map(repoStatus);
+
+/**
+ * "Add" for a name that may already be registered: never an error. New ⇒ registered; registered but not on disk ⇒
+ * the clone is (re)started; already on disk ⇒ nothing to do (`existing` + state 'cloned').
+ */
+export function addOrClone(entry: RepoEntry): RepoStatus & { existing: boolean; clone?: ActionResult } {
+  assertRepoName(entry.name);
+  const existing = getRepo(entry.name);
+  if (!existing) {
+    addRepo(entry);
+    return { ...repoStatus(entry), existing: false };
+  }
+  let st = repoStatus(existing);
+  if (st.present) return { ...st, existing: true };
+  const clone = st.state === 'cloning' ? { started: false, state: 'running' as JobState } : cloneRepo(entry.name);
+  st = repoStatus(existing);
+  return { ...st, existing: true, clone };
+}
+
+// ---- background clone after a profile apply ---------------------------------------------------------------------
+
+/** On by default; ARIGAMI_PROFILE_AUTOCLONE=0 (or `cloneRepos: false` on apply) leaves repos registered only. */
+export const autoCloneEnabled = (): boolean => !/^(0|false|off|no)$/i.test(process.env.ARIGAMI_PROFILE_AUTOCLONE || '');
+
+let bgClone: Promise<void> = Promise.resolve();
+/** Resolves when every background clone queued so far has settled (tests; never awaited by an apply). */
+export const backgroundCloneIdle = (): Promise<void> => bgClone;
+
+/**
+ * Queue clones, one at a time, for registered repos that are not on disk yet. Skips repos already present or already
+ * cloning (so applying the same profile twice never re-clones) and remote repos when the host has no git access (the
+ * UI explains those). Errors stay in the per-repo job state; nothing here ever throws.
+ */
+export function cloneInBackground(names: string[]): string[] {
+  const queued: string[] = [];
+  for (const name of names) {
+    try {
+      const r = getRepo(name);
+      if (!r || repoPresent(r)) continue;
+      if (jobFor(name, 'clone')?.state === 'running') continue;
+      if (/^https?:/.test(gitUrl(r.source)) && !gitAccess(gitUrl(r.source)).any) continue;
+      queued.push(name);
+    } catch {
+      /* invalid entry — leave it registered */
+    }
+  }
+  if (!queued.length) return queued;
+  bgClone = bgClone.then(async () => {
+    for (const name of queued) {
+      try {
+        const r = getRepo(name);
+        if (!r || repoPresent(r)) continue;
+        cloneRepo(name);
+        await jobFor(name, 'clone')?.done;
+      } catch {
+        /* recorded in the job state */
+      }
+    }
+  });
+  return queued;
 }
 
 export function resolveEnv(name: string): ActionResult {
@@ -574,11 +717,45 @@ export interface Step {
   required?: boolean; // false = not needed for readiness (the other engine is connected)
 }
 
+/**
+ * Is the `claude` login that sits in ~/.claude really usable? The file alone proves nothing: it also exists
+ * for MCP-only grants (`mcpOAuth` with no Claude account), expired logins and half-finished sign-ins — all
+ * of which then fail with "Not logged in". Ask the CLI itself (`claude auth status`: local, no network,
+ * ~0.3s), cached for 20s; no CLI to ask → judge the file's content.
+ */
+let nativeLogin: { at: number; ok: boolean } | null = null;
+export function claudeFileLoginUsable(file = path.join(HOME, '.claude', '.credentials.json')): boolean {
+  let j: any;
+  try {
+    j = JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch {
+    return false;
+  }
+  const o = j?.claudeAiOauth;
+  if (!o || (!o.accessToken && !o.refreshToken)) return false; // mcpOAuth-only or empty
+  return !(typeof o.expiresAt === 'number' && o.expiresAt < Date.now() && !o.refreshToken);
+}
+function claudeNativeLoggedIn(): boolean {
+  if (!fs.existsSync(path.join(HOME, '.claude', '.credentials.json'))) return false;
+  if (nativeLogin && Date.now() - nativeLogin.at < 20_000) return nativeLogin.ok;
+  let ok = claudeFileLoginUsable();
+  const bin = which('claude');
+  if (ok && bin) {
+    try {
+      const r = spawnSync(bin, ['auth', 'status'], { encoding: 'utf8', timeout: 5000, shell: isWin });
+      const m = r.status === 0 ? String(r.stdout || '').match(/"loggedIn"\s*:\s*(true|false)/) : null;
+      if (m) ok = m[1] === 'true'; // an answer from the CLI beats our reading of its file
+    } catch { /* keep the file verdict */ }
+  }
+  nativeLogin = { at: Date.now(), ok };
+  return ok;
+}
+
 const claudeAuthed = (): boolean =>
   hasCredentials() || // macOS keychain login or a stored account token
   !!process.env.CLAUDE_CODE_OAUTH_TOKEN ||
   !!process.env.ANTHROPIC_API_KEY ||
-  fs.existsSync(path.join(HOME, '.claude', '.credentials.json'));
+  claudeNativeLoggedIn();
 
 const codexAuthed = (): boolean => hasCredentials('codex') || hasLocalCodexLogin();
 
@@ -682,7 +859,7 @@ export function status(): { environment: EnvInfo; steps: Step[] } {
     dependsOn: ['codex-cli'],
     detail: codexOk ? undefined : 'Sign in with ChatGPT or add an OpenAI API key in the Accounts view (or run `codex login`)',
   });
-  const gitOk = gitAuthed() || ghCliAuthed();
+  const gitOk = gitAuthed() || ghCliAuthed() || !!process.env.ARIGAMI_GIT_TOKEN;
   steps.push({
     id: 'git-auth',
     title: 'Git / GitHub authentication',
@@ -773,15 +950,20 @@ export function ready(repoName: string): boolean {
 // fully ready. Triggers check this before firing so an autonomous run never
 // dead-ends on an unprovisioned workspace. Same logic as the launcher gate.
 export function workspaceReady(): boolean {
+  return readyRepos().length > 0;
+}
+
+/** Repos that are fully ready (every repo step ok), given the global gates pass; [] otherwise. */
+export function readyRepos(): string[] {
   const { steps } = status();
   const globalsOk = steps
     .filter((s) => s.scope === 'global' && s.required !== false)
     .every((s) => s.status === 'ok');
-  if (!globalsOk) return false;
+  if (!globalsOk) return [];
   const names = [
     ...new Set(steps.filter((s) => s.scope.startsWith('repo:')).map((s) => s.scope.slice(5))),
   ];
-  return names.some((n) =>
+  return names.filter((n) =>
     steps.filter((s) => s.scope === `repo:${n}`).every((s) => s.status === 'ok')
   );
 }
@@ -920,6 +1102,8 @@ export interface WizardProbes {
   pendingProfile: () => string | null;
   integrations: () => { composio: boolean; whatsapp: string; tailscale: boolean };
   repos: () => string[];
+  /** Registered repos that are actually on disk. Absent ⇒ falls back to `repos` (probes that predate it). */
+  reposPresent?: () => string[];
   health: () => HealthResult | undefined;
   unattended: () => boolean;
   // D3: what applies right now (config + ARIGAMI_TELEMETRY + DO_NOT_TRACK).
@@ -951,7 +1135,7 @@ export const defaultProbes: WizardProbes = {
   claudeAuth: () => claudeAuthed(),
   codexCli: () => codexOnPath(),
   codexAuth: () => codexAuthed(),
-  gitAuth: () => gitAuthed() || ghCliAuthed(),
+  gitAuth: () => gitAuthed() || ghCliAuthed() || !!process.env.ARIGAMI_GIT_TOKEN,
   profileApplied: () => {
     try {
       const j = JSON.parse(fs.readFileSync(PROVENANCE_FILE, 'utf8'));
@@ -977,6 +1161,7 @@ export const defaultProbes: WizardProbes = {
     };
   },
   repos: () => listRepos().map((r) => r.name),
+  reposPresent: () => repoStatuses().filter((r) => r.present).map((r) => r.name),
   health: () => readOnboardingFile().health,
   unattended: () => process.env.ARIGAMI_UNATTENDED === '1',
   telemetry: () => {
@@ -987,6 +1172,15 @@ export const defaultProbes: WizardProbes = {
     return { enabled: !!cfg.telemetry?.enabled, reason: 'config' };
   },
 };
+
+/**
+ * New sessions default to a CONNECTED engine: a Codex-only host must not spawn `claude` (lib/config.ts defaultEngine()).
+ * Called once by the real host (server/index.ts), so in-process test harnesses keep the plain configured default.
+ */
+export function registerEngineReadiness(probes: Pick<WizardProbes, 'claudeCli' | 'claudeAuth' | 'codexCli' | 'codexAuth'> = defaultProbes): void {
+  if (process.env.ARIGAMI_ENGINE_AUTOPICK === '0') return; // opt-out (test hosts)
+  setEngineReadiness((e) => (e === 'codex' ? probes.codexCli() && probes.codexAuth() : probes.claudeCli() && probes.claudeAuth()));
+}
 
 // --- the machine ---------------------------------------------------------------
 
@@ -1040,6 +1234,7 @@ function computeSteps(file: OnboardingFile, p: WizardProbes): WizardStep[] {
   const pending = p.pendingProfile();
   const integ = p.integrations();
   const repos = p.repos();
+  const reposHere = p.reposPresent ? p.reposPresent() : repos; // only a repo that is on disk counts
   const health = p.health();
   const tele = p.telemetry();
 
@@ -1118,9 +1313,13 @@ function computeSteps(file: OnboardingFile, p: WizardProbes): WizardStep[] {
       title: TITLES.repo,
       fixable: true,
       skippable: SKIPPABLE.repo,
-      ...resolve('repo', repos.length > 0),
-      detail: repos.length ? repos.join(', ') : 'add a repository to work on',
-      data: { repos },
+      ...resolve('repo', reposHere.length > 0),
+      detail: reposHere.length
+        ? reposHere.join(', ')
+        : repos.length
+          ? `${repos.join(', ')} registered but not downloaded yet — download one`
+          : 'add a repository to work on',
+      data: { repos, present: reposHere },
     },
     {
       // D3: opt-in only. 'ok' when the user decided (either way — a recorded
@@ -1163,6 +1362,7 @@ const settled = (s: WizardStatus): boolean => s === 'ok' || s === 'skipped';
  */
 export function wizard(probes: Partial<WizardProbes> = {}): WizardView {
   const p: WizardProbes = { ...defaultProbes, ...probes };
+  if (probes.repos && !probes.reposPresent) p.reposPresent = probes.repos;
   const file = readOnboardingFile();
   const steps = computeSteps(file, p);
   let dirty = false;

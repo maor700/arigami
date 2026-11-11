@@ -135,7 +135,7 @@ context thin is the whole point.
    - **Integrate.** A worker never merges its own branch. When a wave's
      mutating branches are all `done`, either (a) — the default when a human
      is in the loop — wait for the human's approval on each branch
-     (`metadata.review.state === "approved"`, set by their ✓ Verified /
+     (`metadata.review.state === "approved"`, set by their Approve on the review card /
      review-approve) and then merge it with **one call, `merge_session({
      session_id, strategy?, delete_branch? })`** — the HOST runs the git merge
      into your checkout, refuses dirty/unapproved bases, and returns
@@ -164,7 +164,12 @@ context thin is the whole point.
    already your cwd) on **your branch** (`metadata.branch`). If `readonly`, do not
    edit — search/analyze and write findings.
 3. Write any large output to an **artifact file** (e.g. `REPORT.md` in your cwd)
-   rather than stuffing it all into the result.
+   rather than stuffing it all into the result. To publish a report from the host
+   workspace, stage only intended public output under
+   `$ARIGAMI_DIR/workspace/public-artifacts/<session-id>/` (default
+   `~/.arigami/workspace/public-artifacts/<session-id>/`) and call
+   `publish_artifact` on that file or directory. The rest of the host workspace
+   and state remain blocked; never stage credentials or private state.
 4. **`report_to_master`** with a capped result — `state`, a one-line `note`, a
    `summary`, and `artifacts` pointers. For code, point at your `branch`/`diff`.
 5. **On error or block, STILL report** (`state:"error"` / `"blocked"`). Never hang
@@ -248,4 +253,4 @@ When you see one:
 
 **Never work around a missing capability** — no scraping instead of the API, no
 asking for tokens/passwords in chat, no reading another session's profile. The
-card is the only path. Details: `docs/CONNECT.md`.
+card is the only path. Details: `$ARIGAMI_DOCS/CONNECT.md`.

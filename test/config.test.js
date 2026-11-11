@@ -7,9 +7,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { runInChild } from './_child.js';
+import { tmpDir } from './_tmp.js';
 
 function withConfig(contents) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-cfg-'));
+  const dir = tmpDir('arigami-cfg-');
   fs.writeFileSync(path.join(dir, 'config.json'), contents);
   return runInChild(
     "const {cfg,DEFAULTS}=await import('./server/lib/config.js');" +
@@ -53,7 +54,7 @@ test('defaultScreenEnabled: only linux defaults to true', () => {
 });
 
 test('cfg.screen.enabled follows the real process.platform when ARIGAMI_SCREEN_ENABLED is unset', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-cfg-'));
+  const dir = tmpDir('arigami-cfg-');
   const r = runInChild(
     "const {cfg}=await import('./server/lib/config.js');emit({enabled:cfg.screen.enabled});",
     { ARIGAMI_DIR: dir, ARIGAMI_PORT: '', ARIGAMI_SCREEN_ENABLED: '' }
@@ -63,7 +64,7 @@ test('cfg.screen.enabled follows the real process.platform when ARIGAMI_SCREEN_E
 });
 
 test('ARIGAMI_SCREEN_ENABLED=1 still forces screen on regardless of platform default', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-cfg-'));
+  const dir = tmpDir('arigami-cfg-');
   const r = runInChild(
     "const {cfg}=await import('./server/lib/config.js');emit({enabled:cfg.screen.enabled});",
     { ARIGAMI_DIR: dir, ARIGAMI_PORT: '', ARIGAMI_SCREEN_ENABLED: '1' }
@@ -73,7 +74,7 @@ test('ARIGAMI_SCREEN_ENABLED=1 still forces screen on regardless of platform def
 });
 
 test('ARIGAMI_SCREEN_ENABLED=0 still forces screen off on linux', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-cfg-'));
+  const dir = tmpDir('arigami-cfg-');
   const r = runInChild(
     "const {cfg}=await import('./server/lib/config.js');emit({enabled:cfg.screen.enabled});",
     { ARIGAMI_DIR: dir, ARIGAMI_PORT: '', ARIGAMI_SCREEN_ENABLED: '0' }

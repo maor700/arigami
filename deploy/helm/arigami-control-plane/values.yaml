@@ -141,6 +141,10 @@ config:
   # Tenants live at u-<id>.<orgDomain> — this needs a wildcard DNS record and
   # a matching wildcard certificate, or per-tenant DNS from external-dns.
   orgDomain: ""
+  # "1" scopes the session cookie to orgDomain so an edge in front of the tenants can ask GET /auth/verify
+  # whether a request may reach that cockpit (owner only; docs/CONTROL-PLANE.md "Org SSO in front of every
+  # cockpit"). Needs ingress.host to be orgDomain or a name under it. Leave "0" without such an edge.
+  cookieParentDomain: "0"
   orgName: ""
   urlScheme: https
 
@@ -152,6 +156,13 @@ config:
   # the clone has no timeout, so an unreachable URL leaves the tenant pod stuck
   # short of Ready with empty logs. Verify reachability FROM A POD, not from a laptop.
   arigamiBundle: ""
+  # Tag / branch / commit of arigamiBundle every tenant converges to. The
+  # reconcile loop resolves it to one commit (git ls-remote) and re-applies the
+  # profile on each running tenant, canary-first, stopping on the first failure
+  # (docs/CONTROL-PLANE.md "Profile rollout"). Empty = the default branch.
+  arigamiBundleRef: ""
+  # "0" turns the profile rollout off (tenants keep what they booted with).
+  profileRollout: "1"
 
   # Ingress class handed to every tenant release. Must match this cluster's
   # controller; before arigami-tenant 0.2.0 this value was read and silently
@@ -172,9 +183,35 @@ config:
   backupIntervalSec: "86400"
   backupKeep: "7"
   cookieDays: "30"
+  # Who gets a personal workspace (one pod + one disk each): auto = every non-admin on sign-in (default), choose = only
+  # when they press "Create my workspace" (invited people can use shared ones without), never = shared workspaces only.
+  personalWorkspaces: auto
 
 # Extra plain env vars. [{name, value}]
+# Extra Helm values layered on EVERY tenant install (rendered into a ConfigMap, passed as CP_HELM_EXTRA_VALUES):
+# ingress annotations/TLS, resources, networkPolicy, …. Example for cert-manager + ingress-nginx:
+#   tenantValues:
+#     ingress:
+#       annotations: {cert-manager.io/cluster-issuer: letsencrypt-prod}
+#       tls: {enabled: true}
+tenantValues: {}
+# Hardware tiers (CP_TIERS / CP_DEFAULT_TIER, docs/CONTROL-PLANE.md "Tiers"): name -> Helm values overlay for the
+# tenant chart, layered on top of tenantValues. Empty = no tiers, every tenant gets the same values. Rendered into a
+# ConfigMap and passed as CP_TIERS (a file path). defaultTier must be one of the names. Example:
+#   tiers:
+#     standard: {persistence: {size: 10Gi}}
+#     large:
+#       resources: {requests: {cpu: "4", memory: 16Gi}, limits: {cpu: "8", memory: 32Gi}}
+#       persistence: {size: 50Gi}
+#       nodeSelector: {pool: large}
+#       tolerations: [{key: dedicated, operator: Equal, value: large, effect: NoSchedule}]
+tiers: {}
+defaultTier: standard
 extraEnv: []
+# Extra volumes / mounts for the control-plane container, e.g. a ConfigMap of control-plane/src mounted over /app/src
+# to try an unreleased fix on top of a published image (deploy/local-k3s/up.sh CP_SRC_OVERLAY=1). Plain pod-spec YAML.
+extraVolumes: []
+extraVolumeMounts: []
 
 # Secret material: CP_OIDC_CLIENT_SECRET, and anything else the service should
 # read from a Secret. Values set here are rendered into a chart-owned Secret —

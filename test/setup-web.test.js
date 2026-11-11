@@ -4,7 +4,7 @@
 // prove each step mounts in both locales and the card shows the right
 // controls per phase. Interaction is covered by the pure helpers
 // (derivePhase / defaultMode) + the store's setup-update patching.
-import { test, expect, beforeAll } from 'bun:test';
+import { test, expect, beforeAll, afterAll } from 'bun:test';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isolate } from './_isolate.js';
@@ -42,6 +42,9 @@ beforeAll(async () => {
   ({ default: SetupCard, derivePhase, defaultMode } = await import(web('components/setup/SetupCard.jsx')));
   store = await import(web('lib/store.js'));
 });
+
+// prefs is one module instance for the whole `bun test` process: hand the next file the English it assumes.
+afterAll(() => prefs.setPrefs({ language: 'en' }));
 
 const h = (C, props) => React.createElement(C, props);
 
@@ -90,7 +93,7 @@ test('one component per manual.kind renders (en + he)', () => {
   expect(render(h(setup.stepFor('oauth'), { capability: 'git', manual: { flow: 'device' } }))).toContain('device code');
   expect(render(h(setup.stepFor('token'), { capability: 'claude' }))).toContain('type="password"');
   expect(render(h(setup.stepFor('takeover'), { capability: 'identity' }))).toContain('Open the agent');
-  expect(render(h(setup.stepFor('repo'), { capability: 'repo', have: ['app'] }))).toContain('app');
+  expect(render(h(setup.stepFor('repo'), { capability: 'repo', have: ['app'] }))).toContain('Advanced options');
   expect(render(h(setup.AutoConnect, { state: 'auto', lines: ['Opening Composio…'], sessionId: 's1' }))).toContain('Opening Composio…');
   expect(render(h(setup.AutoConnect, { state: 'done', evidence: '/__artifacts/abc/', sessionId: 's1' }))).toContain('href="/__artifacts/abc/"');
 });
@@ -130,7 +133,7 @@ test('SetupCard: pending(auto) → auto-running → done with evidence; failed �
   expect(done).toContain('data-setup-phase="done"');
   expect(done).toContain('gmail (via Composio) connected');
   expect(done).toContain('href="/__artifacts/ev1/"'); // relative — works from the phone
-  expect(done).not.toContain('http://');
+  expect(done.replace(/xmlns="[^"]*"/g, '')).not.toContain('http://'); // SVG namespaces are not links
   expect(done).not.toContain('role="radiogroup"');
 
   const failed = render(h(SetupCard, { sessionId: 's1', event: { ...base, state: 'failed', detail: 'consent page timed out' } }));
@@ -218,4 +221,17 @@ test('store: setup-update lines replace when the host sends the full list, appen
   store.patchLocalChat(sid, 'setup', 'L1', { lines: ['c'] }); // delta
   const card = store.getState().chats[sid].find((e) => e.requestId === 'L1');
   expect(card.lines).toEqual(['a', 'b', 'c']);
+});
+
+test('WhatsApp QR shows install and startup failures instead of a silent retry button', () => {
+  const C = setup.stepFor('qr');
+  for (const language of ['en', 'he']) {
+    prefs.setPrefs({ language });
+    const missing = render(h(C, { initial: { status: 'disconnected', reason: 'not-installed' } }));
+    expect(missing).toContain('scripts/install-whatsapp.sh');
+    expect(missing).not.toContain('<img');
+    const failed = render(h(C, { initial: { status: { data: { status: 'disconnected', reason: 'crash-loop' } } } }));
+    expect(failed).toContain('crash-loop');
+    expect(failed).not.toContain('setup.qr.');
+  }
 });

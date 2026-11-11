@@ -1,8 +1,10 @@
-// Every shipped Profile Bundle under profiles/bundles/ must load, validate,
-// be trusted, ship its cron jobs DISABLED, carry a README + at least one
-// skill with frontmatter, and be listed by both the K3 bundle API and the
-// legacy onboarding profile list (Setup.jsx). Generic-template guard: no
-// localhost URLs, no real hostnames, no enabled cron.
+// The product ships NO example Profile Bundles (profiles come from the org
+// profile repo / ~/.arigami/profiles). The fixtures under test/fixtures/bundles
+// stand in for a shipped dir (ARIGAMI_SHIPPED_BUNDLES_DIR, see test/_preload.ts)
+// and must still load, validate, be trusted, ship their cron jobs DISABLED,
+// carry a README + at least one skill with frontmatter, and be listed by both
+// the K3 bundle API and the legacy onboarding profile list (Setup.jsx).
+// Generic-template guard: no localhost URLs, no real hostnames, no enabled cron.
 import { test, expect } from 'bun:test';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -10,15 +12,22 @@ import path from 'node:path';
 const pf = await import('../server/profiles.ts');
 const ob = await import('../server/onboarding.ts');
 const ROOT = path.resolve(import.meta.dir, '..');
-const BUNDLES = path.join(ROOT, 'profiles', 'bundles');
+const BUNDLES = path.join(ROOT, 'test', 'fixtures', 'bundles');
 const names = fs.readdirSync(BUNDLES).filter((n) => fs.existsSync(path.join(BUNDLES, n, 'profile.json'))).sort();
 
-test('the showcase bundles + solo-dev ship', () => {
-  expect(names).toEqual(['agency-client', 'il-whatsapp-business', 'marketing-team', 'ops', 'solo-dev']);
+test('the product ships no profile bundles', () => {
+  const shipped = path.join(ROOT, 'profiles', 'bundles');
+  const entries = fs.existsSync(shipped) ? fs.readdirSync(shipped) : [];
+  expect(entries).toEqual([]);
+});
+
+test('the test shipped dir points at the fixtures', () => {
+  expect(pf.SHIPPED_BUNDLES_DIR).toBe(BUNDLES);
+  expect(names).toEqual(['marketing-team', 'solo-dev']);
 });
 
 for (const name of names) {
-  test(`bundle ${name}: valid, trusted, cron disabled, skills + README present`, () => {
+  test(`fixture bundle ${name}: valid, trusted, cron disabled, skills + README present`, () => {
     const dir = path.join(BUNDLES, name);
     const b = pf.loadBundle(dir, name);
     const v = pf.validate(b);
@@ -43,7 +52,7 @@ for (const name of names) {
     expect(b.memorySeed.memory || b.memorySeed.user).toBeTruthy();
   });
 
-  test(`bundle ${name}: generic template — no localhost links, no real repo sources`, () => {
+  test(`fixture bundle ${name}: generic template — no localhost links, no real repo sources`, () => {
     const dir = path.join(BUNDLES, name);
     const walk = (d: string): string[] =>
       fs.readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(path.join(d, e.name)) : [path.join(d, e.name)]));
@@ -57,7 +66,7 @@ for (const name of names) {
   });
 }
 
-test('listBundles() and the legacy onboarding profile list both expose every shipped bundle', () => {
+test('listBundles() and the legacy onboarding profile list both expose every bundle in the shipped dir', () => {
   const bundles = pf.listBundles();
   const profiles = ob.listProfiles().map((p) => p.name);
   for (const n of names) {
@@ -70,5 +79,5 @@ test('listBundles() and the legacy onboarding profile list both expose every shi
 
 test('profiles/ has no thin *.json duplicates of a bundle', () => {
   const thin = fs.readdirSync(path.join(ROOT, 'profiles')).filter((n) => n.endsWith('.json')).map((n) => n.replace(/\.json$/, ''));
-  for (const n of thin) expect(names, `${n}.json duplicates profiles/bundles/${n}`).not.toContain(n);
+  for (const n of thin) expect(names, `${n}.json duplicates a bundle`).not.toContain(n);
 });

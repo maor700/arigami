@@ -12,7 +12,7 @@ isolate(); // restore globalThis/process.env after this file (bun test shares th
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const web = (p) => path.join(ROOT, 'web/src', p);
 
-let React, render, prefs, store, TeamSection, AgentView;
+let React, render, prefs, store, TeamSection, AgentMenuItems, AgentView;
 const h = (...a) => React.createElement(...a);
 
 const AGENTS = [
@@ -41,27 +41,35 @@ beforeAll(async () => {
   ({ renderToStaticMarkup: render } = await import(path.join(ROOT, 'web/node_modules/react-dom/server.js')));
   prefs = await import(web('lib/prefs.js'));
   store = await import(web('lib/store.js'));
-  ({ TeamSection } = await import(web('components/Rail.jsx')));
+  ({ TeamSection, AgentMenuItems } = await import(web('components/Rail.jsx')));
   ({ default: AgentView } = await import(web('components/AgentView.jsx')));
   await store.loadAgents();
 });
 
 const noop = () => {};
 
-test('Rail Team row menu: opening it shows a delete action, danger-styled and separated from the other rows', () => {
+test('Rail Team row menu: the menu offers a delete action, danger-styled and separated from the other rows', async () => {
+  // The menu content is a Radix portal (closed in a static render), so render the
+  // shared item list directly with plain stand-ins for the menu parts.
+  const M = { Item: 'button', Separator: 'hr' };
+  const { t } = await import(web('lib/i18n.js'));
+  const items = () => render(h(AgentMenuItems, { M, agent: AGENTS[0], onOpenAgent: noop, t }));
   prefs.setPrefs({ language: 'en' });
-  const html = render(h(TeamSection, { agents: AGENTS, sessions: [], triggers: [], onSelect: noop, onOpenAgent: noop, onNewAgent: noop, selectedId: null, open: true, onToggle: noop, menuFor: 'agent:bot', setMenuFor: noop }));
+  const html = items();
   expect(html).toContain('data-agent-menu-delete');
   const item = html.slice(html.indexOf('data-agent-menu-delete'), html.indexOf('data-agent-menu-delete') + 900);
   expect(item).toContain('Delete agent');
-  expect(item).toContain('text-danger');
-  // it comes after the existing home/runs/page items, not mixed in with them
+  expect(html).toContain('variant="destructive"');
+  // a separator sits before it, and it comes after the existing home/runs/page items
+  expect(html.lastIndexOf('<hr', html.indexOf('data-agent-menu-delete'))).toBeGreaterThan(html.indexOf('data-agent-menu-runs'));
   expect(html.indexOf('data-agent-menu-home')).toBeLessThan(html.indexOf('data-agent-menu-delete'));
   expect(html.indexOf('data-agent-menu-runs')).toBeLessThan(html.indexOf('data-agent-menu-delete'));
+  // the row itself carries the ⋯ trigger
+  const row = render(h(TeamSection, { agents: AGENTS, sessions: [], triggers: [], onOpenAgent: noop, onNewAgent: noop, open: true, onToggle: noop }));
+  expect(row).toContain('aria-label="Agent actions"');
 
   prefs.setPrefs({ language: 'he' });
-  const heHtml = render(h(TeamSection, { agents: AGENTS, sessions: [], triggers: [], onSelect: noop, onOpenAgent: noop, onNewAgent: noop, selectedId: null, open: true, onToggle: noop, menuFor: 'agent:bot', setMenuFor: noop }));
-  expect(heHtml).toContain('מחק סוכן');
+  expect(items()).toContain('מחק סוכן');
   prefs.setPrefs({ language: 'en' });
 });
 

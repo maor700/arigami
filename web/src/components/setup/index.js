@@ -6,6 +6,7 @@ import QrStep from './QrStep.jsx';
 import ToggleStep from './ToggleStep.jsx';
 import TakeoverStep from './TakeoverStep.jsx';
 import AutoConnect from './AutoConnect.jsx';
+import EngineConnect from './EngineConnect.jsx';
 
 export const STEP_FOR = {
   token: TokenStep,
@@ -20,5 +21,5 @@ export function stepFor(kind) {
   return STEP_FOR[kind] || TokenStep;
 }
 
-export { TokenStep, OAuthCodeStep, RepoStep, QrStep, ToggleStep, TakeoverStep, AutoConnect };
+export { TokenStep, OAuthCodeStep, RepoStep, QrStep, ToggleStep, TakeoverStep, AutoConnect, EngineConnect };
 export * from './registry.js';

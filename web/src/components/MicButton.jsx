@@ -1,44 +1,53 @@
 // The ONE mic trigger (VOICE1), mounted twice:
 //   mode 'dictate' — in the session composer: the transcript goes into the draft.
 //   mode 'command' — in the rail (desktop + mobile drawer): the voice-command router.
+// Neither renders while the host has no Groq key (config.voiceEnabled).
 // Both wear a tiny badge with the language the mic listens in (he/en/…) and
 // turn into a red dot while THIS mode is recording. `className` replaces the
 // button's box styling so each host keeps its own button size.
 import { useVoice, toggleRecording } from '../lib/voice.js';
+import { useStore } from '../lib/store.js';
 import { useVoiceLang } from './VoiceLangPicker.jsx';
 import { useT } from '../lib/i18n.js';
-import { Icon } from '../lib/icons.js';
-import { faCircle, faMicrophone } from '@fortawesome/free-solid-svg-icons';
+import { CircleIcon, MicIcon } from 'lucide-react';
+import { Tip, TooltipProvider } from './ui/index.js';
 
-const BOX = 'flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-[9px] border-[1.5px] text-[13px]';
+const BOX = 'flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md text-sm coarse:size-11 [&_svg]:size-4';
 
 export default function MicButton({ mode = 'command', className = BOX, title }) {
   const t = useT();
+  const { config } = useStore();
   const { status, mode: activeMode } = useVoice();
   const lang = useVoiceLang();
+  // No Groq key on the host → no mic at all (it could only fail). The hotkey
+  // still opens the HUD, which says why and links the key guide.
+  if (!config?.voiceEnabled) return null;
   const rec = status === 'recording' && activeMode === mode;
   const label = title || (mode === 'dictate' ? t('rail.dictateHint') : t('rail.voiceControlHint'));
   return (
-    <button
-      type="button"
-      data-mic={mode}
-      title={label}
-      aria-label={label}
-      onClick={() => toggleRecording({ mode })}
-      className={`relative ${className} ${
-        rec
-          ? 'border-danger bg-[#fdf6f5] text-danger'
-          : 'border-border bg-bg text-fgdim hover:border-ink hover:text-fg'
-      }`}
-    >
-      <Icon icon={rec ? faCircle : faMicrophone} className={rec ? 'text-[11px] md:text-[9px]' : undefined} />
-      <span
-        data-mic-lang
-        dir="ltr"
-        className="pointer-events-none absolute -end-1 -bottom-1 rounded-[4px] border border-border bg-panel px-[3px] font-mono text-[10px] md:text-[8px] leading-[11px] text-fgdim"
+    <TooltipProvider>
+    <Tip label={label}>
+      <button
+        type="button"
+        data-mic={mode}
+        aria-label={label}
+        onClick={() => toggleRecording({ mode })}
+        className={`relative ${className} ${
+          rec
+            ? 'border-destructive bg-[var(--hb-err-bg)] text-destructive'
+            : 'border-border text-muted-foreground hover:bg-muted hover:text-foreground'
+        }`}
       >
-        {lang}
-      </span>
-    </button>
+        {rec ? <CircleIcon className="fill-current !size-3" /> : <MicIcon />}
+        <span
+          data-mic-lang
+          dir="ltr"
+          className="pointer-events-none absolute -end-0.5 -bottom-0.5 rounded-sm bg-muted px-[3px] text-[9px] leading-[11px] text-muted-foreground"
+        >
+          {lang}
+        </span>
+      </button>
+    </Tip>
+    </TooltipProvider>
   );
 }

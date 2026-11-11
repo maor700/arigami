@@ -131,6 +131,12 @@ export interface Manifest {
   listeners?: ManifestListener[];
   tools?: ManifestTool[];
   docs?: ManifestDoc[];
+  /**
+   * Claude Code mods (plugin dirs inside the extension: .claude-plugin/plugin.json + hooks/hooks.json + the hooks
+   * module), written against Claude Code's own mods API. Claude sessions load them natively; engines without mods
+   * (codex) run them in the host's mods runtime (server/mods.ts), which implements a subset of the API.
+   */
+  mods?: string[];
   hooks?: ManifestHooks;
   webhooks?: ManifestWebhook[];
   /** e.g. "session:message", "session:tabs", "tools:featdb", "notify", "events:merge.*" */
@@ -396,6 +402,9 @@ export interface ArigamiSdk {
    * (`prNumber`, `repo`, `branch`, `agent`) where it has behaviour for them.
    */
   createSession(spec: {
+    folderId?: string;
+    /** Exact project folder name; create if missing. folderId takes precedence. */
+    folderName?: string;
     title?: string;
     cwd?: string;
     prompt?: string;

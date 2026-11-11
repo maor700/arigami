@@ -10,13 +10,16 @@ import * as claude from './claude.js';
 import { broadcast, emitLocal } from './bus.js';
 import { cfg, nano, untildify } from './state.js';
 import { skillDir, NAME_RE as SKILL_NAME_RE } from './skills.js';
-import { updateScreenConfig, updateAuthConfig, updateDefaultEngine } from './lib/config.js';
+import { updateScreenConfig, updateAuthConfig, updateDefaultEngine, defaultEngine, updateVoiceConfig } from './lib/config.js';
 import { syncComposioKey } from './lib/mcp-servers.js';
-import { auth, canReadFullList } from './auth.js';
+import { auth, canReadFullList, requestPath } from './auth.js';
+import { COMPRESS_MIN, compress, pickEncoding } from './lib/http-compress.js';
+import { WIRE_V2, slimHeavy } from './lib/wire-resume.js';
 import * as screens from './screenshots.js';
 import * as artifacts from './artifacts.js';
 import { shareTokens } from './share-token.js';
 import * as handoff from './handoff.js';
+import * as orgAccess from './org-access.js';
 import { webhooks, isInboundWebhookPath, CUSTOM_ID_RE } from './webhooks.js';
 // desktops.js stays a direct import for ONE call only: ensureGlobalDesktop()
 // (the shared, non-per-session desktop the `desktop` JIT-setup capability
@@ -27,8 +30,11 @@ import * as desktops from './lib/desktops.js';
 import { pickDriver } from './lib/screen-driver.js';
 import * as chrome from './lib/chrome.js';
 import * as reap from './reap.js';
+import * as ticketProvision from './ticket-provision.js';
 import * as browserActions from './lib/browser-actions.js';
+import * as sharedDesktop from './lib/shared-desktop.js';
 import * as caps from './capabilities.js';
+import * as vp from './voice-providers.js';
 import * as agents from './agents.js';
 import * as policy from './agent-policy.js';
 import * as ledger from './agent-ledger.js';
@@ -40,10 +46,12 @@ import {
   changeDiff,
   changeIdentity,
   prStatus,
+  listBaseRefs,
   worktreeInfo,
   provisionChildWorktree,
 } from './git.js';
 import { mergeBranch, baseStatus, mergeMessage } from './merge.js';
+import * as approval from './lib/review-approval.js';
 import fs from 'node:fs';
 
 const PERMISSION_TIMEOUT_MS = Number(process.env.ARIGAMI_PERMISSION_TIMEOUT_MS) > 0 ? Number(process.env.ARIGAMI_PERMISSION_TIMEOUT_MS) : 10 * 60 * 1000; // env: tests only
@@ -532,8 +540,36 @@ function json(
   body: unknown,
   status: number = 200
 ): void {
+  const text = JSON.stringify(body);
+  // RESUME: gzip/br for anything sizeable (the session list was 570KB raw on a
+  // ~90-session host). Only when the caller asked for it — see http-compress.ts.
+  if (text !== undefined && text.length >= COMPRESS_MIN) {
+    const enc = pickEncoding((res as any).req?.headers?.['accept-encoding']);
+    const packed = enc ? compress(text, enc) : null;
+    if (packed) {
+      res.writeHead(status, { 'content-type': 'application/json', 'content-encoding': enc!, vary: 'Accept-Encoding' });
+      res.end(packed);
+      return;
+    }
+    res.writeHead(status, { 'content-type': 'application/json', vary: 'Accept-Encoding' });
+    res.end(text);
+    return;
+  }
   res.writeHead(status, { 'content-type': 'application/json' });
-  res.end(JSON.stringify(body));
+  res.end(text);
+}
+
+// `a,b.c` → {id, a, b:{c}} — top-level keys and one level of nesting.
+function pickFields(s: Record<string, any>, list: string): Record<string, any> {
+  const out: Record<string, any> = { id: s.id };
+  for (const f of list.split(',').map((x) => x.trim()).filter(Boolean).slice(0, 16)) {
+    const [a, b] = f.split('.');
+    if (!a || a === '__proto__' || b === '__proto__') continue;
+    if (!b) { if (s[a] !== undefined) out[a] = s[a]; continue; }
+    const v = s[a]?.[b];
+    if (v !== undefined) out[a] = { ...(out[a] || {}), [b]: v };
+  }
+  return out;
 }
 
 const notFound = (
@@ -802,6 +838,52 @@ function pushIntervention(
     .catch(() => {});
 }
 
+/** desktop/* with {shared:true}: the same ops on the shared desktop — behind the lease and the input guards. */
+async function sharedDesktopOp(res: ServerResponse, id: string, op: string, body: any, dc: typeof import('./lib/desktop-control.js')): Promise<void> {
+  if (op === 'quit') return json(res, { ok: false, error: "nothing is quit on the shared desktop — the owner's windows are theirs" }, 400);
+  const L = sharedDesktop.get();
+  const gate = L.check(id, op === 'screenshot' ? 'look' : 'input');
+  if (!gate.ok) {
+    console.log(`[shared-desktop] ${new Date().toISOString()} ${id} ${op === 'act' ? String(body?.action) : op} refused: ${gate.error.slice(0, 60)}`);
+    return json(res, gate, 409);
+  }
+  try {
+    if (op === 'screenshot') {
+      const r = await dc.sharedScreenshot(id);
+      L.touch(id);
+      return json(res, { ok: true, shared: true, png_base64: r.png.toString('base64'), width: r.width, height: r.height, ts: r.ts, file: r.file });
+    }
+    const site = L.holder?.sessionId === id ? L.holder.site : null;
+    if (op === 'launch') {
+      const command = String(body?.command || '');
+      const args = Array.isArray(body?.args) ? body.args.map(String) : [];
+      const refused = sharedDesktop.checkLaunch(command, args);
+      if (refused) return json(res, { ok: false, refused: true, error: refused }, 403);
+      const r = dc.sharedLaunch(command, args);
+      L.touch(id);
+      console.log(`[shared-desktop] ${new Date().toISOString()} ${id} launch ${command}`);
+      return json(res, { ok: true, ...r });
+    }
+    const action = String(body?.action || '');
+    let refused: string | null = null;
+    if (action === 'type') {
+      const owner = ownerOfSession(id, 'identity');
+      const email = (caps.readIdentity(owner) || caps.readIdentity(caps.GLOBAL_OWNER))?.email ?? null;
+      refused = sharedDesktop.checkType(String(body?.text ?? ''), { site, identityEmail: email, fromHuman: body?.from_human === true });
+    } else if (action === 'key') refused = sharedDesktop.checkKey(String(body?.key ?? ''));
+    if (refused) {
+      console.log(`[shared-desktop] ${new Date().toISOString()} ${id} ${action} refused: ${refused.slice(0, 80)}`);
+      return json(res, { ok: false, refused: true, error: refused }, 403);
+    }
+    const r = await dc.sharedAct(body);
+    L.touch(id);
+    console.log(`[shared-desktop] ${new Date().toISOString()} ${id} ${action}${action === 'type' && body?.from_human === true ? ' (from the human)' : ''} ${r.ok ? 'ok' : 'failed: ' + (r as any).error}`);
+    return json(res, r, r.ok ? 200 : 400);
+  } catch (e) {
+    return json(res, { ok: false, error: (e as Error).message }, 400);
+  }
+}
+
 // request_screen: the agent asks the human to look at / drive the shared
 // desktop (manual login, CAPTCHA, interactive installer…), shown as a live
 // embedded view in the chat. Blocking, same shape as handlePermissionRequest.
@@ -812,9 +894,6 @@ async function handleScreenRequest(
   const sessionId = body.session_id as string | undefined;
   const s = sessionId && state.getSession(sessionId);
   if (!s) return badRequest(res, `unknown session_id: ${sessionId}`);
-  const requestId = 'scrn_' + nano();
-  (await import('./funnel.js')).firstTime('screen.first_request');
-  const prompt = String(body.prompt || '');
   // Optional context shown on the card: why the agent is blocked and what
   // exactly the human should complete. Unknown reasons collapse to 'other'.
   const reason: ScreenRequestReason | undefined = body.reason
@@ -822,25 +901,42 @@ async function handleScreenRequest(
       ? (String(body.reason) as ScreenRequestReason)
       : 'other'
     : undefined;
-  const hint = body.hint ? String(body.hint) : undefined;
+  const { done } = await openScreenRequest(sessionId!, { prompt: String(body.prompt || ''), reason, hint: body.hint ? String(body.hint) : undefined, shared: body.shared === true });
+  await respondBlocking(res, body, sessionId!, done); // CHAT1: long-poll legs
+}
+
+/** The screen hand-over card itself — request_screen's, and sign_in's for a CAPTCHA / push (lib/sign-in.ts). */
+async function openScreenRequest(
+  sessionId: string,
+  o: { prompt: string; reason?: ScreenRequestReason; hint?: string; shared?: boolean }
+): Promise<{ done: Promise<ScreenRequestResult> }> {
+  const requestId = 'scrn_' + nano();
+  (await import('./funnel.js')).firstTime('screen.first_request');
+  const { prompt, reason, hint } = o;
+  // A session working on the SHARED desktop hands THAT screen over (the card shows it), and its lease is parked
+  // meanwhile: others may use the machine; it gets it back first when the human answers (lib/shared-desktop.ts).
+  const lease = sharedDesktop.get();
+  const shared = o.shared === true || lease.holder?.sessionId === sessionId || lease.parked.has(sessionId);
+  if (shared) lease.park(sessionId, 'request_screen');
   // Lazy per-session desktop (T8): by the time the card/panel mount and
   // connect, metadata.screen should already point at this session's own
   // machine, not the global one. A failed allocation (binary missing, ports
   // exhausted) isn't fatal — screenTarget() falls back to the global desktop.
-  try { await pickDriver().ensure(sessionId!); } catch (e) { console.error('[screen] desktop alloc failed for', sessionId, (e as Error).message); }
-  const promise = new Promise<ScreenRequestResult>((resolve) => {
+  if (!shared) try { await pickDriver().ensure(sessionId); } catch (e) { console.error('[screen] desktop alloc failed for', sessionId, (e as Error).message); }
+  const done = new Promise<ScreenRequestResult>((resolve) => {
     const timer = setTimeout(() => {
       pendingScreenRequests.delete(requestId);
       screens.stopAutoSnapshots(requestId);
       state.setClaude(sessionId, { state: 'working', screenRequest: null });
       const note = '(timed out — the human did not respond)';
       claude.appendChat(sessionId, { kind: 'screen-request-answer', requestId, note });
+      if (shared) lease.unpark(sessionId);
       resolve({ ok: true, takenOver: false, note });
     }, SCREEN_REQUEST_TIMEOUT_MS);
     pendingScreenRequests.set(requestId, { resolve, timer, sessionId });
     state.setClaude(sessionId, {
       state: 'awaiting-input',
-      screenRequest: { requestId, ...(reason ? { reason } : {}) },
+      screenRequest: { requestId, ...(reason ? { reason } : {}), ...(shared ? { shared: true } : {}) },
     });
     claude.appendChat(sessionId, {
       kind: 'screen-request',
@@ -848,10 +944,11 @@ async function handleScreenRequest(
       prompt,
       ...(reason ? { reason } : {}),
       ...(hint ? { hint } : {}),
+      ...(shared ? { shared: true } : {}),
     });
     // Watch-mode timeline: periodic snapshots grouped under this card until
-    // the human takes over (mode → control) or answers.
-    screens.startAutoSnapshots(sessionId, requestId);
+    // the human takes over (mode → control) or answers. Not of the owner's own screen.
+    if (!shared) screens.startAutoSnapshots(sessionId, requestId);
     pushIntervention(
       sessionId,
       'screen',
@@ -859,7 +956,7 @@ async function handleScreenRequest(
       SCREEN_REASON_LABEL[reason ?? ''] || 'needs you on the machine'
     );
   });
-  await respondBlocking(res, body, sessionId!, promise); // CHAT1: long-poll legs
+  return { done };
 }
 
 // Force-resolve any screen request left pending for a session — e.g. its
@@ -877,6 +974,7 @@ export function expirePendingScreenRequests(
     screens.stopAutoSnapshots(requestId);
     state.setClaude(sessionId, { screenRequest: null });
     claude.appendChat(sessionId, { kind: 'screen-request-answer', requestId, note: message });
+    sharedDesktop.get().unpark(sessionId);
     entry.resolve({ ok: true, takenOver: false, note: message });
   }
 }
@@ -912,6 +1010,7 @@ function answerScreenRequest(
     takenOver,
     ...(data.note ? { note: data.note } : {}),
   });
+  sharedDesktop.get().unpark(sessionId); // back at the head of the shared desktop's queue, if it was parked
   entry.resolve({ ok: true, takenOver, ...(data.note ? { note: data.note } : {}) });
   return { ok: true };
 }
@@ -1132,7 +1231,477 @@ const SHARE_KIND = 'share';
 // Login cards (login-vault.ts): answered only by a person, and acted on by the
 // host — the agent never touches the owner's browser itself.
 const LOGIN_KIND = 'login';
+// What a session does when there is no login to hand over: the sign-in card (VAULT1), never a take-over for a password.
+const SIGN_IN_FRESH = "sign in fresh with sign_in({site}) — a new sign-in happens in the owner's own Chrome on the shared desktop, and the host types vault values there; you never see one";
 const LOGIN_SAVE_KIND = 'login-save';
+// SSO1: "sign in to <site> through your identity provider, in My browser" (lib/sso.ts).
+const SSO_KIND = 'sso';
+
+/** Open the approved site in its own tab of My browser (opened on the shared desktop if it is not) for this session. */
+async function startSso(sessionId: string, url: string): Promise<{ ok: true; site: string } | { ok: false; error: string }> {
+  const lv = await import('./lib/login-vault.js');
+  const sso = await import('./lib/sso.js');
+  const display = process.platform === 'linux' ? cfg.screen?.display || ':99' : null;
+  const env = display ? { ...process.env, DISPLAY: display } : process.env;
+  try {
+    await lv.openVisible(env);
+    const r = await sso.start(sessionId, url, await lv.visiblePort());
+    return { ok: true, site: r.site };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
+}
+const SSO_HOW =
+  'Use sso_look to see the tab (a screenshot and its text) and sso_click to press the SSO button ("Continue with Google", "Sign in with Microsoft"…) and pick the account; ' +
+  "sso_navigate only within the site and the sign-in providers. There is no typing: a password or 2FA prompt there is the owner's — tell them in one line and wait for their word. " +
+  "When the site shows you signed in, call sso_done: the tab closes and the site's login moves into your browser.";
+// ---- sign_in (lib/sign-in.ts): the ladder in code, and the new sign-in in the owner's own Chrome -------------------
+// One job per session: the site, the Chrome profile (= which of the owner's accounts), and for gcloud its login process.
+interface SignInJob {
+  site: string;
+  input: string;
+  profile: import('./lib/owner-chrome.js').OwnerProfile;
+  label: string;
+  gcloud?: { done: Promise<{ ok: boolean }>; proc: import('node:child_process').ChildProcess };
+  /** A consent page (sign_in({url})): done = give the desktop back; the playbook checks its own result. */
+  consent?: boolean;
+  doneTries: number;
+  /** The site's httpOnly cookie names in the profile when sign_in opened the page (names only) — diffed at done. */
+  before?: string[];
+}
+const signInJobs = new Map<string, SignInJob>();
+/** The session is gone: its sign-in (and a gcloud login waiting on a browser) goes with it. */
+function forgetSignIn(id: string): void {
+  const j = signInJobs.get(id);
+  if (j?.gcloud) try { j.gcloud.proc.kill('SIGTERM'); } catch {}
+  signInJobs.delete(id);
+  import('./lib/credentials.js').then((cr) => cr.forgetSession(id)).catch(() => {});
+}
+/** sign_in raised the login card and waits on it itself: the answer resolves here instead of messaging the session. */
+const signInCardWaiters = new Map<string, (value: string) => void>();
+const SIGN_IN_WAIT_MS = 10 * 60_000;
+
+function sharedChromeHere(): boolean {
+  if (process.platform !== 'linux') return false;
+  try {
+    return /^:\d+$/.test(String(cfg.screen?.display || ':99'));
+  } catch {
+    return false;
+  }
+}
+
+async function ownerChromeBin(userDataDir: string): Promise<string> {
+  const si = await import('./lib/sign-in.js');
+  for (const pid of si.ownerChromePids(userDataDir)) {
+    try {
+      const argv0 = fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0')[0];
+      if (argv0) return argv0;
+    } catch {
+      /* gone */
+    }
+  }
+  return chrome.chromeBin();
+}
+
+/** Wait until the lease is this session's and the owner is not mid-input on the screen. */
+async function holdSharedDesktop(id: string, site: string, reason: string): Promise<string | null> {
+  const L = sharedDesktop.get();
+  const r = L.acquire(id, site, reason);
+  if ('queued' in r && !(await L.waitForGrant(id, SIGN_IN_WAIT_MS))) return `the shared desktop stayed busy for ${SIGN_IN_WAIT_MS / 60_000} minutes (another session's sign-in) — try again later`;
+  for (let i = 0; i < 120 && L.humanActive(); i++) await new Promise((r2) => setTimeout(r2, 1000));
+  L.touch(id);
+  return null;
+}
+
+type SignInOutcome = import('./lib/sign-in.js').Outcome;
+
+async function signInStart(id: string, body: any): Promise<SignInOutcome> {
+  const si = await import('./lib/sign-in.js');
+  const lv = await import('./lib/login-vault.js');
+  const ls = await import('./lib/login-sites.js');
+  const oc = await import('./lib/owner-chrome.js');
+  const raw = String(body?.site || '').trim();
+  const reason = String(body?.reason || '').slice(0, 200);
+  const cli = si.cliFor(raw);
+  const site = cli ? 'google.com' : si.siteKey(raw);
+  const profilesAll = oc.ownerProfiles();
+  const sharedChrome = profilesAll.length > 0 && sharedChromeHere();
+  const owner = ownerOfSession(id, 'identity');
+  const ident = caps.readIdentity(owner) || caps.readIdentity(caps.GLOBAL_OWNER);
+  const identityEmail = ident?.email ?? null;
+  // the identity's Chrome profile on the shared desktop ('chrome:<dir>'), when connect-identity signed Google in there
+  const identityProfile = /^chrome:/.test(ident?.chromeProfile || '') ? ident!.chromeProfile.slice('chrome:'.length) : null;
+  const consent = body?.url !== undefined ? si.consentUrl(body.url) : null;
+  if (body?.url !== undefined && !consent) return si.blocked(si.siteKey(raw), 'url must be an https page (the consent / authorize page to finish in the owner\'s Chrome)');
+
+  // facts, cheapest first; each rung's check runs only when the rungs above did not apply
+  let gc: Awaited<ReturnType<typeof si.gcloudStatus>> | null = null;
+  if (cli) gc = await si.gcloudStatus();
+  if (cli && !gc?.bin) return si.blocked('gcloud', 'gcloud is not installed on this host');
+  const capability = cli ? null : si.connectionFor(raw);
+  let connected = false;
+  if (capability && body?.browser !== true) {
+    try {
+      connected = !caps.isNeedsSetup(await caps.ensure(capability, reason || `sign in to ${raw}`, {}, ownerOfSession(id, capability)));
+    } catch {
+      connected = false;
+    }
+  }
+  const account = body?.account ? String(body.account) : null;
+  const scope = account ? [oc.matchProfile(profilesAll, account)].filter((p): p is NonNullable<typeof p> => !!p) : profilesAll;
+  if (account && !scope.length) return si.blocked(site, `no Chrome profile for "${account}" — the owner's are: ${profilesAll.map(oc.profileLabel).join(', ') || 'none'}`);
+  const d = cli ? null : lv.detect(raw, undefined, scope);
+  const policy = d ? ls.decide(d.site, d.storageOrigins.length ? ['(unread)'] : []).policy : 'cookies';
+  const rung = consent ? { rung: 'shared-chrome' as const } : si.ladder({
+    cli,
+    cliSignedIn: !!gc?.ok,
+    connection: capability ? { capability, connected } : null,
+    wantBrowser: body?.browser === true,
+    saved: d ? { present: d.present, policy, inOwnerChrome: d.sources.includes('chrome') } : null,
+    sharedChrome,
+  });
+  console.log(`[sign-in] ${new Date().toISOString()} ${id} ${raw} → ${rung.rung}`);
+
+  if (rung.rung === 'blocked') return si.blocked(site, rung.reason);
+  if (rung.rung === 'cli-ok') return { status: 'signed_in', site: 'gcloud', via: 'cli', ...(gc?.account ? { account: gc.account } : {}), next: `gcloud is signed in${gc?.account ? ` as ${gc.account}` : ''} and its credential works — run gcloud commands (it is ${gc?.bin}).` };
+  if (rung.rung === 'connection')
+    return { status: 'signed_in', site, via: 'connection', next: `the host is connected to ${raw} (${rung.capability}): use its tools (mcp__${rung.capability.split(':')[1] || rung.capability}__… / gh for git), no browser. Only if you need the web page itself: sign_in({site, browser:true}).` };
+  if (rung.rung === 'owner-chrome-only') {
+    const holders = scope.filter((p) => d?.profiles?.includes(p.profileDir));
+    const prof = holders.find((p) => p.profileDir === identityProfile) || holders[0];
+    return {
+      status: 'signed_in', site, via: 'shared-chrome', ...(prof ? { account: oc.profileLabel(prof), profile: prof.profileDir } : {}),
+      next: `${d?.site.label || site} is signed in in the owner's Chrome on the shared desktop${prof ? ` (${oc.profileLabel(prof)})` : ''}; it does not accept a copied session, so it is not in your browser. For mail / calendar / drive use the host connection (check_setup composio:gmail…); for a ${d?.site.label || site} page itself, shared_desktop_acquire({site:"${site}"}) and work there with desktop_*({shared:true}).`,
+    };
+  }
+  let fresh = false;
+  if (rung.rung === 'saved') {
+    const r = await signInSaved(id, raw, d!, scope, reason);
+    if (r) return r;
+    // the saved login did not take (stale, or the owner asked for a fresh one): a new sign-in, below — on the page,
+    // not by copying the same login again
+    fresh = true;
+  }
+  // ---- a NEW sign-in in the owner's Chrome on the shared desktop -------------------------------------------------
+  const pick = si.chooseProfile(scope.length ? scope : profilesAll, { account: null, signedInIn: consent ? [] : d?.profiles || [], identityEmail, identityProfile, match: oc.matchProfile, label: oc.profileLabel });
+  if (!pick.ok) return si.blocked(site, pick.reason);
+  const profile = pick.profile;
+  const label = oc.profileLabel(profile);
+  const busy = await holdSharedDesktop(id, cli ? 'google.com' : site, reason || `sign in to ${raw}`);
+  if (busy) return si.blocked(site, busy);
+  const bin = await ownerChromeBin(profile.userDataDir);
+  if (cli) {
+    const prev = signInJobs.get(id)?.gcloud;
+    if (prev) try { prev.proc.kill('SIGTERM'); } catch {}
+    const g = si.startGcloudLogin(gc!.bin!, { display: dc().sharedDisplay(), chrome: bin, flags: oc.ownerChromeLaunchFlags(), profileDir: profile.profileDir, dir: (await import('./lib/instance.js')).RUN_DIR });
+    signInJobs.set(id, { site: 'google.com', input: 'gcloud', profile, label, gcloud: g, doneTries: 0 });
+    g.done.then(() => { if (signInJobs.get(id)?.gcloud === g) sharedDesktop.get().touch(id); });
+    return { status: 'driving', site: 'gcloud', account: label, next: `gcloud auth login opened Google's consent page in the owner's Chrome (${label}) on the shared desktop. Pick the account and press Continue / Allow there — gcloud gets the answer on its own, there is no code to copy. ${si.DRIVE_HOW.replace('sign_in({site, done:true})', 'sign_in({site:"gcloud", done:true})')}` };
+  }
+  signInJobs.set(id, { site, input: raw, profile, label, doneTries: 0, before: lv.sessionCookieNames(raw, profile), ...(consent ? { consent: true } : {}) });
+  if (!consent && !fresh && lv.detectProfile(raw, profile).present) return signInDone(id, { already: true });
+  const url = consent || si.startUrl(raw, ls.resolve(raw).signInUrl);
+  const launched = dc().sharedLaunch(bin, [...oc.ownerChromeLaunchFlags(), `--profile-directory=${profile.profileDir}`, url]);
+  sharedDesktop.get().touch(id);
+  console.log(`[sign-in] ${new Date().toISOString()} ${id} opened ${hostOfUrl(url)} in owner Chrome ${profile.profileDir} (pid ${launched.pid})`);
+  await new Promise((r2) => setTimeout(r2, 2500));
+  if (consent)
+    return { status: 'driving', site, account: label, profile: profile.profileDir, next: `${hostOfUrl(url)} is open in the owner's own Chrome (${label}) on the shared desktop, signed in to their Google there, and the desktop is yours. Finish the consent (pick the account, Allow / Continue) with desktop_screenshot / desktop_pointer ({shared:true}); a password field: sign_in({site, fill:"password"}). Then sign_in({site, done:true}) gives the desktop back — check the result where your playbook polls it.` };
+  return { status: 'driving', site, account: label, profile: profile.profileDir, next: `${url} is open in the owner's own Chrome (${label}) on the shared desktop, and the desktop is yours for this sign-in. ${si.DRIVE_HOW}` };
+}
+
+const hostOfUrl = (u: string): string => { try { return new URL(u).host; } catch { return u; } };
+const dc = (): typeof import('./lib/desktop-control.js') => desktopControl!;
+let desktopControl: typeof import('./lib/desktop-control.js') | null = null;
+import('./lib/desktop-control.js').then((m) => { desktopControl = m; }).catch(() => {});
+
+/** Rung 2: carry a genuinely signed-in login in — on the owner's standing "always", else after their answer on a card. */
+async function signInSaved(id: string, raw: string, d: import('./lib/login-vault.js').Detection, scope: import('./lib/owner-chrome.js').OwnerProfile[], reason: string): Promise<SignInOutcome | null> {
+  const lv = await import('./lib/login-vault.js');
+  const si = await import('./lib/sign-in.js');
+  const site = d.site;
+  const two = (d.profiles?.length || 0) > 1;
+  if (two) {
+    const oc = await import('./lib/owner-chrome.js');
+    const names = scope.filter((p) => d.profiles!.includes(p.profileDir)).map(oc.profileLabel);
+    return si.blocked(site.id, `${site.label} is signed in under two accounts (${names.join('; ')}) — call sign_in again with account: one of them`);
+  }
+  let value = lv.grants()[site.id] ? 'always' : '';
+  if (!value) {
+    const action = {
+      id: 'act_' + nano(),
+      at: new Date().toISOString(),
+      kind: LOGIN_KIND,
+      signIn: true,
+      login: { site: site.id, label: site.label },
+      prompt: `Use your ${site.label} login in this session?` + (reason ? ` — ${reason}` : ''),
+      buttons: [
+        { label: `Use my ${site.label} login`, value: 'use', style: 'primary' },
+        { label: `Always for ${site.label}`, value: 'always' },
+        { label: 'Sign in fresh', value: 'fresh' },
+        { label: 'No', value: 'deny', style: 'danger' },
+      ],
+    };
+    const answered = new Promise<string>((resolve) => {
+      const t = setTimeout(() => { signInCardWaiters.delete(action.id); resolve('timeout'); }, SIGN_IN_WAIT_MS);
+      (t as any).unref?.();
+      signInCardWaiters.set(action.id, (v) => { clearTimeout(t); resolve(v); });
+    });
+    state.patchSession(id, { action });
+    pushIntervention(id, 'action', action.prompt, 'waiting for your answer');
+    value = await answered;
+    if ((state.getSession(id)?.action as any)?.id === action.id) state.patchSession(id, { action: null });
+  }
+  if (value === 'timeout') return si.blocked(site.id, `nobody answered the "${site.label} login" card in ${SIGN_IN_WAIT_MS / 60_000} minutes`);
+  if (value === 'deny') return si.blocked(site.id, `the owner refused the ${site.label} login — do not sign in to ${site.label} in this turn`);
+  if (value === 'fresh') return null;
+  if (value === 'always') lv.grantAlways(site.id);
+  const r = await lv.transfer(id, raw, undefined, scope).catch((e) => ({ ok: false, error: (e as Error).message }) as any);
+  if (!r.ok) {
+    console.log(`[sign-in] ${new Date().toISOString()} ${id} ${site.id} saved login did not take: ${String(r.error).slice(0, 80)}`);
+    return null;
+  }
+  return { status: 'signed_in', site: site.id, via: 'saved', ...(r.profile ? { account: r.profile } : {}), next: `the owner's ${site.label} login is in your browser now${r.check ? ` (checked: ${r.check.url})` : ''} — browser_open the site and continue.` };
+}
+
+/**
+ * The shared-desktop fill gate (lib/sign-in.ts sharedFillGuard) for a session's running sign-in: may a vault value be
+ * typed into the focused field now — and `recheck`, run again right before the keys go out, says if the page moved.
+ */
+async function sharedGateFor(id: string, job: SignInJob | undefined): Promise<{ gate: import('./lib/sign-in.js').FillGate; recheck: () => Promise<string | null> }> {
+  const si = await import('./lib/sign-in.js');
+  const facts = async () => {
+    const L = sharedDesktop.get();
+    const active = await dc().sharedActiveWindow().catch(() => null);
+    return si.sharedFillGuard({
+      sessionId: id,
+      holder: L.holder ? { sessionId: L.holder.sessionId, site: L.holder.site } : null,
+      job: job ? { site: job.site, profileDir: job.profile.profileDir } : null,
+      active,
+      ownerPids: job ? si.ownerChromePids(job.profile.userDataDir) : [],
+      lastUrl: job ? si.lastVisit(job.profile.profilePath, Date.now(), active?.title) : null,
+    });
+  };
+  const gate = await facts();
+  const recheck = async () => {
+    const g = await facts();
+    if (!g.ok) return g.reason;
+    return gate.ok && g.origin === gate.origin ? null : `the page moved to ${g.host}`;
+  };
+  return { gate, recheck };
+}
+
+// ---- VAULT2: the owner's named details — a secure form (vault_collect) and a field fill (vault_fill) ---------------
+// Both wait on a card like sign_in({fill}) does; neither ever carries a value: the form is saved by the cockpit straight
+// into the vault, and a fill is typed by the host into one marked field (the session browser) or the focused field of
+// the owner's Chrome mid sign-in. What comes back to the agent is names and outcomes.
+const FORM_WAIT_MS = 30 * 60_000;
+
+type VaultCollectOutcome =
+  | { status: 'saved'; host: string; entry: { id?: string; title?: string; fields: string[] }; next: string }
+  | { status: 'cancelled' | 'expired'; host: string; reason: string }
+  | { status: 'blocked'; reason: string };
+
+async function vaultCollect(id: string, body: any): Promise<VaultCollectOutcome> {
+  const cr = await import('./lib/credentials.js');
+  const spec = cr.normalizeFieldSpecs(body?.fields);
+  if ('error' in spec) return { status: 'blocked', reason: spec.error };
+  const out = cr.requestForm(id, { site: String(body?.site || ''), fields: spec.fields, title: body?.title ? String(body.title) : undefined, reason: String(body?.reason || '').slice(0, 200) });
+  if (out.status === 'error') return { status: 'blocked', reason: out.error };
+  const req = out.request;
+  state.patchSession(id, { credentialRequest: req });
+  pushIntervention(id, 'action', `${req.host}: ${req.fields.length} detail(s) to fill in on a secure form` + (req.reason ? ` — ${req.reason}` : ''), 'a secure form is waiting');
+  let settled: import('./lib/credentials.js').Settled;
+  try {
+    settled = await cr.waitSettled(req.requestId, FORM_WAIT_MS);
+  } finally {
+    if ((state.getSession(id) as any)?.credentialRequest?.requestId === req.requestId) state.patchSession(id, { credentialRequest: null });
+  }
+  if (settled === 'saved') {
+    const d = (cr.takeSettleDetail(req.requestId) || {}) as { id?: string; title?: string; fields?: string[] };
+    const entry = { ...(d.id ? { id: d.id } : {}), ...(d.title ? { title: d.title } : {}), fields: Array.isArray(d.fields) ? d.fields : [] };
+    return { status: 'saved', host: req.host, entry, next: `the owner saved these in the vault (you never see a value). To put one into a page: vault_fill({site:"${req.host}", field:"<name>"}) after clicking into the field, or with target: words of its label.` };
+  }
+  cr.forget(req.requestId, settled === 'expired' ? 'expired' : 'cancel');
+  if (settled === 'expired') return { status: 'expired', host: req.host, reason: `nobody answered the ${req.host} form in ${FORM_WAIT_MS / 60_000} minutes` };
+  return { status: 'cancelled', host: req.host, reason: `the owner cancelled the ${req.host} form — do not ask for these details again in this turn, and never in the chat` };
+}
+
+type VaultFillOutcome =
+  | { status: 'filled'; field: string; host: string; where: 'session-browser'; next: string }
+  | { status: 'manual'; field: string; host: string; next: string }
+  | { status: 'cancelled' | 'expired'; field: string; host: string; reason: string }
+  | { status: 'blocked'; field: string; host?: string; reason: string; next?: string };
+
+/**
+ * vault_fill types ONLY into the session's own browser, where the host can mask the filled field (dots) before the
+ * agent's next screenshot. The owner's Chrome on the shared desktop has no DOM for the host: a named value typed there
+ * would stand as plain text in the agent's desktop_screenshot — so while this session is driving a sign-in there, the
+ * call is refused before any card goes up and any value moves (lib/sign-in.ts vaultFillTarget). Sign-in roles in the
+ * owner's Chrome stay sign_in({fill})'s, unchanged.
+ */
+async function vaultFill(id: string, body: any): Promise<VaultFillOutcome> {
+  const cr = await import('./lib/credentials.js');
+  const si = await import('./lib/sign-in.js');
+  const field = cr.fieldName(body?.field);
+  if (!field) return { status: 'blocked', field: '', reason: `field required: the name of the saved detail (vault_fields({site}) lists them), up to ${cr.FIELD_NAME_MAX} characters` };
+  const reason = String(body?.reason || '').slice(0, 200);
+  const entry = body?.entry ? String(body.entry).slice(0, 120) : undefined;
+  // VAULT3: which part of the saved value — the whole of it, or an expiry's month / year (split by the owner's vault worker)
+  const part = cr.fieldPart(body?.part);
+  if (!part) return { status: 'blocked', field, reason: `part is one of ${cr.FIELD_PARTS.join(' | ')} (month / year split a saved expiry like MM/YY into two selects)` };
+  const job = signInJobs.get(id);
+  const where = si.vaultFillTarget({ signInRunning: !!job && !job.gcloud, holdsShared: sharedDesktop.get().holder?.sessionId === id, site: job?.site || null });
+  if (where.target === 'refused') {
+    console.log(`[vault] ${new Date().toISOString()} ${id} fill ${field} refused: owner Chrome is not a target for named values`);
+    return { status: 'blocked', field, reason: where.reason, next: where.next };
+  }
+  const out = await cr.requestField(id, { site: body?.site ? String(body.site) : undefined, field, entry, target: body?.target ? String(body.target).slice(0, 120) : undefined, reason, part });
+  if (out.status === 'error') return { status: 'blocked', field, reason: out.error, ...(out.next ? { next: out.next } : {}) };
+  if (out.status === 'manual') return { status: 'manual', field, host: out.host, next: `the owner types ${out.host} details themselves: call request_screen (say which field, and where) and wait` };
+  const req = out.request;
+  state.patchSession(id, { credentialRequest: req });
+  const what = part === 'value' ? field : `${field} (${part})`;
+  if (req.pref !== 'auto') pushIntervention(id, 'action', `${req.host} asks for your ${what}` + (reason ? ` — ${reason}` : ''), 'waiting for your vault');
+  let settled: import('./lib/credentials.js').Settled;
+  try {
+    settled = await cr.waitSettled(req.requestId, SIGN_IN_WAIT_MS);
+  } finally {
+    if ((state.getSession(id) as any)?.credentialRequest?.requestId === req.requestId) state.patchSession(id, { credentialRequest: null });
+  }
+  if (settled === 'filled')
+    return { status: 'filled', field, host: req.host, where: 'session-browser', next: `the host put the ${what} into the field (nobody saw it; the field is hidden from now on — do not click, type into or read it). Press the page's own button yourself and check with browser_snapshot.` };
+  if (settled === 'manual') return { status: 'manual', field, host: req.host, next: `the owner types the ${field} themselves: call request_screen (say which field, and where) and wait` };
+  if (settled === 'failed') {
+    // the cockpit acknowledged a broken attempt (a filtered code → one fixed line): the tool ends now, blocked, not ten minutes later
+    const d = (cr.takeSettleDetail(req.requestId) || {}) as { reason?: string };
+    return { status: 'blocked', field, host: req.host, reason: `filling the ${what} failed in the owner's cockpit: ${d.reason || 'the attempt broke'}; nothing was filled`, next: `the owner has to unlock the vault again — then call vault_fill({site:"${req.host}", field:"${field}"}) once more on the same page (click into the field first); or ask them to type it with request_screen.` };
+  }
+  cr.forget(req.requestId, settled === 'expired' ? 'expired' : 'cancel');
+  if (settled === 'cancel') return { status: 'cancelled', field, host: req.host, reason: `the owner cancelled — do not ask for the ${field} again in this turn, and never in the chat` };
+  return { status: 'expired', field, host: req.host, reason: `nobody answered the ${req.host} card in ${SIGN_IN_WAIT_MS / 60_000} minutes — the owner has to open the cockpit, unlock the vault and tap Fill (or allow automatic fills for this site in this session)` };
+}
+
+/** sign_in({fill}): the host types ONE vault value into the field the agent clicked, in the owner's Chrome. */
+async function signInFill(id: string, field: string, reason: string): Promise<SignInOutcome> {
+  const si = await import('./lib/sign-in.js');
+  const cr = await import('./lib/credentials.js');
+  const job = signInJobs.get(id);
+  if (!si.FILL_FIELDS.includes(field as any)) return si.blocked(job?.site || '', `fill is one of ${si.FILL_FIELDS.join(' | ')}`);
+  // the desktop went back while the agent looked (60 s idle): take it again for the same sign-in, then check
+  if (job && sharedDesktop.get().holder?.sessionId !== id) {
+    const busy = await holdSharedDesktop(id, job.site, reason || `sign in to ${job.site}`);
+    if (busy) return si.blocked(job.site, busy);
+  }
+  const { gate, recheck } = await sharedGateFor(id, job);
+  if (!gate.ok) {
+    console.log(`[sign-in] ${new Date().toISOString()} ${id} fill ${field} refused: ${gate.reason.slice(0, 80)}`);
+    if (!job) return si.blocked('', gate.reason);
+    return { status: 'driving', site: job.site, account: job.label, next: `nothing was typed: ${gate.reason}.` };
+  }
+  const out = cr.requestShared(id, { origin: gate.origin, field, reason: reason || `sign in to ${job!.site}`, account: job!.label, recheck });
+  if (out.status === 'manual') return signInHuman(id, `type your ${field} for ${out.host} in the field that is focused`);
+  const req = out.request;
+  state.patchSession(id, { credentialRequest: req });
+  if (req.pref !== 'auto') pushIntervention(id, 'action', `Sign in to ${req.host} (${field})` + (req.reason ? ` — ${req.reason}` : ''), 'waiting for your sign-in');
+  // The focused field must stay focused while the owner answers: the lease is kept, not parked.
+  const keep = setInterval(() => sharedDesktop.get().touch(id), 15_000);
+  let settled: import('./lib/credentials.js').Settled;
+  try {
+    settled = await cr.waitSettled(req.requestId, SIGN_IN_WAIT_MS);
+  } finally {
+    clearInterval(keep);
+    if ((state.getSession(id) as any)?.credentialRequest?.requestId === req.requestId) state.patchSession(id, { credentialRequest: null });
+  }
+  if (settled === 'filled') return { status: 'driving', site: job!.site, account: job!.label, next: `the host typed the ${field} from the vault into the focused field (nobody saw it). Submit it (Enter with desktop_keyboard, or click the button), then desktop_screenshot({shared:true}) and go on.` };
+  if (settled === 'manual') return signInHuman(id, `type your ${field} for ${req.host} in the field that is focused`);
+  // blocked: the desktop goes back now, not after its idle minute
+  signInJobs.delete(id);
+  sharedDesktop.get().release(id);
+  if (settled === 'cancel') return si.blocked(job!.site, `the owner cancelled the ${req.host} sign-in`);
+  if (settled === 'failed') {
+    const d = (cr.takeSettleDetail(req.requestId) || {}) as { reason?: string };
+    return si.blocked(job!.site, `filling the ${field} failed in the owner's cockpit: ${d.reason || 'the attempt broke'} — nothing was typed; once they have unlocked the vault again, call sign_in({site, fill:"${field}"}) once more`);
+  }
+  cr.forget(req.requestId, 'expired');
+  return si.blocked(job!.site, `nobody answered the ${req.host} sign-in card in ${SIGN_IN_WAIT_MS / 60_000} minutes (the vault may be locked in the cockpit)`);
+}
+
+/** sign_in({human}): the one hand-over — the owner does a step only a person can, on the shared desktop. */
+async function signInHuman(id: string, what: string): Promise<SignInOutcome> {
+  const si = await import('./lib/sign-in.js');
+  const job = signInJobs.get(id);
+  if (!job) return si.blocked('', 'no sign-in is running for this session — call sign_in({site}) first');
+  const task = String(what || '').replace(/\s+/g, ' ').trim().slice(0, 300) || 'finish the sign-in';
+  const prompt = `${job.input === 'gcloud' ? 'gcloud' : job.site}: ${task}`;
+  const hint = `On the shared desktop, in your own Chrome (${job.label}). Press Done when it is done — the agent carries on from there.`;
+  const reasonKind = /captcha|robot|puzzle|image/i.test(task) ? 'captcha' : /code|sms|2fa|push|approve|phone/i.test(task) ? '2fa' : 'login';
+  const { done } = await openScreenRequest(id, { prompt, hint, reason: reasonKind as ScreenRequestReason, shared: true });
+  const r = await done;
+  const busy = await holdSharedDesktop(id, job.site, `sign in to ${job.site}`);
+  if (busy) return si.blocked(job.site, busy);
+  return { status: 'driving', site: job.site, account: job.label, next: `the owner answered${r.note ? ` ("${String(r.note).slice(0, 120)}")` : ''}. Take a desktop_screenshot({shared:true}) and go on; when the page shows you signed in, sign_in({site, done:true}).` };
+}
+
+/** sign_in({done}): check the session is really there (a session cookie, not a page that looks signed in), bring it in. */
+async function signInDone(id: string, o: { already?: boolean } = {}): Promise<SignInOutcome> {
+  const si = await import('./lib/sign-in.js');
+  const lv = await import('./lib/login-vault.js');
+  const ls = await import('./lib/login-sites.js');
+  const job = signInJobs.get(id);
+  if (!job) return si.blocked('', 'no sign-in is running for this session — call sign_in({site}) first');
+  const L = sharedDesktop.get();
+  const finish = () => { signInJobs.delete(id); L.release(id); };
+  if (job.consent) {
+    finish();
+    return { status: 'signed_in', site: job.site, via: 'shared-chrome', account: job.label, profile: job.profile.profileDir, next: 'the consent page was handled in the owner\'s Chrome and the desktop is released — check the connection where your playbook polls it.' };
+  }
+  if (job.gcloud) {
+    const r = await Promise.race([job.gcloud.done, new Promise<null>((r2) => setTimeout(() => r2(null), 120_000))]);
+    if (!r) {
+      job.doneTries++;
+      if (job.doneTries < 2) return { status: 'driving', site: 'gcloud', account: job.label, next: 'gcloud is still waiting for Google\'s answer — press Continue / Allow on the consent page (desktop_screenshot({shared:true}) to see it), then sign_in({site:"gcloud", done:true}) again.' };
+      try { job.gcloud.proc.kill('SIGTERM'); } catch {}
+      finish();
+      return si.blocked('gcloud', 'gcloud auth login never got Google\'s answer (the consent page was not completed)');
+    }
+    const st = await si.gcloudStatus();
+    finish();
+    return st.ok
+      ? { status: 'signed_in', site: 'gcloud', via: 'cli', ...(st.account ? { account: st.account } : {}), next: `gcloud is signed in${st.account ? ` as ${st.account}` : ''} — run gcloud commands (${st.bin}).` }
+      : si.blocked('gcloud', 'gcloud auth login finished but its credential does not work');
+  }
+  const site = ls.resolve(job.input);
+  // Chrome writes cookies to disk in batches (about every 30 s): look for the session for up to 45 s.
+  // after a sign-in the agent saw land, a plain session cookie counts too (weak); "already signed in" needs a strong one
+  const weak = !o.already;
+  const look = () => {
+    const d = lv.detectProfile(job.input, job.profile, { weak });
+    if (d.present || !weak || !job.before) return d;
+    const fresh = si.newSessionCookies(job.before, lv.sessionCookieNames(job.input, job.profile), ls.VISITOR_COOKIES);
+    return fresh.length ? { ...d, present: true, by: `${fresh.join('+')} (new since the sign-in started)` } : d;
+  };
+  let det = look();
+  for (let i = 0; !det.present && i < (o.already ? 0 : 15); i++) {
+    L.touch(id);
+    await new Promise((r2) => setTimeout(r2, 3000));
+    det = look();
+  }
+  if (!det.present) {
+    job.doneTries++;
+    if (job.doneTries < 2) return { status: 'driving', site: job.site, account: job.label, next: `not signed in yet: ${det.why || 'no session cookie'}. Finish the sign-in on the page (desktop_screenshot({shared:true})), then sign_in({site, done:true}) again.` };
+    finish();
+    return si.blocked(job.site, `the sign-in did not land: ${det.why || 'no session cookie'} in the owner's Chrome (${job.label})`);
+  }
+  finish();
+  const policy = ls.decide(site, det.storageOrigins.length ? ['(unread)'] : []).policy;
+  if (policy === 'never')
+    return { status: 'signed_in', site: job.site, via: 'shared-chrome', account: job.label, profile: job.profile.profileDir, next: `${site.label} is signed in in the owner's Chrome (${job.label}); it does not accept a copied session, so work there: shared_desktop_acquire({site:"${job.site}"}) and desktop_*({shared:true}).` };
+  const r = await lv.transfer(id, job.input, undefined, [job.profile], { weak, force: true }).catch((e) => ({ ok: false, error: (e as Error).message }) as any);
+  if (!r.ok) return si.blocked(job.site, `signed in in the owner's Chrome (${job.label}), but the copy into your browser failed: ${r.error}`);
+  return { status: 'signed_in', site: job.site, via: o.already ? 'saved' : 'shared-chrome', account: job.label, next: `${o.already ? 'the owner was already signed in there; ' : ''}the ${site.label} login is in your browser now${r.check ? ` (checked: ${r.check.url})` : ''} — browser_open the site and continue. The shared desktop is released.` };
+}
+
 // Outbound cards (lib/outbound.ts): a message to a PERSON, shown verbatim; the
 // host sends it only on a person's Send.
 const OUTBOUND_KIND = 'outbound';
@@ -1158,6 +1727,47 @@ async function fileOutbound(sessionId: string, exec: import('./lib/outbound.js')
     sent: false,
     note: 'NOT sent. The owner sees the exact message on a card; the host sends it, unchanged, only if they press Send, and messages you "[host] …" with the outcome. Stop and wait — do not try another way to send it.',
   };
+}
+// Stage 4a (voice-outbound.ts): a "[host] …" line for the session that asked — the voice home has no agent to wake.
+function tellSession(id: string, line: string): void {
+  if (state.getSession(id)?.metadata?.voiceHome) claude.appendChat(id, { kind: 'system', text: line });
+  else claude.sendMessage(id, line);
+}
+// The owner's Send on a call/SMS card: the host performs it with the card's own arguments.
+async function placeOutbound(sessionId: string, exec: import('./lib/outbound.js').OutboundExec): Promise<{ ok: boolean; error?: string }> {
+  const vo = await import('./voice-outbound.js');
+  ensureOutboundHost();
+  if (exec.via === 'sms') return vo.sendSms(exec.args as unknown as import('./voice-outbound.js').SmsArgs);
+  const vph = await import('./voice-phone.js');
+  let funnelHost = '';
+  try { funnelHost = String(((await import('./remote.js')) as any).remoteStatus().hostname || ''); } catch { /* no tailscale */ }
+  return vo.placeCall(exec.args as unknown as import('./voice-outbound.js').CallArgs, sessionId, { base: vph.publicBase(null, funnelHost) });
+}
+// ask_owner on a live outbound call: a card in the requesting session, answered by a person within the timeout.
+const CALL_QUESTION_KIND = 'call-question';
+const CALL_LATER = '__later';
+const callQuestionWaiters = new Map<string, (v: string) => void>();
+let outboundHostSet = false;
+function ensureOutboundHost(): void {
+  if (outboundHostSet) return;
+  outboundHostSet = true;
+  const vo = require('./voice-outbound.js') as typeof import('./voice-outbound.js');
+  vo.setOutboundHost({
+    appendChat: (id, ev) => { claude.appendChat(id, ev); },
+    tell: (id, line) => { try { tellSession(id, line); } catch (e) { console.error('[voice-outbound] tell:', (e as Error).message); } },
+    askOwner: ({ sessionId, prompt, options, timeoutMs }) => new Promise((resolve) => {
+      const action = { id: 'act_' + nano(), at: new Date().toISOString(), kind: CALL_QUESTION_KIND, prompt, buttons: [...options.map((o, i) => ({ label: o, value: `opt${i}`, ...(i === 0 ? { style: 'primary' } : {}) })), { label: cfg.voiceLang === 'he' ? 'אחזור אליהם' : "I'll get back to them", value: CALL_LATER }] };
+      state.patchSession(sessionId, { action });
+      claude.appendChat(sessionId, { kind: 'action-request', actionId: action.id, prompt, actionKind: CALL_QUESTION_KIND });
+      pushIntervention(sessionId, 'action', prompt, 'a call is waiting for your answer');
+      const t = setTimeout(() => {
+        callQuestionWaiters.delete(action.id);
+        if ((state.getSession(sessionId)?.action as any)?.id === action.id) state.patchSession(sessionId, { action: null });
+        resolve(null);
+      }, timeoutMs);
+      callQuestionWaiters.set(action.id, (v) => { clearTimeout(t); resolve(v || null); });
+    }),
+  });
 }
 function shareGate(s: unknown, me?: unknown): { mode: 'allow' | 'ask' | 'deny'; agent: agents.AgentView | null } {
   // A logged-in human clicking "mint a link" in the artifact card IS the approval.
@@ -1385,6 +1995,8 @@ async function handleAgents(req: IncomingMessage, res: ServerResponse, u: URL, p
   if (!sub && m === 'PATCH') {
     const body = (await readBody(req)) as any;
     const { homeSessionId: _h, slug: _s, createdAt: _c, ...patch } = body || {};
+    // PROMPT1 phase 2: an agent's instruction layer is the owner's to set — not a session's (update_agent).
+    if ((req as any).auth?.kind === 'session') delete (patch as Record<string, unknown>).prompts;
     const r = agents.updateAgent(slug, patch);
     return r.ok ? json(res, r.agent) : json(res, { ok: false, error: r.error }, r.status || 400);
   }
@@ -1406,7 +2018,7 @@ async function handleAgents(req: IncomingMessage, res: ServerResponse, u: URL, p
       const hid = a.homeSessionId;
       claude.kill(hid);
       expirePendingSetupRequests(hid, 'agent deleted');
-      chrome.closeChrome(hid);
+      chrome.closeChrome(hid, 'its agent was deleted');
       await chrome.syncProfileToBase(hid).catch(() => {});
       if (!cfg.screen?.keepProfiles) chrome.removeSessionProfile(hid);
       pickDriver().release(hid);
@@ -1701,6 +2313,7 @@ async function disconnectCapability(capability: string, owner: caps.Owner = caps
     const tm = await import('./telemetry.js');
     return { ok: true, telemetry: tm.setEnabled(false) };
   }
+  if (vp.isVoiceProviderId(capability)) return { ok: vp.clearProviderSecret(capability) };
   if (capability === 'desktop') {
     updateScreenConfig({ enabled: false });
     return { ok: true };
@@ -2225,12 +2838,17 @@ async function applyManualSetup(capability: string, body: any, req: IncomingMess
     }
   } else if (capability.startsWith('mcp:')) {
     return await applyMcpSetup(capability.slice(4), body, owner, setupEngine(body, req), browserOrigin(req));
+  } else if (vp.isVoiceProviderId(capability)) {
+    // {token} or {sid, token} → voice-providers.ts stores it, verifies once, drops it again on rejection.
+    if (action === 'poll') return { ok: (await caps.statusOf(cap)).ok };
+    out = await vp.connectProvider(capability, body || {});
   } else if (capability === 'identity') {
     // {action:'verify', email?} — the take-over already happened on the desktop; record who signed in.
     // F6: no email typed → read the signed-in account from the session's Chrome profile (or chrome-base).
     const email = String(body?.email || '').trim() || chrome.googleAccountEmail(String(body?.sessionId || req.headers['x-session-id'] || '') || null) || '';
     if (!email) throw new Error('identity: no Google sign-in detected in the agent\'s browser — pass the account email');
-    const identity = caps.writeIdentity({ email, chromeProfile: body?.chromeProfile ? String(body.chromeProfile) : undefined }, owner);
+    if (body?.provider !== undefined && !caps.isIdentityProvider(body.provider)) throw new Error(`identity: provider is one of ${caps.IDENTITY_PROVIDERS.join(', ')}`);
+    const identity = caps.writeIdentity({ email, chromeProfile: body?.chromeProfile ? String(body.chromeProfile) : undefined, ...(body?.provider ? { provider: body.provider } : {}) }, owner);
     out = { identity, email: identity.email, owner };
   } else if (capability === 'desktop') {
     const enable = body?.enable !== false;
@@ -2269,6 +2887,77 @@ async function applyManualSetup(capability: string, body: any, req: IncomingMess
 // server/lib/proxy-headers.ts requestOrigin for the full precedence.
 function browserOrigin(req: IncomingMessage): string {
   return requestOrigin(req, { trustProxy: !!cfg.trustProxy, publicUrl: cfg.publicUrl }, `localhost:${cfg.port}`);
+}
+
+// Stage 1c: what the voice clerk may do — the cockpit's own create/message/interrupt paths, nothing more.
+// Team by voice: a session born from an agent goes through applyAgentToSession like POST /__api/sessions (persona, engine, allowlists, budget).
+function clerkHost(): import('./voice-realtime.js').ClerkHost {
+  return {
+    listSessions: () => state.listSessions() as unknown as import('./voice-realtime.js').SessionLite[],
+    getSession: (id) => state.getSession(id) as unknown as import('./voice-realtime.js').SessionLite | null,
+    listAgents: () => agents.listAgentViews().map((a) => ({ slug: a.slug, name: a.name, emoji: a.emoji, description: a.persona.split('\n').find((l) => l.trim()) || '' })),
+    sendMessage: (id, text) => { claude.sendMessage(id, text); },
+    interrupt: (id) => !!claude.interrupt(id),
+    createSession: ({ title, prompt, agent }) => {
+      const o = applyAgentToSession(agent || null, { title, model: undefined as string | undefined, engine: undefined as string | undefined, metadata: { createdBy: 'voice' } as Record<string, unknown> });
+      const s = state.createSession({ title: o.title, metadata: o.metadata, model: o.model, engine: o.engine ?? undefined, color: o.color });
+      spawnSafe(s.id);
+      try { claude.sendMessage(s.id, prompt); } catch (e) { console.error('[voice-realtime] first prompt failed:', (e as Error).message); }
+      return { id: s.id, title: s.title };
+    },
+    chatSeq: (id) => claude.chatSeq(id),
+    getChat: (id, since) => claude.getChat(id, since),
+    appendChat: (id, ev) => { claude.appendChat(id, ev); },
+    folderName: (fid) => state.getFolder(fid)?.name || null,
+    fileCall: async (sessionId, args) => {
+      const vo = await import('./voice-outbound.js');
+      const prep = vo.prepareCall(args, { origin: 'clerk' });
+      if (!prep.ok) return prep;
+      return fileOutbound(sessionId, { via: 'call', tool: 'call_contact', args: prep.args as unknown as Record<string, unknown> }, 'asked on a voice call');
+    },
+  };
+}
+
+// Stage 2: the Twilio webhook answers + the media-stream bridge, both with the clerk's host and the voice home session.
+let phoneBridgeInst: import('./voice-phone-bridge.js').PhoneBridge | null = null;
+function phoneBridge(): import('./voice-phone-bridge.js').PhoneBridge {
+  if (phoneBridgeInst) return phoneBridgeInst;
+  const { createPhoneBridge } = require('./voice-phone-bridge.js') as typeof import('./voice-phone-bridge.js');
+  ensureOutboundHost();
+  phoneBridgeInst = createPhoneBridge({ host: { ...clerkHost(), voiceHome: voiceHomeSession } });
+  return phoneBridgeInst;
+}
+/** index.ts: the Twilio media stream's WebSocket (authenticated by the one-time token in its `start`, not a cookie). */
+export function phoneStreamUpgrade(req: IncomingMessage, socket: any, head: Buffer): boolean {
+  const { TWILIO_STREAM_PATH } = require('./voice-phone.js') as typeof import('./voice-phone.js');
+  if (requestPath(req.url).path !== TWILIO_STREAM_PATH) return false;
+  phoneBridge().handleUpgrade(req, socket, head);
+  return true;
+}
+function installTwilioSink(): void {
+  const vp = require('./voice-phone.js') as typeof import('./voice-phone.js');
+  const { setTwilioSink } = require('./webhooks.js') as typeof import('./webhooks.js');
+  const host = { ...clerkHost(), voiceHome: voiceHomeSession };
+  const vo = require('./voice-outbound.js') as typeof import('./voice-outbound.js');
+  ensureOutboundHost();
+  setTwilioSink({
+    token: vp.twilioToken, bases: vp.signatureBases,
+    voice: (params, req) => vp.handleVoice(params, { host, base: vp.publicBase(req) }),
+    status: (params) => vp.handleStatus(params, (sid) => phoneBridge().closeCall(sid)),
+    outbound: (params, req, query) => vo.handleOutboundTwiml(params, query, { base: vp.publicBase(req) }),
+    outboundStatus: (params, query) => vo.handleOutboundStatus(params, query),
+    sms: (params) => vo.handleInboundSms(params, { voiceHome: voiceHomeSession, appendChat: (id, ev) => claude.appendChat(id, ev) }),
+  });
+}
+
+// Stage 1d: where a global call (the rail's phone button) lands its audit cards and transcript — one worktree-less session,
+// created on first use and NOT spawned (an agent starts only if the owner types in it), restored if archived.
+function voiceHomeSession(): { id: string } {
+  const all = state.listSessions({ archived: true }).filter((s) => s.metadata?.voiceHome);
+  let s = all[0] || null;
+  if (s?.archived) state.patchSession(s.id, { archived: false });
+  if (!s) s = state.createSession({ title: 'Voice calls', cwd: (cfg as any).reposDir || cfg.defaultCwd, metadata: { voiceHome: true } });
+  return { id: s.id };
 }
 
 function spawnSafe(id: string): void {
@@ -2348,6 +3037,7 @@ export function startTicketSession(opts: {
   autonomous?: boolean;
   injectPrompt?: string;
   folderId?: string | null;
+  folderName?: string | null;
 }): { id: string } {
   const id = opts.ticket;
   let prompt = buildFirstPrompt({ skill: opts.skill, prompt: opts.prompt, ticket: id })!;
@@ -2364,6 +3054,7 @@ export function startTicketSession(opts: {
     effort: opts.effort,
     engine: opts.engine,
     folderId: opts.folderId,
+    folderName: opts.folderName,
   });
   spawnSafe(s.id);
   try {
@@ -2421,6 +3112,7 @@ export function startEmptySession(opts: {
   agent?: string | null; // A2: born from an agent (cron runs) — see applyAgentToSession
   metadata?: Record<string, unknown>;
   folderId?: string | null;
+  folderName?: string | null;
 }): { id: string } {
   const prompt = buildFirstPrompt({ skill: opts.skill, prompt: opts.prompt });
   const o = applyAgentToSession(opts.agent, opts);
@@ -2434,6 +3126,7 @@ export function startEmptySession(opts: {
     metadata: o.metadata || {},
     color: o.color,
     folderId: opts.folderId,
+    folderName: opts.folderName,
   });
   spawnSafe(s.id);
   if (prompt && prompt.trim()) {
@@ -2448,6 +3141,17 @@ export function startEmptySession(opts: {
 // sessions get the message now, busy ones get it queued with auto-play so it
 // plays as soon as the current turn ends. Used by the task_session channel
 // (controller → child) and by cron's 'existing:<sessionId>' sessionMode.
+/** What the mods runtime (server/mods.ts) needs of a session: its id, its cwd, its agent env, a way to post a card. */
+function modsCtx(s: { id: string; cwd?: string | null; metadata?: Record<string, unknown> | null }) {
+  const cwd = String((s.metadata?.worktree as string) || s.cwd || '');
+  return {
+    id: s.id,
+    cwd,
+    env: { ARIGAMI_SESSION_ID: s.id, ARIGAMI_URL: cfg.hostBase || '', ARIGAMI_TOKEN: auth.tokenForSession(s.id) } as Record<string, string>,
+    card: (mod: string, text: string) => claude.appendChat(s.id, { kind: 'ext-card', ext: mod, title: text }),
+  };
+}
+
 export function deliverToSession(id: string, text: string): { delivered: 'now' | 'queued' } {
   const s = state.getSession(id);
   if (!s) throw new Error(`unknown session: ${id}`);
@@ -2460,6 +3164,25 @@ export function deliverToSession(id: string, text: string): { delivered: 'now' |
   claude.kickAutoPlay(id); // "busy" can end between the check above and here
   return { delivered: 'queued' };
 }
+
+// The shared desktop's lease (lib/shared-desktop.ts): a turn is announced like any host line, "waiting on the
+// human" is an open request_screen or a card, and the cockpit sees the holder and the queue live.
+sharedDesktop.wire({
+  notify: (id, text) => {
+    try {
+      deliverToSession(id, text);
+    } catch {
+      /* the session is gone; forget() follows */
+    }
+  },
+  waitingOnHuman: (id) => {
+    if (hasOpenScreenRequest(id)) return true;
+    const s = state.getSession(id);
+    return !!(s && (s.action || s.claude?.state === 'awaiting-input' || s.credentialRequest));
+  },
+  changed: (st) => broadcast({ type: 'shared-desktop', lease: st }),
+});
+if (process.platform === 'linux') sharedDesktop.setDisplay(String(cfg.screen?.display || ':99'));
 
 const shq = (v: string | number): string =>
   `'${String(v).replace(/'/g, `'\\''`)}'`;
@@ -2547,13 +3270,16 @@ export async function destroySession(id: string): Promise<reap.ReapReport | null
   if (!s) return null;
   claude.kill(id);
   expirePendingSetupRequests(id, 'session deleted');
-  chrome.closeChrome(id);
+  chrome.closeChrome(id, 'session deleted');
   // Fold this session's logins back into chrome-base on every close
   // (T8 §4) — independent of whether the profile copy itself survives.
   // Only an agent session writes back — into the agent's own profile.
   if (chrome.profileSeedFor(id).owner !== 'global') await chrome.syncProfileToBase(id).catch(() => {});
   if (!cfg.screen?.keepProfiles) chrome.removeSessionProfile(id); // T8 §6
   pickDriver().release(id);
+  import('./lib/desktop-control.js').then((m) => m.desktopRelease(id)).catch(() => {});
+  sharedDesktop.get().forget(id); // nothing held or waited for on the shared desktop
+  forgetSignIn(id);
   // Processes (incl. detached dev servers), the owned worktree, scratch dir and
   // transcript — in that order, see reap.ts.
   const report = await reap.reapSession(s, reap.ALL);
@@ -2832,6 +3558,8 @@ function allocatePort(): number | null {
       .map((s: any) => Number(s.metadata?.port))
       .filter((n) => Number.isFinite(n) && n > 0)
   );
+  // a port a ticket launcher is showing right now is spoken for too
+  for (const p of ticketProvision.reservedPorts()) used.add(p);
   for (let p = lo; p <= hi; p++) if (!used.has(p)) return p;
   return null;
 }
@@ -3007,8 +3735,8 @@ async function wireFullChild(masterId: string, body: any): Promise<WireResult> {
 
 // ---- F7: approval + host-executed merge ----
 // The child never merges. A human approval (local review verdict `approve`, or
-// the ✓ Verified button of request_review) on a session that owns a branch
-// stamps metadata.review = {state:'approved', at, by}; from there the merge is
+// the Approve button of request_review — one action, see approveSession) on a session that owns a branch
+// stamps metadata.review with the repository, branch, and reviewed SHA; from there the merge is
 // one click (web) or one tool call (merge_session) — executed by the HOST.
 function principalLabel(me: any): string {
   if (!me) return 'unknown';
@@ -3017,17 +3745,111 @@ function principalLabel(me: any): string {
   return me.kind;
 }
 
-export function markApproved(id: string, by: string): boolean {
+// Both the immutable commit and canonical git directory identify what was reviewed.
+function reviewedCommit(s: any): { sha: string; repo: string; branch: string } | null {
+  const cwd = untildify(s.metadata?.worktree || s.cwd) as string;
+  const branch = s.metadata?.branch;
+  if (!cwd || !branch) return null;
+  const sha = Bun.spawnSync(['git', '-C', cwd, 'rev-parse', '--verify', `refs/heads/${branch}^{commit}`]);
+  const common = Bun.spawnSync(['git', '-C', cwd, 'rev-parse', '--git-common-dir']);
+  if (sha.exitCode || common.exitCode) return null;
+  try {
+    return { sha: Buffer.from(sha.stdout).toString().trim(), repo: fs.realpathSync(path.resolve(cwd, Buffer.from(common.stdout).toString().trim())), branch };
+  } catch { return null; }
+}
+
+export function markApproved(id: string, by: string, expected?: { sha: string; repo: string; branch: string }): boolean {
   const s = state.getSession(id);
   if (!s) return false;
   const md: any = s.metadata || {};
   if (!md.branch || md.merged) return false;
   if (md.base && md.branch === md.base) return false;
+  const commit = reviewedCommit(s);
+  if (!commit || (expected && (commit.sha !== expected.sha || commit.repo !== expected.repo || commit.branch !== expected.branch))) return false;
+  const approvedAt = new Date().toISOString();
   state.patchSession(id, {
-    metadata: { review: { state: 'approved', at: new Date().toISOString(), by }, mergeConflict: null },
+    metadata: { review: { state: 'approved', at: approvedAt, by, ...commit }, mergeConflict: null },
   });
+  // The merge offer is part of the conversation: recorded where the human approved, so it
+  // scrolls up with the chat (and can be dismissed) instead of being pinned at the bottom.
+  try { claude.appendChat(id, { kind: 'merge-offer', approvedAt, branch: md.branch }); } catch {}
   // EXT domain event (the WS only ever carried this as a session-updated).
   try { emitLocal('review.approved', { sessionId: id, by, branch: md.branch }); } catch {}
+  return true;
+}
+
+// ---- ONE approve action (docs/REVIEW-AND-MERGE.md) ----
+// The review card's Approve, the Changes tab's Approve, and review/submit
+// verdict "approve" all land here. The session decides what approving means
+// (lib/review-approval.ts): a local stamp, or an APPROVE review posted to
+// someone else's PR. Approving what is already approved is a no-op.
+export async function approvalContext(s: any, o: { fresh?: boolean } = {}) {
+  const md: any = s.metadata || {};
+  const ref = approval.prRefOf(md);
+  const facts = ref ? await approval.fetchPrFacts(ref, { fresh: o.fresh }) : null;
+  const mode = approval.approvalMode(md, facts);
+  const sha = mode === 'pr-review' ? facts?.headSha || null : reviewedCommit(s)?.sha || null;
+  const actionAt = (s.action as any)?.kind === 'review' ? String((s.action as any).at || '') : null;
+  return { ref, facts, mode, sha, current: approval.approvalCurrent(md, { sha, mode, actionAt }) };
+}
+
+export async function approveSession(
+  id: string,
+  by: string,
+  o: { summary?: string; expected?: { sha: string; repo: string; branch: string } | null; send?: (id: string, text: string) => void } = {}
+): Promise<{ ok: true; already?: boolean; mode: string; pr?: number } | { error: string; status: number }> {
+  const s = state.getSession(id);
+  if (!s) return { error: 'no such session', status: 404 };
+  const md: any = s.metadata || {};
+  const ctx = await approvalContext(s, { fresh: true });
+  const pending = (s as any).action?.kind === 'review' ? (s as any).action : null;
+  const closeCard = () => { if (pending) { state.patchSession(id, { action: null }); claude.kickAutoPlay(id); } };
+  if (ctx.mode === 'unknown')
+    return { error: `Couldn't reach GitHub to check PR #${ctx.ref?.number} (${ctx.facts?.error || 'unknown'}). Nothing was approved — try again.`, status: 502 };
+  if (ctx.current) {
+    closeCard();
+    return { ok: true, already: true, mode: ctx.mode, ...(ctx.ref ? { pr: ctx.ref.number } : {}) };
+  }
+  let msg: string;
+  if (ctx.mode === 'pr-review') {
+    msg = formatRemoteReview(s, 'approve', o.summary || '');
+    state.patchSession(id, {
+      metadata: { review: { state: 'approved', at: new Date().toISOString(), by, target: 'github', pr: ctx.ref!.number, sha: ctx.sha }, mergeConflict: null },
+    });
+    try { emitLocal('review.approved', { sessionId: id, by, pr: ctx.ref!.number }); } catch {}
+  } else {
+    if (md.branch && !md.merged && !(md.base && md.branch === md.base)) {
+      if (!markApproved(id, by, o.expected || undefined))
+        return { error: 'The reviewed commit has changed. Request a new review.', status: 409 };
+    } else {
+      // no branch of its own: the stamp still records the decision (and the
+      // already-approved state), with no SHA and nothing to merge
+      state.patchSession(id, { metadata: { review: { state: 'approved', at: new Date().toISOString(), by, target: 'local' } } });
+    }
+    msg = formatReview(s, 'approve', o.summary || '');
+  }
+  try {
+    (o.send || claude.sendMessage)(id, msg);
+  } catch (e) {
+    return { error: (e as Error).message, status: 500 };
+  }
+  state.clearReview(id);
+  state.patchSession(id, { status: 'Approved' });
+  closeCard();
+  return { ok: true, mode: ctx.mode, ...(ctx.ref ? { pr: ctx.ref.number } : {}) };
+}
+
+// A local "request changes" verdict withdraws any earlier approval: the stamp is
+// replaced by a `changes-requested` marker, so mergeStatus reports it and the
+// merge is refused until the human approves again (a fresh markApproved).
+export function markChangesRequested(id: string, by: string): boolean {
+  const s = state.getSession(id);
+  if (!s) return false;
+  const md: any = s.metadata || {};
+  if (!md.branch || md.merged) return false;
+  state.patchSession(id, {
+    metadata: { review: { state: 'changes-requested', at: new Date().toISOString(), by }, mergeConflict: null },
+  });
   return true;
 }
 
@@ -3074,17 +3896,63 @@ export function mayMerge(me: any, s: any): boolean {
   return false;
 }
 
-export async function mergeStatus(s: any) {
+// Can THIS viewer merge THIS session right now? `offer.show` gates the Merge
+// control everywhere (chat card, Changes tab, Orchestration); otherwise
+// `offer.reason` is shown as a passive line. A session with a pull request is
+// merged on GitHub (only its own PR, only with merge rights, only when
+// mergeable); a branch without one is merged by the host into its local base.
+export async function mergeStatus(s: any, me?: any) {
+  const md: any = s.metadata || {};
+  const ref = approval.prRefOf(md);
+  if (ref) {
+    const ctx = await approvalContext(s);
+    const f = ctx.facts;
+    const out: any = {
+      kind: 'pr',
+      pr: { number: ref.number, url: ref.url, state: f?.state || null, mergeable: f?.mergeable || null, author: f?.author || null, permission: f?.permission || null },
+      mode: ctx.mode,
+      branch: md.branch || null,
+      base: f?.base || md.prBase || md.base || null,
+      approved: ctx.current,
+      approvedSha: ctx.current ? ctx.sha : null,
+      review: md.review || null,
+      merged: md.merged || null,
+      conflict: md.mergeConflict || null,
+    };
+    // a GitHub merge is a person's click — never a session's tool call
+    const offer = approval.mergeOffer({ approved: ctx.current, merged: !!md.merged, viewerMayMerge: me === undefined || (me?.kind !== 'session' && mayMerge(me, s)), kind: 'pr', mode: ctx.mode, facts: f });
+    out.offer = offer;
+    out.canMerge = offer.show;
+    out.reason = offer.reason || (ctx.current ? null : 'not-approved');
+    return out;
+  }
+  const out = await localMergeStatus(s);
+  const ctxSha = reviewedCommit(s)?.sha || null;
+  const current = approval.approvalCurrent(md, { sha: ctxSha, mode: 'local', actionAt: (s.action as any)?.kind === 'review' ? String((s.action as any).at || '') : null });
+  out.kind = 'local';
+  out.mode = 'local';
+  out.offer = md.branch
+    ? approval.mergeOffer({ approved: out.approved, merged: !!out.merged, viewerMayMerge: me === undefined || mayMerge(me, s), kind: 'local', localReason: out.reason })
+    : { show: false, reason: null };
+  // a branchless session can still be approved (no merge): report it as current
+  if (!md.branch) out.approved = current;
+  return out;
+}
+
+async function localMergeStatus(s: any) {
   const md: any = s.metadata || {};
   const root = await baseRepoRootFor(s);
   const base = md.base ? String(md.base) : root ? await defaultBaseFor(root) : 'main';
-  const approved = md.review?.state === 'approved';
+  const commit = reviewedCommit(s);
+  const destination = root ? reviewedCommit({ cwd: root, metadata: { branch: md.branch } }) : null;
+  const approved = md.review?.state === 'approved' && !!commit && md.review.sha === commit.sha && md.review.repo === commit.repo && md.review.branch === commit.branch && destination?.repo === commit.repo;
   const merged = md.merged || null;
   const out: any = {
     branch: md.branch || null,
     base,
     repoRoot: root,
     approved,
+    approvedSha: approved ? commit!.sha : null,
     review: md.review || null,
     merged,
     conflict: md.mergeConflict || null,
@@ -3102,12 +3970,36 @@ export async function mergeStatus(s: any) {
   else if (!st.checkedOut) out.reason = 'base-not-checked-out';
   else if (st.dirty) out.reason = 'dirty';
   else if (st.ahead === 0) out.reason = 'nothing-to-merge';
-  else if (!approved) out.reason = 'not-approved';
+  else if (!approved) out.reason = md.review?.state === 'approved' ? 'approval-stale' : md.review?.state === 'changes-requested' ? 'changes-requested' : 'not-approved';
   out.canMerge = out.reason === null;
   return out;
 }
 
+const mergeLocks = new Map<string, Promise<void>>();
+
 export async function mergeSession(
+  s: any,
+  o: { strategy?: string; deleteBranch?: boolean; runCleanup?: boolean; force?: boolean },
+  by: string,
+  me?: any
+): Promise<any> {
+  if (approval.prRefOf(s.metadata)) return mergePrSession(s, o, by, me);
+  const root = await baseRepoRootFor(s);
+  if (!root) return { error: 'could not resolve the base repository', status: 400 };
+  const key = fs.realpathSync(root);
+  const previous = mergeLocks.get(key) || Promise.resolve();
+  let release!: () => void;
+  const lock = new Promise<void>((resolve) => { release = resolve; });
+  mergeLocks.set(key, lock);
+  await previous;
+  try { return await mergeSessionLocked(state.getSession(s.id) || s, o, by); }
+  finally {
+    release();
+    if (mergeLocks.get(key) === lock) mergeLocks.delete(key);
+  }
+}
+
+async function mergeSessionLocked(
   s: any,
   o: { strategy?: string; deleteBranch?: boolean; runCleanup?: boolean; force?: boolean },
   by: string
@@ -3118,10 +4010,15 @@ export async function mergeSession(
   if (!st.branch) return { error: 'session has no branch to merge', status: 400 };
   if (st.merged) return { error: `already merged (${String(st.merged.sha).slice(0, 7)})`, status: 409 };
   if (!st.repoRoot) return { error: 'could not resolve the base repository', status: 400 };
+  // Withdrawn by a "request changes" verdict: not even force overrides it.
+  if (st.reason === 'changes-requested')
+    return { error: 'changes were requested — approve again after the review', status: 409, reason: 'changes-requested' };
   if (st.reason === 'not-approved' && !o.force)
-    return { error: 'not approved — the human approves first (review verdict approve / ✓ Verified)', status: 409, reason: 'not-approved' };
+    return { error: 'not approved — the human approves first (Approve)', status: 409, reason: 'not-approved' };
   if (st.reason && st.reason !== 'not-approved')
     return { error: st.reason === 'dirty' ? `base worktree is dirty (${(st.dirtyFiles || []).join(', ')})` : st.reason, status: 409, reason: st.reason, files: st.dirtyFiles };
+  const approvedSha = st.approvedSha || (o.force ? reviewedCommit(s)?.sha : null);
+  if (!approvedSha) return { error: 'no reviewed commit', status: 409 };
   const strategy = o.strategy === 'squash' ? 'squash' : 'no-ff';
   // EXT: `merge.before` gates. This is the hook the code used to say did not
   // exist (see HINT above) — an extension can run typecheck/tests/CI here and
@@ -3131,7 +4028,7 @@ export async function mergeSession(
   try {
     const ext = await import('./extensions.js');
     if (ext.hasGates('merge.before')) {
-      const g = await ext.runGates('merge.before', { sessionId: s.id, branch: st.branch, base: st.base, repoRoot: st.repoRoot, title: s.title || '' });
+      const g = await ext.runGates('merge.before', { sessionId: s.id, branch: st.branch, base: st.base, repoRoot: st.repoRoot, sha: approvedSha, title: s.title || '' });
       if (!g.ok) {
         const line = `merge blocked by the "${g.ext}" extension: ${g.reason}`;
         claude.appendChat(s.id, { kind: 'merge', state: 'blocked', branch: st.branch, base: st.base, gate: g.ext, text: line });
@@ -3143,7 +4040,7 @@ export async function mergeSession(
     console.error('[ext] merge gates skipped:', (e as Error).message);
   }
   const message = mergeMessage({ branch: st.branch, base: st.base, title: s.title, subtask: md.subtask, sessionId: s.id, strategy });
-  const r = await mergeBranch({ repoRoot: st.repoRoot, branch: st.branch, base: st.base, strategy, message });
+  const r = await mergeBranch({ repoRoot: st.repoRoot, branch: st.branch, approvedSha, base: st.base, strategy, message });
   const masterId = md.master ? String(md.master) : null;
   if (!r.ok) {
     if ('conflict' in r && r.conflict) {
@@ -3173,6 +4070,30 @@ export async function mergeSession(
   return { ok: true, sha: r.sha, strategy, branch: st.branch, base: st.base, hint: HINT, ...(cleanup !== undefined ? { cleanup } : {}) };
 }
 
+// A session with a pull request merges on GitHub — its own PR, with merge
+// rights, mergeable, and exactly the approved head (gh --match-head-commit).
+async function mergePrSession(s: any, o: { strategy?: string; deleteBranch?: boolean; runCleanup?: boolean }, by: string, me?: any): Promise<any> {
+  const ref = approval.prRefOf(s.metadata)!;
+  if (me?.kind === 'session') return { error: 'a pull request is merged by a person, not by a session', status: 403, reason: 'no-permission' };
+  approval.clearPrFactsCache();
+  const st = await mergeStatus(state.getSession(s.id) || s, me);
+  if (!st.offer?.show) return { error: st.offer?.reason || st.reason || 'cannot merge', status: 409, reason: st.offer?.reason || st.reason };
+  const strategy = o.strategy === 'squash' ? 'squash' : 'no-ff';
+  const r = await approval.mergePr(ref, { strategy, sha: st.approvedSha });
+  if (!r.ok) return { error: r.error, status: 409, reason: 'github' };
+  approval.clearPrFactsCache();
+  const merged = { sha: st.approvedSha, at: new Date().toISOString(), by, strategy, base: st.base, pr: ref.number };
+  state.patchSession(s.id, { metadata: { merged, mergeConflict: null } });
+  const card = { kind: 'merge', state: 'merged', sha: st.approvedSha, branch: st.branch || `#${ref.number}`, base: st.base, strategy, by, pr: ref.number, text: `merged PR #${ref.number} → ${st.base} (${String(st.approvedSha).slice(0, 7)}, ${strategy})` };
+  claude.appendChat(s.id, card);
+  try { emitLocal('merge.done', { sessionId: s.id, branch: st.branch, base: st.base, sha: st.approvedSha, strategy, by, pr: ref.number }); } catch {}
+  let cleanup: unknown;
+  if (o.deleteBranch || o.runCleanup) {
+    try { cleanup = await runCleanup(s); } catch (e) { cleanup = { error: (e as Error).message }; }
+  }
+  return { ok: true, sha: st.approvedSha, strategy, branch: st.branch, base: st.base, pr: ref.number, ...(cleanup !== undefined ? { cleanup } : {}) };
+}
+
 // A session that spawns children controls a project folder. First spawn
 // auto-creates it (named after the master) with the master as controller —
 // every dispatch flow gets the folder UI for free. Idempotent.
@@ -3184,7 +4105,7 @@ function ensureProjectFolder(masterId: string) {
     .find((f) => f.controllerSessionId === masterId);
   if (existing) return existing;
   const folder = state.createFolder({
-    name: master.title || masterId,
+    name: state.uniqueFolderName(master.title || masterId),
     ...(master.sortOrder != null ? { sortOrder: master.sortOrder } : {}),
   });
   state.patchFolder(folder.id, { controllerSessionId: masterId });
@@ -3328,15 +4249,23 @@ async function handleAuth(req: IncomingMessage, res: ServerResponse, u: URL, p: 
       res.writeHead(r.status, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
       res.end(
         `<!doctype html><title>Arigami — sign-in failed</title><body style="font-family:system-ui;padding:40px">` +
-          `<h1>Sign-in failed</h1><p>${escapeHtml(r.error)}</p><p><a href="/__host/">Continue to this workspace</a></p>`,
+          `<h1>Sign-in failed</h1><p>${escapeHtml(r.error)}</p><p><a href="/__host/?pair=1">Continue to this workspace</a></p>`,
       );
       return;
     }
-    // This tenant belongs to the one user the orchestrator named: reuse their
-    // row if they have signed in before, else create it. Admin because it is
-    // their own instance — the same role `pair()` grants for the same reason.
-    const user = auth.findByEmail(r.payload.email) || auth.createUser(r.payload.email, 'admin');
-    const ws = auth.createWebSession(user.id, String(req.headers['user-agent'] || ''));
+    // Personal tenant (no role in the token): it belongs to the one user the
+    // orchestrator named — reuse their row or create it, as admin of their own
+    // instance (the role `pair()` grants for the same reason). Shared workspace:
+    // each member signs in as themselves with the role the control plane gave
+    // them, on a short session (server/org-access.ts).
+    const sh = orgAccess.handoffUser(r.payload, auth);
+    if (!sh.ok) {
+      res.writeHead(sh.status, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
+      res.end(`<!doctype html><title>Arigami — sign-in failed</title><body style="font-family:system-ui;padding:40px"><h1>Sign-in failed</h1><p>${escapeHtml(sh.error)}</p>`);
+      return;
+    }
+    const user = sh.user;
+    const ws = auth.createWebSession(user.id, String(req.headers['user-agent'] || ''), sh.ttlMs);
     // Land on the cockpit, not back on this URL: the spent token must not sit
     // in the address bar to be re-shared or re-loaded.
     res.writeHead(302, {
@@ -3346,6 +4275,21 @@ async function handleAuth(req: IncomingMessage, res: ServerResponse, u: URL, p: 
     });
     res.end();
     return;
+  }
+  // Shared workspaces: the control plane pushes the member list here over loopback (control-plane
+  // provisioner.pushRoster). Public route, but the body is a single-use token signed with this tenant's handoff
+  // secret, so only the control plane that provisioned it can send one (server/org-access.ts).
+  if (p === '/__api/auth/roster' && m === 'POST') {
+    const b = (await readBody(req, 1e6).catch(() => ({}))) as any;
+    const r = handoff.consume(String(b?.t || ''), { kind: handoff.ROSTER_KIND });
+    if (!r.ok) return json(res, { error: r.error }, r.status);
+    const roster = orgAccess.parseRoster(r.payload.roster);
+    if (!roster) return json(res, { error: 'malformed roster' }, 400);
+    const out = orgAccess.applyRoster(roster, auth);
+    if (!out.ok) return json(res, { error: out.error }, out.status);
+    if (out.revoked.length || out.changed.length)
+      console.log(`[auth] roster gen ${out.gen}: revoked ${out.revoked.join(', ') || '-'}; roles ${out.changed.map((c) => `${c.email} ${c.from}->${c.to}`).join(', ') || '-'}`);
+    return json(res, out);
   }
   if (p === '/__api/auth/oidc/start' && m === 'GET') {
     if (!auth.oidcEnabled()) return json(res, { error: 'oidc not configured' }, 404);
@@ -3623,6 +4567,73 @@ export async function handle(
       try { (await import('./onboarding.js')).wizardAct('telemetry', 'complete'); } catch { /* wizard may not care */ }
       return json(res, await tm.status());
     }
+    // Voice & phone (docs/VOICE.md): kill-switch + monthly caps + this month's usage. Keys never appear here.
+    if (p === '/__api/voice/budget' && (m === 'GET' || m === 'POST')) {
+      const vu = await import('./voice-usage.js');
+      if (m === 'POST') {
+        const me = (req as any).auth as import('./auth.js').Principal | null;
+        if (!auth.isAdmin(me)) return json(res, { error: 'admin only' }, 403);
+        const body = (await readBody(req)) as any;
+        if (body?.enabled !== undefined && typeof body.enabled !== 'boolean') return badRequest(res, 'enabled must be a boolean');
+        const capsIn: Record<string, number | null> = {};
+        for (const [k, v] of Object.entries((body?.caps && typeof body.caps === 'object' ? body.caps : {}) as Record<string, unknown>)) {
+          if (!vp.isVoiceProviderId(k)) return badRequest(res, `unknown voice provider: ${k}`);
+          if (v !== null && !(Number(v) >= 0)) return badRequest(res, `${k}: cap must be a number of USD or null`);
+          capsIn[k] = v === null ? null : Number(v);
+        }
+        updateVoiceConfig({ ...(typeof body?.enabled === 'boolean' ? { enabled: body.enabled } : {}), caps: capsIn });
+        vp.invalidateVoiceChecks();
+        broadcast({ type: 'setup.changed', capability: 'voice', owner: caps.GLOBAL_OWNER });
+      }
+      return json(res, { enabled: vp.voiceEnabled(), caps: cfg.voice?.caps || {}, month: vu.monthKey(), usage: vu.voiceUsageThisMonth(), providers: vp.voiceProviders() });
+    }
+    // Stage 2 (docs/VOICE.md): owner number, PIN, the public webhook URLs, a signature self-test. Admin only; never the PIN or its hash.
+    if ((p === '/__api/voice/phone' || p === '/__api/voice/phone/test-signature') && (m === 'GET' || m === 'POST')) {
+      const me = (req as any).auth as import('./auth.js').Principal | null;
+      if (!auth.isAdmin(me)) return json(res, { error: 'admin only' }, 403);
+      const vph = await import('./voice-phone.js');
+      let funnelHost = '';
+      try { funnelHost = String(((await import('./remote.js')) as any).remoteStatus().hostname || ''); } catch { /* no tailscale */ }
+      if (p.endsWith('/test-signature')) return json(res, vph.selfTestSignature(funnelHost));
+      if (m === 'GET') return json(res, vph.phoneView(funnelHost));
+      const body = (await readBody(req)) as Record<string, unknown>;
+      try { return json(res, vph.updatePhone(body, funnelHost)); } catch (e) { return badRequest(res, (e as Error).message); }
+    }
+    // Stage 4a (voice-outbound.ts): outbound settings + caller-ID verification (admin); the code is shown, never typed by the host.
+    if ((p === '/__api/voice/outbound' && (m === 'GET' || m === 'POST')) || (p === '/__api/voice/phone/caller-id' && m === 'POST')) {
+      const me = (req as any).auth as import('./auth.js').Principal | null;
+      if (!auth.isAdmin(me)) return json(res, { error: 'admin only' }, 403);
+      const vo = await import('./voice-outbound.js');
+      let funnelHost = '';
+      try { funnelHost = String(((await import('./remote.js')) as any).remoteStatus().hostname || ''); } catch { /* no tailscale */ }
+      const obBase = (await import('./voice-phone.js')).publicBase(null, funnelHost);
+      if (m === 'GET') return json(res, { ...vo.outboundView(Date.now(), obBase), accountNumbers: await vo.listAccountNumbers().catch(() => []) });
+      const body = ((await readBody(req)) || {}) as Record<string, unknown>;
+      if (p.endsWith('/caller-id')) {
+        const r = body.action === 'check' ? await vo.checkCallerIdVerification(body.number) : await vo.startCallerIdVerification(body.number);
+        return r.ok ? json(res, { ...r, view: vo.outboundView(Date.now(), obBase) }) : badRequest(res, r.error);
+      }
+      try { return json(res, vo.updateOutbound(body, obBase)); } catch (e) { return badRequest(res, (e as Error).message); }
+    }
+    // Stage 4a: call_contact / send_sms (host-mcp) → an outbound card on the asking session; nothing dials or sends here.
+    if ((p === '/__api/voice/call' || p === '/__api/voice/sms') && m === 'POST') {
+      const me = (req as any).auth as import('./auth.js').Principal | null;
+      const body = ((await readBody(req)) || {}) as Record<string, unknown>;
+      const sid = me?.kind === 'session' ? me.sessionId : auth.isAdmin(me) && typeof body.sessionId === 'string' ? body.sessionId : '';
+      if (!sid || !state.getSession(sid)) return json(res, { error: 'a session is required (call this from a session)' }, 403);
+      const need = vp.requireVoiceProvider('telephony', p.endsWith('/call') ? 'place a phone call' : 'send an SMS');
+      if ('needs_setup' in need) return json(res, need);
+      const vo = await import('./voice-outbound.js');
+      const why = typeof body.why === 'string' ? body.why.slice(0, 300) : undefined;
+      if (p.endsWith('/call')) {
+        const prep = vo.prepareCall(body, { origin: 'agent' });
+        if (!prep.ok) return json(res, prep);
+        return json(res, await fileOutbound(sid, { via: 'call', tool: 'call_contact', args: prep.args as unknown as Record<string, unknown> }, why), 202);
+      }
+      const prep = vo.prepareSms(body);
+      if (!prep.ok) return json(res, prep);
+      return json(res, await fileOutbound(sid, { via: 'sms', tool: 'send_sms', args: prep.args as unknown as Record<string, unknown> }, why), 202);
+    }
     if (p === '/__api/telemetry/rotate' && m === 'POST') {
       const me = (req as any).auth as import('./auth.js').Principal | null;
       if (!auth.isAdmin(me)) return json(res, { error: 'admin only' }, 403);
@@ -3638,6 +4649,97 @@ export async function handle(
     // signed-in caller (and to agents through the host_resources tool) because
     // the whole point is that a session can ask before it starts something
     // expensive — see server/lib/resources.ts.
+    // PROMPT1: the instruction blocks (server/prompt-blocks.ts) — Settings › Customization. They
+    // shape every agent, so reading and editing them is the owner's (admin) only, never a session's.
+    // VAULT1: the owner's credential vault — a KDBX 4 file the cockpit encrypts and decrypts itself; the host only
+    // stores the ciphertext (lib/credentials.ts) and the per-site sign-in preferences (no secrets). Owner only.
+    if (p === '/__api/vault/file' || p === '/__api/vault/prefs' || p === '/__api/vault/catalog') {
+      const me = (req as any).auth as import('./auth.js').Principal | null;
+      if (!(me?.kind === 'off' || (me?.kind === 'user' && auth.isAdmin(me)))) return json(res, { error: 'admin only' }, 403);
+      const cr = await import('./lib/credentials.js');
+      // VAULT2: the catalog — entry ids, titles, origins and field NAMES/types the cockpit uploads after each save, so an
+      // agent can ask vault_fields({site}). Cleaned on the way in (cleanCatalog): a value cannot land in it.
+      if (p === '/__api/vault/catalog') {
+        if (m === 'GET') return json(res, { entries: cr.readCatalog() });
+        if (m === 'PUT') {
+          const body = (await readBody(req, 512_000).catch(() => null)) as any;
+          if (!body || typeof body !== 'object') return badRequest(res, 'entries required');
+          return json(res, { ok: true, ...cr.writeCatalog(body) });
+        }
+        return notFound(res);
+      }
+      if (p === '/__api/vault/prefs') {
+        if (m === 'GET') return json(res, { prefs: cr.prefs() });
+        if (m === 'PUT') {
+          const body = (await readBody(req).catch(() => ({}))) as any;
+          const origin = String(body?.origin || '');
+          if (!/^https?:\/\/[^/]+$/.test(origin)) return badRequest(res, 'origin required');
+          const pref = body?.pref === 'auto' || body?.pref === 'manual' ? body.pref : null;
+          return json(res, { prefs: cr.setPref(origin, pref) });
+        }
+        return notFound(res);
+      }
+      if (m === 'GET') {
+        const f = cr.vaultFile();
+        if (!f) return json(res, { exists: false }, 404);
+        res.writeHead(200, { 'Content-Type': 'application/octet-stream', ETag: f.etag, 'Cache-Control': 'no-store' });
+        return void res.end(f.buf);
+      }
+      if (m === 'PUT') {
+        const chunks: Buffer[] = [];
+        let size = 0;
+        for await (const c of req as AsyncIterable<Buffer>) {
+          size += c.length;
+          if (size > cr.VAULT_MAX_BYTES) return json(res, { error: 'vault file too large' }, 413);
+          chunks.push(c);
+        }
+        try {
+          const out = cr.writeVaultFile(Buffer.concat(chunks), (req.headers['if-match'] as string) || null);
+          res.setHeader('ETag', out.etag);
+          return json(res, { ok: true, etag: out.etag });
+        } catch (e) {
+          const err = e as Error & { status?: number };
+          return json(res, { error: err.message }, err.status || 500);
+        }
+      }
+      return notFound(res);
+    }
+    if (p === '/__api/prompts' || p.startsWith('/__api/prompts/')) {
+      const me = (req as any).auth as import('./auth.js').Principal | null;
+      if (!auth.isAdmin(me)) return json(res, { error: 'admin only' }, 403);
+      const pb = await import('./prompt-blocks.js');
+      if (p === '/__api/prompts' && m === 'GET') return json(res, { blocks: pb.listBlocks() });
+      if (p === '/__api/prompts/preview' && m === 'GET') {
+        const engine = u.searchParams.get('engine') === 'codex' ? 'codex' : 'claude';
+        const agent = u.searchParams.get('agent') || null;
+        const session = u.searchParams.get('session') || null;
+        return json(res, claude.firstTurnPreview({ engine, agent, session }));
+      }
+      const id = decodeURIComponent(p.slice('/__api/prompts/'.length));
+      try {
+        if (m === 'PUT') {
+          const body = (await readBody(req).catch(() => ({}))) as any;
+          const block = pb.saveBlock(id, {
+            text: typeof body?.text === 'string' ? body.text : undefined,
+            enabled: typeof body?.enabled === 'boolean' ? body.enabled : undefined,
+            title: typeof body?.title === 'string' ? body.title : undefined,
+            when: body?.when === 'every-turn' || body?.when === 'first-turn' ? body.when : undefined,
+            engines: Array.isArray(body?.engines) ? body.engines.filter((e: unknown) => e === 'claude' || e === 'codex') : undefined,
+          });
+          (await import('./extensions.js')).autoCommit(`instructions: ${id}`);
+          return json(res, { ok: true, block });
+        }
+        if (m === 'DELETE') {
+          pb.resetBlock(id);
+          (await import('./extensions.js')).autoCommit(`instructions: reset ${id}`);
+          return json(res, { ok: true, blocks: pb.listBlocks() });
+        }
+      } catch (e) {
+        if (e instanceof pb.PromptError) return json(res, { error: e.message }, 400);
+        throw e;
+      }
+      return json(res, { error: 'not found' }, 404);
+    }
     // "My browser": the owner's own profile, where they sign in once. Opening it
     // and listing it are a person's actions, never a session's.
     if (p === '/__api/browser/vault' && m === 'GET') {
@@ -3662,8 +4764,32 @@ export async function handle(
         return json(res, { ok: false, error: (e as Error).message }, 503);
       }
     }
+    // The shared desktop's lease, for the cockpit: who holds it, who waits; the owner can take it back.
+    if (p === '/__api/shared-desktop' && m === 'GET') {
+      return json(res, { lease: sharedDesktop.get().status() });
+    }
+    if (p === '/__api/shared-desktop/release' && m === 'POST') {
+      const me = (req as any).auth as import('./auth.js').Principal | null;
+      if (!auth.isAdmin(me)) return json(res, { error: 'admin only' }, 403);
+      const was = sharedDesktop.get().forceRelease();
+      console.log(`[shared-desktop] ${new Date().toISOString()} owner released ${was || '(nobody held it)'}`);
+      return json(res, { ok: true, released: was });
+    }
     // Copy/paste for the shared screen ("my browser"): the same two halves as a
     // session's desktop/type + desktop/selection, aimed at the vault Chrome.
+    if (p === '/__api/desktop/clipboard' && m === 'POST') {
+      const me = (req as any).auth as import('./auth.js').Principal | null;
+      if (!auth.isAdmin(me)) return json(res, { error: 'admin only' }, 403);
+      const dc = await import('./lib/desktop-clipboard.js');
+      const ds = await import('./lib/desktops.js');
+      const body = (await readBody(req).catch(() => ({}))) as any;
+      try {
+        await dc.setXClipboard(ds.screenTarget(null).display || '', String(body?.text || ''));
+        return json(res, { ok: true });
+      } catch (e) {
+        return json(res, { ok: false, error: (e as Error).message }, 409);
+      }
+    }
     if ((p === '/__api/desktop/type' || p === '/__api/desktop/selection') && m === 'POST') {
       const me = (req as any).auth as import('./auth.js').Principal | null;
       if (!auth.isAdmin(me)) return json(res, { error: 'admin only' }, 403);
@@ -3708,7 +4834,10 @@ export async function handle(
     // P1-10: the `codex` CLI row — same shape, never auto-applied.
     if (p === '/__api/host/codex' && m === 'GET') {
       const cx = await import('./lib/codex-update.js');
-      const st = (await cx.codexUpdater()).status();
+      const up = await cx.codexUpdater();
+      // Nothing schedules codex checks: re-probe "latest" here, at most daily, without holding the row.
+      await Promise.race([up.check(), new Promise((r) => setTimeout(r, 3000))]);
+      const st = up.status();
       const sandbox = (await import('./lib/codex-sandbox.js')).readCodexSandbox(); // P4-6
       return json(res, { ...(st.installed ? st : { ...st, installed: await cx.codexInstalled() }), sandbox });
     }
@@ -3848,11 +4977,14 @@ export async function handle(
       const { clientSecret, ...oidcPub } = authCfg?.oidc || {};
       return json(res, {
         ...pub,
+        effectiveDefaultEngine: defaultEngine(), // what a new session really gets: a host with only Codex connected defaults to Codex
         version: VERSION,
         auth: { ...authCfg, oidc: authCfg?.oidc ? oidcPub : undefined },
         ...auth.publicInfo(),
         screen: { ...screenPub, hasVncPassword: !!vncPassword },
         voiceEnabled: !!(groqApiKey || process.env.GROQ_API_KEY),
+        voiceProviders: vp.voiceProviders(),
+        telephony: { ownerNumber: cfg.telephony?.ownerNumber || '', pinSet: !!cfg.telephony?.pinHash }, // never the hash
       });
     }
     // Host default engine (Settings › Host): {engine} → {defaultEngine}; unknown → claude.
@@ -3861,12 +4993,36 @@ export async function handle(
       const body = (await readBody(req)) as any;
       return json(res, { defaultEngine: updateDefaultEngine(body?.engine) });
     }
+    // Owner's WhatsApp target for notify.ts (Settings › Connections › Notifications): {whatsappJid} ('' clears) → {notify}.
+    if (p === '/__api/config/notify' && m === 'POST') {
+      if (!auth.isAdmin((req as any).auth)) return json(res, { error: 'admin only' }, 403);
+      const body = (await readBody(req)) as any;
+      const jid = String(body?.whatsappJid ?? '').trim();
+      if (jid && !/^\d+@(s\.whatsapp\.net|lid|g\.us)$/.test(jid)) return badRequest(res, 'whatsappJid must look like <number>@s.whatsapp.net, <number>@lid or <id>@g.us (or be empty)');
+      const { updateNotifyConfig } = await import('./lib/config.js');
+      return json(res, { notify: updateNotifyConfig({ whatsappJid: jid }) });
+    }
     // ---- Auth (C1) ------------------------------------------------------------
     if (p.startsWith('/__api/auth/')) return await handleAuth(req, res, u, p, m || 'GET');
+    // ---- Profile rollout (server/profile-rollout.ts) — the control-plane's
+    // TRUSTED re-apply of the org profile. Public in auth.ts because it carries
+    // its own credential: an operator token signed with ARIGAMI_HANDOFF_SECRET.
+    // A cookie/session/API token — even an admin's — does not open it.
+    if (p === '/__api/profiles/rollout' && (m === 'GET' || m === 'POST')) {
+      const action = m === 'GET' ? 'profile-status' : 'profile-apply';
+      const v = handoff.verifyOperator(String(req.headers['x-arigami-operator'] || ''), action);
+      if (!v.ok) return json(res, { error: v.error }, v.status);
+      const ro = await import('./profile-rollout.js');
+      const { busySessions } = await import('./host-control.js');
+      if (m === 'GET') return json(res, ro.status({ busySessions }));
+      const r = await ro.apply({ ref: v.payload.ref, commit: v.payload.commit }, { busySessions });
+      console.log(`[profiles] rollout apply ${v.payload.ref || '(default)'}@${String(v.payload.commit || '').slice(0, 12)}: ${r.body.ok ? 'ok' : `failed (${r.status})`}`);
+      return json(res, r.body, r.status);
+    }
     // ---- Webhooks (C3) — inbound routes are public (auth.ts allowlist) and
     // authenticate themselves in server/webhooks.ts; admin routes below need
     // the admin role; events are readable by any principal (sessions poll).
-    if (isInboundWebhookPath(p)) { await webhooks().handle(req, res); return; }
+    if (isInboundWebhookPath(p)) { if (p.startsWith('/__api/webhooks/twilio/')) installTwilioSink(); await webhooks().handle(req, res); return; }
     if (p.startsWith('/__api/webhooks/')) {
       const wh = webhooks();
       const me = (req as any).auth as import('./auth.js').Principal | null;
@@ -4198,16 +5354,26 @@ export async function handle(
         return badRequest(res, (e as Error).message);
       }
     }
+    // The repos the connected GitHub account can see, filtered server-side: ?q=<text>&page=<n>&perPage=<n>.
+    // Soft failures (no token, rate limit, bad token…) are 200 {ok:false, code, message} so the repo step can show them.
+    if (p === '/__api/onboarding/github/repos' && m === 'GET') {
+      const me = (req as any).auth as import('./auth.js').Principal | null;
+      if (!(auth.isAdmin(me) || me?.kind === 'session')) return json(res, { error: 'admin only' }, 403);
+      const gr = await import('./lib/github-repos.js');
+      return json(res, await gr.listGithubRepos({ q: u.searchParams.get('q') || '', page: Number(u.searchParams.get('page')), perPage: Number(u.searchParams.get('perPage')) }));
+    }
     if (p === '/__api/onboarding/repos' && m === 'GET') {
       const ob = await import('./onboarding.js');
-      return json(res, ob.listRepos().map((r) => ob.resolveRepo(r)));
+      return json(res, ob.repoStatuses());
     }
     if (p === '/__api/onboarding/repos' && m === 'POST') {
       const ob = await import('./onboarding.js');
       const body = (await readBody(req)) as any;
       if (!body.name || !body.source) return badRequest(res, 'name and source required');
       try {
-        return json(res, ob.addRepo(body), 201);
+        // Registered already? Not an error: clone it if it is not on disk, else say it is already there.
+        const out = ob.addOrClone(body);
+        return json(res, out, out.existing ? 200 : 201);
       } catch (e) {
         return badRequest(res, (e as Error).message);
       }
@@ -4250,7 +5416,7 @@ export async function handle(
         return json(res, await ext.validateExtension(dir));
       }
       if (p === '/__api/extensions/add' && m === 'POST') {
-        const body = (await readBody(req)) as { source?: unknown; trust?: unknown };
+        const body = (await readBody(req)) as { source?: unknown; trust?: unknown; installDeps?: unknown };
         const source = String(body.source || '').trim();
         if (!source) return badRequest(res, 'source required (a directory or a git URL)');
         // The caller SHOWS manifest.permissions to the human — extension code
@@ -4258,7 +5424,9 @@ export async function handle(
         // `trust:true` is the second, separate decision (the TRUSTED tier: a tab
         // served without the sandbox, with the cockpit's own session); the
         // caller must have named that consequence before sending it.
-        const r = await ext.addExtension(source, { trust: body.trust === true });
+        // `installDeps:true` is a third decision: `bun install` of the extension's
+        // package.json, i.e. packages from a registry that the human did not read.
+        const r = await ext.addExtension(source, { trust: body.trust === true, installDeps: body.installDeps === true });
         return json(res, r, r.ok ? 200 : 400);
       }
       const em = /^\/__api\/extensions\/([a-z0-9][a-z0-9-]*)(?:\/(update))?$/.exec(p);
@@ -4277,6 +5445,8 @@ export async function handle(
             // EXT: grant/revoke the TRUSTED tier. Admin-only like the rest of
             // this block; the loader still ignores it unless the manifest asks.
             trusted: typeof body.trusted === 'boolean' ? body.trusted : undefined,
+            // allow + run `bun install` for this extension (true), or withdraw it (false)
+            installDeps: typeof body.installDeps === 'boolean' ? body.installDeps : undefined,
           });
           return 'error' in r ? badRequest(res, String(r.error)) : json(res, r);
         }
@@ -4379,11 +5549,7 @@ export async function handle(
           return json(res, ob.saveRepo(name, (await readBody(req)) as any));
         if (!action && m === 'DELETE') return json(res, { ok: ob.removeRepo(name) });
         if (action === 'clone' && m === 'POST') {
-          // S1: a remote clone without git credentials asks for `git` instead of failing.
-          const entry = ob.listRepos().find((r) => r.name === name);
-          const gate = ob.status().steps.find((st) => st.id === 'git-auth');
-          if (entry && !/^(\/|~|\.)/.test(entry.source) && !ob.repoPresent(ob.resolveRepo(entry)) && gate && gate.status !== 'ok')
-            return json(res, caps.needsSetup('git', `clone ${name}`));
+          // Credentials are resolved inside cloneRepo (token / gh); a failure is classified for the UI.
           return json(res, ob.cloneRepo(name));
         }
         if (action === 'env' && m === 'POST') return json(res, ob.resolveEnv(name));
@@ -4392,6 +5558,34 @@ export async function handle(
         return badRequest(res, (e as Error).message);
       }
       return notFound(res);
+    }
+    // Stage 1b (docs/VOICE.md): one sentence → the provider's audio stream; the gate's shapes come back as JSON.
+    if (p === '/__api/voice/tts' && m === 'POST') {
+      const tts = await import('./voice-tts.js');
+      let body: Record<string, unknown>;
+      try { body = await readBody(req, 64e3); } catch (e) { return badRequest(res, (e as Error).message); }
+      const r = await tts.handleTts(body);
+      if (r.kind === 'json') return json(res, r.body, r.status);
+      await tts.pipeTts(r, res);
+      return;
+    }
+    // Stage 1c (docs/VOICE.md): the realtime voice clerk — mint / tool / transcript / end; browsers only, an agent has its own tools.
+    if (p.startsWith('/__api/voice/realtime/') && m === 'POST') {
+      const me = (req as any).auth as import('./auth.js').Principal | null;
+      if (me?.kind === 'session') return json(res, { error: 'not for agent sessions' }, 403);
+      const rt = await import('./voice-realtime.js');
+      let body: Record<string, unknown>;
+      try { body = (await readBody(req, 256e3)) as Record<string, unknown>; } catch (e) { return badRequest(res, (e as Error).message); }
+      rt.setSweepHost(clerkHost());
+      const sub = p.slice('/__api/voice/realtime/'.length);
+      const r =
+        sub === 'session' ? await rt.mintRealtimeSession(body, { host: { getSession: clerkHost().getSession, listAgents: clerkHost().listAgents, voiceHome: voiceHomeSession } })
+        : sub === 'tool' ? await rt.handleClerkTool(body, clerkHost())
+        : sub === 'transcript' ? rt.addRealtimeTranscript(body)
+        : sub === 'end' ? rt.endRealtimeCall(body, clerkHost())
+        : null;
+      if (!r) return notFound(res);
+      return json(res, r.body, r.status);
     }
     if (p === '/__api/voice/stt' && m === 'POST') {
       const voice = await import('./voice.js');
@@ -4427,6 +5621,8 @@ export async function handle(
             autonomous: body.autonomous,
             agent: body.agent,
             engine: body.engine,
+            folderId: body.folderId,
+            folderName: body.folderName,
             createdBySessionId: body.createdBySessionId,
           });
           return json(res, trigger, 201);
@@ -4440,6 +5636,8 @@ export async function handle(
           model: body.model,
           effort: body.effort,
           engine: body.engine,
+          folderId: body.folderId,
+          folderName: body.folderName,
         });
         return json(res, trigger, 201);
       } catch (e) {
@@ -4496,15 +5694,20 @@ export async function handle(
           model: body.model,
           effort: body.effort,
           engine: body.engine,
+          folderId: body.folderId,
+          folderName: body.folderName,
         });
         return json(res, item, 201);
       }
       if (!body.ticket) return badRequest(res, 'ticket or kind:"empty" required');
       const item = t.deferTicket(String(body.ticket), body.title, body.prompt, {
+        permissionMode: body.permissionMode,
         skill: body.skill,
         model: body.model,
         effort: body.effort,
         engine: body.engine,
+        folderId: body.folderId,
+        folderName: body.folderName,
       });
       return item ? json(res, item, 201) : badRequest(res, 'already queued or has a live session');
     }
@@ -4521,6 +5724,10 @@ export async function handle(
         const pid = rest.slice(0, -'/start'.length);
         const r = await t.startPending(pid);
         return r ? json(res, r) : notFound(res, `no such pending item: ${pid}`);
+      }
+      if (m === 'PATCH') {
+        const item = t.patchPending(rest, ((await readBody(req)) as any) || {});
+        return item ? json(res, item) : notFound(res, `no such pending item: ${rest}`);
       }
       if (m === 'DELETE') return json(res, { ok: t.dismissPending(rest) });
       return notFound(res);
@@ -4819,8 +6026,8 @@ export async function handle(
       return json(res, await (mcp as any).logout(body?.name, body?.cwd));
     }
     if (p === '/__api/models' && m === 'GET') {
-      const { getModels } = await import('./models.js');
-      const list = await (getModels as any)();
+      const { getModels, withBest } = await import('./models.js');
+      const list = withBest(await (getModels as any)());
       // Codex's catalog comes from the engine at runtime (app-server model/list, cached 5 min per login).
       const { refreshCodexModels, codexModels, codexVersion } = await import('./codex.js');
       const codex = await Promise.race([refreshCodexModels(), new Promise<ReturnType<typeof codexModels>>((r) => setTimeout(() => r(codexModels()), 3000))]);
@@ -4834,10 +6041,10 @@ export async function handle(
       return json(res, { ...list, codex, codexVersion: await codexVersion(), cliUpdate });
     }
     if (p === '/__api/models/refresh' && m === 'POST') {
-      const { getModels } = await import('./models.js');
+      const { getModels, withBest } = await import('./models.js');
       const { refreshCodexModels, codexVersion } = await import('./codex.js');
       const [list, codex] = await Promise.all([(getModels as any)(true), refreshCodexModels({ force: true })]);
-      return json(res, { ...list, codex, codexVersion: await codexVersion() });
+      return json(res, { ...withBest(list), codex, codexVersion: await codexVersion() });
     }
     // C3 §7.8: Tailscale Funnel for ONLY /__api/webhooks (public internet →
     // the self-authenticating webhook routes; nothing else leaves the tailnet).
@@ -4887,6 +6094,126 @@ export async function handle(
         return json(res, mcp.status().connected ? await mcp.listStatuses() : []);
       } catch {
         return json(res, []);
+      }
+    }
+    // The PR tab's actions (server/assets/card.jsx): comment on the PR, reply to a review thread — with the host's gh
+    // login, as the owner. The owner's browser only (its cookie), like the Linear tab's actions below.
+    {
+      const ck = /^\/__api\/github\/pr\/([A-Za-z0-9_.-]{1,100})\/([A-Za-z0-9_.-]{1,100})\/\d{1,7}\/(check-log|rerun)$/.exec(p);
+      if (ck) {
+        const me = (req as any).auth as import('./auth.js').Principal | null;
+        if (!(me?.kind === 'off' || (me?.kind === 'user' && me.via === 'cookie' && auth.isAdmin(me))))
+          return json(res, { error: 'only the owner, in the cockpit' }, 403);
+        const [, owner, repo, op] = ck;
+        const gc = await import('./lib/gh-checks.js');
+        try {
+          if (op === 'check-log' && m === 'GET') {
+            const jobId = u.searchParams.get('job') || '';
+            if (!/^\d{1,15}$/.test(jobId)) return badRequest(res, 'job required');
+            return json(res, await gc.jobLog(owner, repo, jobId));
+          }
+          if (op === 'rerun' && m === 'POST') {
+            const body = (await readBody(req)) as any;
+            const runId = String(body?.runId || '');
+            if (!/^\d{1,15}$/.test(runId)) return badRequest(res, 'runId required');
+            await gc.rerunFailed(owner, repo, runId);
+            return json(res, { ok: true });
+          }
+        } catch (e) {
+          return json(res, { error: (e as Error).message }, 502);
+        }
+        return notFound(res);
+      }
+      // the merge box: merge (a method, maybe auto / as admin), turn auto-merge off, update the branch, ready for review
+      const mg = /^\/__api\/github\/pr\/([A-Za-z0-9_.-]{1,100})\/([A-Za-z0-9_.-]{1,100})\/(\d{1,7})\/(merge|disable-auto|update-branch|ready)$/.exec(p);
+      if (mg && m === 'POST') {
+        const me = (req as any).auth as import('./auth.js').Principal | null;
+        if (!(me?.kind === 'off' || (me?.kind === 'user' && me.via === 'cookie' && auth.isAdmin(me))))
+          return json(res, { error: 'only the owner, in the cockpit, can merge from here' }, 403);
+        const [, owner, repo, num, op] = mg;
+        const body = ((await readBody(req)) || {}) as any;
+        const gmod = await import('./lib/gh-merge.js');
+        const str = (v: unknown, max: number) => (typeof v === 'string' ? v.slice(0, max) : undefined);
+        try {
+          if (op === 'merge') {
+            const sha = str(body.sha, 64);
+            if (sha && !/^[0-9a-f]{7,64}$/i.test(sha)) return badRequest(res, 'bad sha');
+            await gmod.merge(owner, repo, num, { method: String(body.method || ''), subject: str(body.subject, 500), body: str(body.body, 20000), admin: body.admin === true, auto: body.auto === true, sha });
+          } else if (op === 'disable-auto') await gmod.disableAuto(owner, repo, num);
+          else if (op === 'update-branch') await gmod.updateBranch(owner, repo, num, body.rebase === true);
+          else await gmod.markReady(owner, repo, num);
+          return json(res, { ok: true });
+        } catch (e) {
+          return json(res, { error: (e as Error).message }, 502);
+        }
+      }
+      const gm = /^\/__api\/github\/pr\/([A-Za-z0-9_.-]{1,100})\/([A-Za-z0-9_.-]{1,100})\/(\d{1,7})\/(comment|reply)$/.exec(p);
+      if (gm && m === 'POST') {
+        const me = (req as any).auth as import('./auth.js').Principal | null;
+        if (!(me?.kind === 'off' || (me?.kind === 'user' && me.via === 'cookie' && auth.isAdmin(me))))
+          return json(res, { error: 'only the owner, in the cockpit, can comment on a pull request from here' }, 403);
+        const [, owner, repo, num, op] = gm;
+        const body = (await readBody(req)) as any;
+        const text = String(body?.body || '').trim();
+        if (!text) return badRequest(res, 'body required');
+        if (text.length > 60000) return badRequest(res, 'comment too long');
+        const replyTo = op === 'reply' ? String(body?.inReplyTo || '') : '';
+        if (op === 'reply' && !/^\d{1,15}$/.test(replyTo)) return badRequest(res, 'inReplyTo required');
+        const endpoint = op === 'reply' ? `repos/${owner}/${repo}/pulls/${num}/comments/${replyTo}/replies` : `repos/${owner}/${repo}/issues/${num}/comments`;
+        try {
+          const { execFile } = await import('node:child_process');
+          await new Promise<void>((resolve, reject) => {
+            const child = execFile('gh', ['api', '-X', 'POST', endpoint, '--input', '-'], { timeout: 30000 }, (err, _out, errOut) => (err ? reject(new Error(String(errOut || err.message).trim().slice(0, 300))) : resolve()));
+            child.stdin?.end(JSON.stringify({ body: text }));
+          });
+          return json(res, { ok: true });
+        } catch (e) {
+          return json(res, { error: (e as Error).message }, 502);
+        }
+      }
+    }
+    // The ticket tab's actions (server/assets/card.jsx): comment, status, assignee, priority, labels — done in Linear
+    // as the owner, through the host's Linear grant. The owner's browser only (its cookie): not a session's token, not
+    // an API token — an agent reaches Linear through its own tools, where its changes show up as its own.
+    {
+      const lm = /^\/__api\/linear\/issues\/([A-Za-z0-9-]{1,64})\/(options|comment|update)$/.exec(p);
+      if (lm) {
+        const me = (req as any).auth as import('./auth.js').Principal | null;
+        if (!(me?.kind === 'off' || (me?.kind === 'user' && me.via === 'cookie' && auth.isAdmin(me))))
+          return json(res, { error: 'only the owner, in the cockpit, can change a Linear issue from here' }, 403);
+        const mcp = await import('./linear-mcp.js');
+        if (!mcp.status().connected) return json(res, { error: 'Linear is not connected' }, 409);
+        const [, issue, op] = lm;
+        try {
+          if (op === 'options' && m === 'GET') {
+            const team = u.searchParams.get('team') || '';
+            if (!team) return badRequest(res, 'team required');
+            return json(res, await mcp.teamOptions(team));
+          }
+          if (op === 'comment' && m === 'POST') {
+            const body = (await readBody(req)) as any;
+            const text = String(body?.body || '').trim();
+            if (!text) return badRequest(res, 'body required');
+            if (text.length > 20000) return badRequest(res, 'comment too long');
+            await mcp.addComment(issue, text, body?.parentId ? String(body.parentId) : undefined);
+            return json(res, { ok: true });
+          }
+          if (op === 'update' && m === 'POST') {
+            const body = (await readBody(req)) as any;
+            const patch: import('./linear-mcp.js').IssuePatch = {};
+            if (typeof body?.state === 'string' && body.state) patch.state = body.state;
+            if (body?.assignee === null || (typeof body?.assignee === 'string' && body.assignee)) patch.assignee = body.assignee;
+            if (Number.isInteger(body?.priority) && body.priority >= 0 && body.priority <= 4) patch.priority = body.priority;
+            for (const k of ['addLabels', 'removeLabels'] as const)
+              if (Array.isArray(body?.[k]) && body[k].length) patch[k] = body[k].map(String).slice(0, 20);
+            if (!Object.keys(patch).length) return badRequest(res, 'nothing to change');
+            await mcp.updateIssue(issue, patch);
+            return json(res, { ok: true });
+          }
+        } catch (e) {
+          return json(res, { error: (e as Error).message }, 502);
+        }
+        return notFound(res);
       }
     }
     if (p === '/__api/linear/status' && m === 'GET') {
@@ -4942,7 +6269,7 @@ export async function handle(
     }
     if (p === '/__api/whatsapp/status' && m === 'GET') {
       const wb = await import('./whatsapp-bridge.js');
-      return json(res, wb.getBridgeStatus());
+      return json(res, { ...wb.getBridgeStatus(), ownJids: wb.ownJids() }); // ownJids: the Settings default for notify.whatsappJid
     }
     if (p === '/__api/whatsapp/connect' && m === 'POST') {
       const wb = await import('./whatsapp-bridge.js');
@@ -5112,6 +6439,7 @@ export async function handle(
         source: body.source || 'agent',
         sessionId: body.sessionId,
         agent: body.agent || null, // A1: agent namespace (host-mcp defaults it from ARIGAMI_AGENT)
+        expectedHash: typeof body.expectedHash === 'string' ? body.expectedHash : undefined, // CONSOL1: optimistic concurrency
       });
       return r.ok ? json(res, r) : badRequest(res, r.error || 'invalid memory write');
     }
@@ -5147,10 +6475,26 @@ export async function handle(
     // POST /memory/learning/apply      manual mode: apply a stored run {runId, keys?} or approve pre-pass clusters {keys}
     // POST /memory/learning/mode       {mode:'auto'|'manual', minBatch?, maxAgeHours?}
     // POST /memory/learning/undo/:seq  revert one applied line by its write-log seq
+    // CONSOL1 ("dreaming" — a diff over the EXISTING lines, reviewed by the human):
+    // GET  /memory/learning/consolidation           recent proposals (newest first)
+    // POST /memory/learning/consolidation/run       compute one now (stored; never applied here)
+    // POST /memory/learning/consolidation/apply     {id, keys?} — hash-checked; 409 when memory moved on
+    // POST /memory/learning/consolidation/undo      {id, key} — revert one applied op
+    // GET  /memory/learning/provenance?target=      per-line author/session/time, derived from the write log
     if (p === '/__api/memory/learning' || p.startsWith('/__api/memory/learning/')) {
       const ml = (await import('./memory-learning.js')).learner();
       const sub = p.slice('/__api/memory/learning'.length).replace(/^\//, '');
       if (!sub && m === 'GET') return json(res, ml.status({ runs: Number(u.searchParams.get('runs')) || 20, preview: u.searchParams.get('preview') !== '0' }));
+      if (sub === 'consolidation' && m === 'GET') return json(res, { proposals: ml.readConsolidations(Number(u.searchParams.get('limit')) || 10) });
+      if (sub === 'provenance' && m === 'GET') {
+        const memory = await import('./memory.js');
+        const target = u.searchParams.get('target') === 'user' ? 'user' : 'memory';
+        try {
+          return json(res, { target, lines: memory.lineProvenance(target, u.searchParams.get('agent') || null) });
+        } catch (e) {
+          return badRequest(res, (e as Error).message);
+        }
+      }
       if (m !== 'POST') return notFound(res);
       if (!auth.isAdmin((req as any).auth)) return json(res, { error: 'admin only' }, 403);
       const body = ((await readBody(req)) || {}) as any;
@@ -5177,6 +6521,16 @@ export async function handle(
           if (!Object.keys(patch).length) return badRequest(res, 'nothing to change');
           updateMemoryLearningConfig(patch);
           return json(res, ml.status({ preview: false }));
+        }
+        if (sub === 'consolidation/run') return json(res, { ok: true, proposal: await ml.consolidate({ trigger: 'manual' }) });
+        if (sub === 'consolidation/apply') {
+          if (!body.id) return badRequest(res, 'id required');
+          const keys = Array.isArray(body.keys) ? body.keys.map(String) : undefined;
+          return json(res, { ok: true, proposal: ml.applyConsolidation(String(body.id), keys) });
+        }
+        if (sub === 'consolidation/undo') {
+          const r = ml.undoConsolidation(String(body.id || ''), String(body.key || ''));
+          return r.ok ? json(res, r) : badRequest(res, r.error || 'undo failed');
         }
         if (sub.startsWith('undo/')) {
           const seq = Number(sub.slice('undo/'.length));
@@ -5236,11 +6590,12 @@ export async function handle(
     if (p === '/__api/folders' && m === 'GET') return json(res, state.listFolders());
     if (p === '/__api/folders' && m === 'POST') {
       const body = (await readBody(req)) as any;
-      return json(
-        res,
-        state.createFolder({ name: body?.name, sortOrder: body?.sortOrder }),
-        201
-      );
+      try {
+        return json(res, state.createFolder({ name: body?.name, sortOrder: body?.sortOrder }), 201);
+      } catch (e) {
+        if (e instanceof state.FolderNameTakenError) return json(res, { error: e.message, existingId: e.existingId }, 409);
+        throw e;
+      }
     }
     // Atomic drop application (membership + root order + in-folder order) — one
     // broadcast burst, no half-applied drops. Must precede the folder-id matcher.
@@ -5320,7 +6675,9 @@ export async function handle(
             ctl.id,
             `Use the project-manager skill. You are the controller of the project folder "${folder.name}" (folder ${folder.id}).\n\n` +
               `Current member sessions you manage:\n${roster || '- (none yet)'}\n\n` +
-              `Ask the human what this project should achieve if it isn't obvious from the members.`
+              (String(body?.goal || '').trim()
+                ? `The human's goal for this project:\n${String(body.goal).trim().slice(0, 4000)}\n\nPlan it, then start.`
+                : `Ask the human what this project should achieve if it isn't obvious from the members.`)
           );
         } catch {}
         return json(res, state.getSession(ctl.id), 201);
@@ -5333,8 +6690,14 @@ export async function handle(
         if (!folder) return notFound(res, `no such folder: ${fm[1]}`);
         if (m === 'GET')
           return json(res, { ...folder, children: state.folderChildren(fm[1]) });
-        if (m === 'PATCH')
-          return json(res, state.patchFolder(fm[1], (await readBody(req)) as any));
+        if (m === 'PATCH') {
+          try {
+            return json(res, state.patchFolder(fm[1], (await readBody(req)) as any));
+          } catch (e) {
+            if (e instanceof state.FolderNameTakenError) return json(res, { error: e.message, existingId: e.existingId }, 409);
+            throw e;
+          }
+        }
         if (m === 'DELETE') {
           // api.del sends no body — the mode rides the query string.
           const mode = u.searchParams.get('mode') === 'purge' ? 'purge' : 'ungroup';
@@ -5373,47 +6736,24 @@ export async function handle(
       // workers' result.summary capped. Full detail: GET /__api/sessions/:id,
       // or ?full=1 for bearer/internal callers (host-mcp list_sessions — masters
       // read child results from it); browsers always get the slim form.
+      // RESUME: ?wire=2 (a current cockpit) also drops the fields the rail never
+      // renders (wire-resume.ts slimHeavy); the open session's come on demand.
       const archived = u.searchParams.get('archived') === 'true';
       const full = u.searchParams.get('full') === '1' && canReadFullList((req as any).auth ?? null);
-      return json(res, full ? state.listSessions({ archived }) : state.listSessionsForWire({ archived }));
+      if (full) return json(res, state.listSessions({ archived }));
+      const list = state.listSessionsForWire({ archived });
+      return json(res, Number(u.searchParams.get('wire')) >= WIRE_V2 ? list.map(slimHeavy) : list);
+    }
+    // The ticket launcher's plan panel: the worktree, branch and (reserved) port a
+    // `provision` launch will get. Re-post with the returned `reservation` to keep
+    // the same port across re-plans (e.g. a repo change).
+    if (p === '/__api/ticket-plan' && m === 'POST') {
+      const body = (await readBody(req)) as any;
+      if (!body?.ticket) return badRequest(res, 'ticket required');
+      return json(res, await ticketProvision.planTicket({ ticket: String(body.ticket), title: body.title, repo: body.repo, reservation: body.reservation }));
     }
     if (p === '/__api/sessions' && m === 'POST') {
       const body = (await readBody(req)) as any;
-      // Dispatch path: a master spawning a child. `mutating`/`readonly` = thin
-      // dispatch workers (host does ALL wiring: parent, role, worktree, branch,
-      // cleanup, caps). `full` = a regular session under a project controller —
-      // no thinning, the child provisions itself (runs whatever skill it's told).
-      const kind =
-        body.kind === 'mutating' || body.kind === 'readonly' || body.kind === 'full'
-          ? body.kind
-          : null;
-      if (body.master && kind) {
-        const wired =
-          kind === 'full'
-            ? await wireFullChild(String(body.master), body)
-            : await wireWorker(String(body.master), kind, body);
-        if ('deferred' in wired) return json(res, wired); // at-capacity → no session
-        body.cwd = wired.cwd;
-        body.permissionMode = wired.permissionMode;
-        body.metadata = { ...(body.metadata || {}), ...wired.metadata };
-      }
-      // S1: cwd names a registered repo that isn't cloned (or a path that
-      // doesn't exist) → ask for `repo:<name>` instead of spawning claude in
-      // a missing directory.
-      if (body.cwd && !(body.master && kind)) {
-        const want = path.resolve(untildify(String(body.cwd)) as string);
-        if (!fs.existsSync(want)) {
-          const ob = await import('./onboarding.js');
-          const hit = ob.listRepos().map((r) => ob.resolveRepo(r)).find((r) => path.resolve(ob.repoDir(r)) === want || r.name === path.basename(want));
-          return json(res, caps.needsSetup(`repo:${hit ? hit.name : path.basename(want)}`, `open a session in ${body.cwd}`));
-        }
-      }
-      // UX1: only ensureHomeSession mints an agent home — a client-supplied
-      // `agentHome` would hide the session from the Sessions section for good.
-      if (body.metadata && typeof body.metadata === 'object' && 'agentHome' in body.metadata) {
-        const { agentHome: _drop, ...rest } = body.metadata as Record<string, unknown>;
-        body.metadata = rest;
-      }
       // A1: born from an agent — inherit its model (unless overridden), its
       // rail color, stamp metadata.agent; the persona + agent memory go into the
       // first turn in claude.js. An unknown agent is refused, never ignored.
@@ -5434,6 +6774,64 @@ export async function handle(
           ? json(res, { error: err.message, ...(err.budget ? { budget: err.budget } : {}) }, err.status)
           : notFound(res, err.message);
       }
+      // Dispatch path: a master spawning a child. `mutating`/`readonly` = thin
+      // dispatch workers (host does ALL wiring: parent, role, worktree, branch,
+      // cleanup, caps). `full` = a regular session under a project controller —
+      // no thinning, the child provisions itself (runs whatever skill it's told).
+      const kind =
+        body.kind === 'mutating' || body.kind === 'readonly' || body.kind === 'full'
+          ? body.kind
+          : null;
+      if (body.master && kind) {
+        const wired =
+          kind === 'full'
+            ? await wireFullChild(String(body.master), body)
+            : await wireWorker(String(body.master), kind, body);
+        if ('deferred' in wired) return json(res, wired); // at-capacity → no session
+        body.cwd = wired.cwd;
+        body.permissionMode = wired.permissionMode;
+        body.metadata = { ...(body.metadata || {}), ...wired.metadata };
+      }
+      // Ticket launch with `provision`: the host makes the worktree + claims the
+      // port the plan panel showed, whatever skill runs — so the session starts
+      // in its worktree with $PORT set, and the first chat event says what happened.
+      let provisioned: ticketProvision.TicketProvision | null = null;
+      const provTicket = body.metadata?.ticket ? String(body.metadata.ticket) : '';
+      if (provTicket && body.provision && !(body.master && kind)) {
+        const pv = typeof body.provision === 'object' ? body.provision : {};
+        provisioned = await ticketProvision.provisionTicket({ ticket: provTicket, title: body.title, repo: pv.repo, reservation: pv.reservation });
+        body.metadata = {
+          ...(body.metadata || {}),
+          ...(provisioned.port != null ? { port: provisioned.port } : {}),
+          ...(provisioned.ok
+            ? {
+                worktree: provisioned.dir,
+                branch: provisioned.branch,
+                base: provisioned.base,
+                repo: provisioned.repo,
+                ...(provisioned.reused ? {} : { cleanup: defaultCleanupCmds(provisioned.dir, provisioned.branch) }),
+              }
+            : {}),
+        };
+        if (provisioned.ok) body.cwd = provisioned.dir;
+      }
+      // S1: cwd names a registered repo that isn't cloned (or a path that
+      // doesn't exist) → ask for `repo:<name>` instead of spawning claude in
+      // a missing directory.
+      if (body.cwd && !(body.master && kind)) {
+        const want = path.resolve(untildify(String(body.cwd)) as string);
+        if (!fs.existsSync(want)) {
+          const ob = await import('./onboarding.js');
+          const hit = ob.listRepos().map((r) => ob.resolveRepo(r)).find((r) => path.resolve(ob.repoDir(r)) === want || r.name === path.basename(want));
+          return json(res, caps.needsSetup(`repo:${hit ? hit.name : path.basename(want)}`, `open a session in ${body.cwd}`));
+        }
+      }
+      // UX1: only ensureHomeSession mints an agent home — a client-supplied
+      // `agentHome` would hide the session from the Sessions section for good.
+      if (body.metadata && typeof body.metadata === 'object' && 'agentHome' in body.metadata) {
+        const { agentHome: _drop, ...rest } = body.metadata as Record<string, unknown>;
+        body.metadata = rest;
+      }
       const s = state.createSession({
         title: body.title,
         cwd: body.cwd,
@@ -5449,7 +6847,10 @@ export async function handle(
         // when both are given — spawning a master/kind child always lands it
         // in that master's project folder.
         folderId: body.folderId,
+        folderName: body.master && kind ? undefined : body.folderName,
       });
+      // The provisioning result is the session's first chat event (before the spawn).
+      if (provisioned) claude.appendChat(s.id, { kind: 'system', text: ticketProvision.provisionReport(provisioned), provision: provisioned });
       // needs_screen (T8): allocate the desktop BEFORE the first spawn so
       // claude.js picks up metadata.screen.display and injects DISPLAY into
       // the session's env from the start. Not fatal — a failed allocation
@@ -5463,10 +6864,13 @@ export async function handle(
       // something to build from — leaves the dispatch/worker path (which
       // always sends its own explicit task prompt) untouched.
       const ticketId = body.metadata?.ticket ? String(body.metadata.ticket) : undefined;
-      const prompt =
+      let prompt =
         body.skill || body.prompt || ticketId
           ? buildFirstPrompt({ skill: body.skill, prompt: body.prompt, ticket: ticketId })
           : null;
+      if (provisioned) {
+        prompt = `${prompt || ''}\n\n${ticketProvision.provisionPromptBlock(provisioned)}`.trim();
+      }
       if (prompt) {
         try {
           claude.sendMessage(s.id, prompt);
@@ -5508,6 +6912,10 @@ export async function handle(
     const sub = parts.slice(3).join('/');
 
     if (!sub) {
+      // RESUME: ?fields=changesExplanations,claude.capabilities — just the heavy
+      // parts the cockpit fetches on demand for the OPEN session (an old host
+      // ignores the param and returns everything, which the client also reads).
+      if (m === 'GET' && u.searchParams.get('fields')) return json(res, pickFields(s, u.searchParams.get('fields')!));
       if (m === 'GET') return json(res, s);
       if (m === 'PATCH') {
         const body = (await readBody(req)) as any;
@@ -5521,12 +6929,33 @@ export async function handle(
             if (port) body.metadata.port = port;
           }
         }
+        // PROMPT1 phase 2: a session's own layer over the instruction blocks. Set by a person (the session's
+        // Advanced settings), never by the session itself through set_metadata — an agent does not get to switch off
+        // its own rules. Stored cleaned; null clears it.
+        if (body.metadata && typeof body.metadata === 'object' && 'prompts' in body.metadata) {
+          const me = (req as any).auth as import('./auth.js').Principal | null;
+          if (me?.kind === 'session') {
+            const { prompts: _drop, ...rest } = body.metadata as Record<string, unknown>;
+            body.metadata = rest;
+          } else {
+            const pb = await import('./prompt-blocks.js');
+            (body.metadata as Record<string, unknown>).prompts = pb.cleanLayer((body.metadata as any).prompts);
+          }
+        }
         // UX1: `agentHome` is minted by ensureHomeSession alone — set_metadata
         // must not be able to hide a session from the Sessions section.
         if (body.metadata && typeof body.metadata === 'object' && 'agentHome' in body.metadata) {
           const { agentHome: _drop, ...rest } = body.metadata as Record<string, unknown>;
           body.metadata = rest;
         }
+        // VAULT1: the sign-in card is the host's alone (it is built from the page it inspected). Nobody rewrites it
+        // through a PATCH — an agent that could change the site the card names could get one site's password typed
+        // into another.
+        delete body.credentialRequest;
+        // The host's own cards (a login hand-over, an SSO window, a share link, an outbound send, a review) carry what the
+        // host acts on when the owner presses the button — they are raised by the host's routes only, never PATCHed in.
+        if (body.action && typeof body.action === 'object' && [LOGIN_KIND, LOGIN_SAVE_KIND, SSO_KIND, SHARE_KIND, OUTBOUND_KIND, 'review'].includes(String((body.action as any).kind)))
+          return json(res, { error: 'this card is raised by the host only' }, 403);
         const updated = state.patchSession(id, body);
         if (body.archived === true && !wasArchived) {
           claude.kill(id);
@@ -5535,8 +6964,10 @@ export async function handle(
           // Desktop dies with the session's activity (T8) — the Chrome profile
           // copy is kept (only removed on DELETE) so unarchiving picks up where
           // it left off.
-          chrome.closeChrome(id);
+          chrome.closeChrome(id, 'session archived');
           pickDriver().release(id);
+          import('./lib/desktop-control.js').then((m) => m.desktopRelease(id)).catch(() => {});
+          sharedDesktop.get().forget(id);
           triggerMemoryEpisode(id, 'archive');
 
           // The session's processes stop with it — including dev servers the
@@ -5579,7 +7010,13 @@ export async function handle(
     if (sub === 'policy/check' && m === 'POST') {
       const body = (await readBody(req)) as any;
       const v = policy.checkToolCall(policy.policyFor(sessionAgent(s)), String(body?.tool_name || ''), body?.input ?? {}, id);
-      return json(res, v);
+      if (!v.allow) return json(res, v);
+      // MODS: the same hook carries the mods' tool.call chain for engines without native mods (codex).
+      if (!body?.mods) return json(res, v);
+      const mods = await import('./mods.js');
+      const pre = await mods.toolPre(modsCtx(s), { tool: String(body?.tool_name || ''), input: body?.input && typeof body.input === 'object' ? body.input : {}, id: String(body?.tool_use_id || '') });
+      if (!pre.allow) claude.appendChat(id, { kind: 'ext-card', ext: 'mods', title: `${body?.tool_name || 'Tool'} call blocked by a mod`, body: pre.reason });
+      return json(res, pre);
     }
     if (sub === 'tabs' && m === 'POST') {
       const body = (await readBody(req)) as any;
@@ -5635,7 +7072,9 @@ export async function handle(
         if (!reg.has(type)) return badRequest(res, `unsupported listener type: ${type}`);
         try {
           const listeners = await import('./listeners.js');
-          return json(res, await listeners.registerExtListener(id, type, body), 201);
+          const l = await listeners.registerExtListener(id, type, body);
+          if (body.folderId || (typeof body.folderName === 'string' && body.folderName.trim())) state.patchSession(id, { folderId: state.resolveSessionFolder(body) });
+          return json(res, l, 201);
         } catch (e) {
           return badRequest(res, e instanceof Error ? e.message : String(e));
         }
@@ -5662,6 +7101,7 @@ export async function handle(
                   : type === 'host-load'
                     ? listeners.registerHostLoadListener(id, body)
                     : await listeners.registerGithubPrListener(id, body);
+        if (body.folderId || (typeof body.folderName === 'string' && body.folderName.trim())) state.patchSession(id, { folderId: state.resolveSessionFolder(body) });
         return json(res, l, 201);
       } catch (e) {
         const error = e instanceof Error ? e : new Error(String(e));
@@ -5828,8 +7268,23 @@ export async function handle(
         : [];
       if (!text.trim() && !attachments.length)
         return badRequest(res, 'text or attachments required');
+      // MODS prompt.submit: Claude runs the mods itself; for every other engine the host is the adapter — the
+      // prompt goes through the mods here, before the engine sees it.
+      let sendText = text;
+      if (text.trim() && (await import('./lib/oneshot.js')).sessionEngine(s) !== 'claude') {
+        const mods = await import('./mods.js');
+        if (mods.hasMods()) {
+          const out = await mods.promptSubmit(modsCtx(s), text);
+          if ('drop' in out) {
+            claude.appendChat(id, { kind: 'ext-card', ext: 'mods', title: 'Prompt dropped by a mod', body: out.drop });
+            return json(res, { error: `Prompt dropped by a mod: ${out.drop}`, mod: true }, 403);
+          }
+          if (out.text !== text) claude.appendChat(id, { kind: 'ext-card', ext: 'mods', title: 'Prompt rewritten by a mod', body: 'The agent got the rewritten prompt.' });
+          sendText = out.text;
+        }
+      }
       try {
-        claude.sendMessage(id, text, attachments);
+        claude.sendMessage(id, sendText, attachments);
       } catch (e) {
         // A5 (#5): a turn past the agent's daily cap is refused with the same 429
         // line as a new session — and with the structured budget for the UI (#11).
@@ -5920,6 +7375,217 @@ export async function handle(
       const removed = state.removePendingPrompt(id, parts[4]);
       return removed ? json(res, { ok: true }) : notFound(res, `no such prompt: ${parts[4]}`);
     }
+    // ---- SSO1: SSO in My browser, driven by the agent inside a narrow window (lib/sso.ts) ----------------------------
+    if (sub === 'sso-request' && m === 'POST') {
+      const body = (await readBody(req)) as any;
+      const ls = await import('./lib/login-sites.js');
+      const lv = await import('./lib/login-vault.js');
+      const sso = await import('./lib/sso.js');
+      const rawUrl = String(body?.url || body?.site || '').trim();
+      if (!rawUrl) return badRequest(res, 'site required');
+      const url = /^https?:\/\//i.test(rawUrl) ? rawUrl : `https://${rawUrl.replace(/^\/+/, '')}/`;
+      const host = ls.hostOf(url);
+      const site = sso.siteOf(host);
+      if (!site || !sso.allowed(site, url)) return json(res, { ok: false, error: `not an https site: ${rawUrl}` });
+      // Google / GitHub themselves (and gcloud's Google step) are not a dead end: sign_in does them in the owner's Chrome.
+      if (sso.providerOf(url) || (await import('./lib/credentials.js')).refusedSite(host))
+        return json(res, { ok: false, error: `${host} is signed in to in the owner's own Chrome, not through an SSO window`, next: `sign_in({site:"${host}"})` });
+      if (lv.detect(site).present)
+        return json(res, { ok: true, available: true, site, next: `the owner is already signed in to ${site} in their browser: call request_login("${site}")` });
+      const label = ls.resolve(site).label || site;
+      const reason = String(body?.reason || '').slice(0, 200);
+      if (lv.grants()['sso:' + site]) {
+        const r = await startSso(id, url);
+        return json(res, r.ok ? { ok: true, started: true, site, note: SSO_HOW } : { ok: false, error: r.error, next: 'request_credentials' });
+      }
+      const action = {
+        id: 'act_' + nano(),
+        at: new Date().toISOString(),
+        kind: SSO_KIND,
+        sso: { site, label, url },
+        prompt: `Sign in to ${label} with your Google / Microsoft account, in your browser?` + (reason ? ` — ${reason}` : '') +
+          ' The agent opens it in a tab of its own there and clicks through the sign-in; it cannot type, and sees only that site and the sign-in pages.',
+        buttons: [
+          { label: 'Sign me in', value: 'use', style: 'primary' },
+          { label: `Always for ${label}`, value: 'always' },
+          { label: 'No', value: 'deny', style: 'danger' },
+        ],
+      };
+      state.patchSession(id, { action });
+      claude.appendChat(id, { kind: 'action-request', actionId: action.id, prompt: action.prompt });
+      pushIntervention(id, 'action', action.prompt, 'waiting for your answer');
+      return json(res, { ok: true, pending: true, site, note: 'Stop and wait: the host messages you after the owner answers.' }, 202);
+    }
+    if (sub.startsWith('sso/') && m === 'POST') {
+      const sso = await import('./lib/sso.js');
+      const body = (await readBody(req).catch(() => ({}))) as any;
+      try {
+        if (sub === 'sso/look') {
+          const r = await sso.look(id);
+          return json(res, {
+            ok: true, url: r.url, provider: r.provider, text: r.text, needsHuman: r.needsHuman,
+            ...(r.needsHuman ? { hint: "a password / code field: the owner's to fill — tell them in one line (it is open in My browser on the shared desktop) and wait" } : {}),
+            __image: { data: r.image, mimeType: 'image/jpeg' },
+          });
+        }
+        if (sub === 'sso/click') return json(res, { ok: true, ...(await sso.click(id, { text: body?.text ? String(body.text) : undefined, x: body?.x, y: body?.y })) });
+        if (sub === 'sso/navigate') { await sso.navigate(id, String(body?.url || '')); return json(res, { ok: true }); }
+        if (sub === 'sso/done') {
+          const site = await sso.finish(id);
+          if (!site) return json(res, { ok: false, error: 'no SSO sign-in is open for this session' });
+          const lv = await import('./lib/login-vault.js');
+          const r = await lv.transfer(id, site).catch((e) => ({ ok: false, error: (e as Error).message }) as any);
+          return json(res, r.ok
+            ? { ok: true, site, note: `the ${site} login is in your browser now — open the site with browser_open and continue; offer nothing else, it is already saved in the owner's browser` }
+            : { ok: false, site, error: r.error, next: 'if the owner is signed in there now, request_login; otherwise request_credentials' });
+        }
+      } catch (e) {
+        const err = e as Error & { status?: number };
+        return json(res, { ok: false, error: err.message });
+      }
+      return notFound(res);
+    }
+    // ---- VAULT1: the sign-in card (lib/credentials.ts) ---------------------------------------------------------------
+    // The agent asks (its own session token is enough); only the owner, in the cockpit, fills or answers. The fill's
+    // body holds the values: it is never logged, echoed, or put in the chat — the agent hears "filled" and nothing else.
+    if (sub === 'credentials/request' && m === 'POST') {
+      const body = (await readBody(req)) as any;
+      const cr = await import('./lib/credentials.js');
+      const out = await cr.request(id, { site: body?.site ? String(body.site) : undefined, reason: body?.reason ? String(body.reason) : undefined });
+      // ok:false answers are 200 so the agent's tool sees `next` (the MCP client turns a non-2xx into a bare error)
+      if (out.status === 'error') return json(res, { ok: false, error: out.error, ...(out.next ? { next: out.next } : {}) });
+      if (out.status === 'refused')
+        return json(res, { ok: false, refused: true, site: out.site.id, error: `${out.site.label} is not signed in to with a password in an automated browser`, next: `sign_in({site:"${out.site.id}"}) — it runs in the owner's own Chrome` });
+      if (out.status === 'manual')
+        return json(res, { ok: true, manual: true, host: out.host, next: `the owner types ${out.host} sign-ins themselves: call request_screen now (reason "login") and wait` });
+      state.patchSession(id, { credentialRequest: out.request });
+      pushIntervention(id, 'action', `Sign in to ${out.request.host}` + (out.request.reason ? ` — ${out.request.reason}` : ''), 'waiting for your sign-in');
+      return json(res, { ok: true, pending: true, requestId: out.request.requestId, host: out.request.host, fields: out.request.fields, note: 'Stop and wait: the host messages you when the owner has filled the sign-in or chosen to type it. Do not type into the form meanwhile, and never read a password field.' }, 202);
+    }
+    if ((sub === 'credentials/fill' || sub === 'credentials/answer') && m === 'POST') {
+      const me = (req as any).auth as import('./auth.js').Principal | null;
+      // the owner's own browser only: not an agent's session token, not the host token, not an API token
+      if (!(me?.kind === 'off' || (me?.kind === 'user' && me.via === 'cookie' && auth.isAdmin(me))))
+        return json(res, { error: 'only the owner, in the cockpit, can answer a sign-in card' }, 403);
+      const body = (await readBody(req, 64_000).catch(() => null)) as any;
+      if (!body || typeof body.requestId !== 'string') return badRequest(res, 'requestId required');
+      const cr = await import('./lib/credentials.js');
+      // the host's own record of the request — never the session's copy of the card
+      const card = cr.getPending(id, body.requestId)?.request;
+      if (!card) {
+        if ((s as any).credentialRequest?.requestId === body.requestId) state.patchSession(id, { credentialRequest: null });
+        return notFound(res, 'this sign-in request is no longer open');
+      }
+      if (sub === 'credentials/answer') {
+        // VAULT2: a form card is answered "saved" — the cockpit put the values in the vault itself; the host hears
+        // the entry's id, title and field NAMES, and hands those to the waiting vault_collect
+        if (body.choice === 'saved') {
+          if (card.kind !== 'form') return badRequest(res, 'only a form card is saved');
+          const d = body.entry && typeof body.entry === 'object' ? body.entry : {};
+          const names = (Array.isArray(d.fields) ? d.fields : []).map((f: unknown) => cr.fieldName(typeof f === 'string' ? f : (f as any)?.name)).filter(Boolean).slice(0, cr.FIELDS_MAX * 2) as string[];
+          cr.setSettleDetail(card.requestId, { ...(d.id ? { id: String(d.id).slice(0, 64) } : {}), ...(d.title ? { title: String(d.title).replace(/\s+/g, ' ').trim().slice(0, 120) } : {}), fields: names });
+          cr.forget(card.requestId, 'saved');
+          state.patchSession(id, { credentialRequest: null });
+          claude.appendChat(id, { kind: 'system', text: `🔑 Saved ${names.length} detail(s) for ${card.host} in your vault — the agent did not see them.` });
+          return json(res, { ok: true, saved: names.length });
+        }
+        // VAULT4: the cockpit's fill ATTEMPT failed (the vault worker died, the host could not be reached…): the request is
+        // over for the agent too — it hears one reason now, not an "expired" ten minutes later; the owner may unlock again
+        if (body.choice === 'failed') {
+          // a filtered code only — free text from the page is not taken; an unknown code is a bad request, the card stays
+          const reason = cr.failReason(body.code);
+          if (!reason) return badRequest(res, `code is one of ${Object.keys(cr.FAIL_REASONS).join(' | ')}`);
+          const owned = cr.hasWaiter(card.requestId);
+          cr.setSettleDetail(card.requestId, { reason });
+          cr.forget(card.requestId, 'failed');
+          state.patchSession(id, { credentialRequest: null });
+          console.log(`[vault] ${new Date().toISOString()} ${id} ${card.kind || 'sign-in'} fill attempt failed in the cockpit: ${body.code} (${card.host})`);
+          claude.appendChat(id, { kind: 'system', text: `🔑 Filling ${card.kind === 'field' ? `your ${card.fields[0]}` : 'the sign-in'} for ${card.host} failed in your cockpit — ${reason}. Nothing was filled; the agent was told. Unlock the vault again and it will ask once more.` });
+          if (!owned) {
+            try { claude.sendMessage(id, `[host] Filling the ${card.host} sign-in failed in the owner's cockpit (${reason}). Nothing was filled. Call request_credentials again once they say the vault is unlocked, or request_screen.`); } catch (e) { return json(res, { error: (e as Error).message }, 500); }
+          }
+          return json(res, { ok: true });
+        }
+        const choice = body.choice === 'manual' ? 'manual' : 'cancel';
+        if (choice === 'manual' && body.remember === true) cr.setPref(card.origin, 'manual');
+        const owned = cr.hasWaiter(card.requestId); // sign_in waits on it and tells the agent itself
+        cr.forget(card.requestId, choice);
+        state.patchSession(id, { credentialRequest: null });
+        if (owned) {
+          claude.appendChat(id, { kind: 'system', text: choice === 'manual' ? `🔑 You chose to type the ${card.host} sign-in yourself.` : `🔑 Sign-in to ${card.host} cancelled.` });
+          return json(res, { ok: true });
+        }
+        claude.appendChat(id, { kind: 'system', text: choice === 'manual' ? `🔑 You chose to type the ${card.host} sign-in yourself.` : `🔑 Sign-in to ${card.host} cancelled.` });
+        const line = choice === 'manual'
+          ? `[host] The owner will type the ${card.host} sign-in themselves. Call request_screen now (reason "login", hint: what to sign in to) and wait for it.`
+          : `[host] The owner CANCELLED the ${card.host} sign-in. Do not sign in to ${card.host} and do not ask again in this turn.`;
+        try { claude.sendMessage(id, line); } catch (e) { return json(res, { error: (e as Error).message }, 500); }
+        return json(res, { ok: true });
+      }
+      let r;
+      const owned = cr.hasWaiter(card.requestId);
+      try {
+        r = await cr.fill(id, card.requestId, body.values && typeof body.values === 'object' ? body.values : {}, { submit: body.submit !== false });
+      } catch (e) {
+        const err = e as Error & { status?: number };
+        if (err.status === 404 || err.status === 410) {
+          state.patchSession(id, { credentialRequest: null });
+          cr.forget(card.requestId);
+        }
+        return json(res, { error: err.message }, err instanceof cr.FillError ? err.status : 500);
+      }
+      if (body.remember === true) cr.setPref(card.origin, 'auto');
+      state.patchSession(id, { credentialRequest: null });
+      if (owned) {
+        const where = card.target === 'shared' ? 'into your Chrome on the shared desktop' : "into the field on the agent's page";
+        const how = body.auto !== true ? '' : body.grant === true ? ' (automatically — your one-time approval for this site in this session)' : ' (automatically)';
+        claude.appendChat(id, { kind: 'system', text: `🔑 Typed your ${r.filled.join(', ')} for ${card.host} from your vault ${where}${how} — the agent did not see it.` });
+        if (body.auto === true) console.log(`[vault] ${new Date().toISOString()} ${id} ${card.kind === 'field' ? 'field' : 'sign-in'} filled automatically${body.grant === true ? ' under the owner\'s grant' : ''} (${card.host})`);
+        return json(res, { ok: true, filled: r.filled, submitted: r.submitted });
+      }
+      claude.appendChat(id, { kind: 'system', text: `🔑 Signed in to ${card.host} from your vault${body.auto === true ? ' (automatically)' : ''} — the agent did not see the details.` });
+      const line =
+        `[host] The owner filled the ${card.host} sign-in (${r.filled.join(', ') || 'nothing'})${r.submitted ? ' and it was submitted' : ' — not submitted: press the sign-in button with browser_click'}. ` +
+        'Check the page with browser_snapshot and continue. Never read a password field. ' +
+        `If the site asks for a one-time code next, call request_credentials again.`;
+      try { claude.sendMessage(id, line); } catch (e) { return json(res, { error: (e as Error).message }, 500); }
+      return json(res, { ok: true, filled: r.filled, submitted: r.submitted });
+    }
+    // ---- VAULT2: the owner's named details (lib/credentials.ts) — names the agent may know, a secure form, a field fill
+    if (sub === 'vault/fields' && m === 'GET') {
+      // the agent's allowlist (A3) is checked here too, not only in the MCP tool list and the PreToolUse hook
+      if (!policy.toolAllowed(policy.policyFor(sessionAgent(s)), 'vault_fields')) return json(res, { error: "vault_fields is not in this agent's allowlist" }, 403);
+      const site = String(u.searchParams.get('site') || '').trim();
+      if (!site) return badRequest(res, 'site required');
+      const cr = await import('./lib/credentials.js');
+      const entries = cr.catalogFor(site);
+      return json(res, { site, entries, note: entries.length ? 'names and types only — a value is filled by vault_fill, never returned' : 'nothing saved for this site yet — vault_collect asks the owner for the details on a secure form' });
+    }
+    if (sub === 'vault/collect' && m === 'POST') {
+      const body = (await readBody(req)) as any;
+      return respondBlocking(res, body, id, vaultCollect(id, body));
+    }
+    if (sub === 'vault/fill' && m === 'POST') {
+      const body = (await readBody(req)) as any;
+      return respondBlocking(res, body, id, vaultFill(id, body));
+    }
+    // ---- sign_in: ONE tool for getting in anywhere (lib/sign-in.ts). Blocks (long-poll legs) until one outcome. ----
+    if (sub === 'sign-in' && m === 'POST') {
+      const body = (await readBody(req)) as any;
+      if (!body?.site && !body?.done && !body?.fill && !body?.human) return badRequest(res, 'site required');
+      const step: Promise<SignInOutcome> = (async () => {
+        try {
+          if (body.fill) return await signInFill(id, String(body.fill), String(body?.reason || ''));
+          if (body.human) return await signInHuman(id, String(body.human));
+          if (body.done === true) return await signInDone(id);
+          return await signInStart(id, body);
+        } catch (e) {
+          console.error(`[sign-in] ${id} failed:`, (e as Error).message);
+          return { status: 'blocked', site: String(body?.site || ''), reason: `the host failed: ${(e as Error).message}` } as SignInOutcome;
+        }
+      })();
+      return respondBlocking(res, body, id, step);
+    }
     // ---- logins: one site at a time, only with the owner's approval ----------
     // (login-vault.ts). The agent learns WHICH sites have a login — never a value.
     if (sub === 'logins' && m === 'GET') {
@@ -5937,12 +7603,12 @@ export async function handle(
         const d = lv.detect(raw);
         const dec = ls.decide(d.site, d.storageOrigins.length ? ['(unread)'] : []);
         if (dec.policy === 'never')
-          return json(res, { available: false, site: d.site.id, policy: 'never', reason: dec.reason, next: "sign in fresh: open the site's login page, then request_screen so the human types the credentials themselves" });
+          return json(res, { available: false, site: d.site.id, policy: 'never', reason: dec.reason, next: SIGN_IN_FRESH + '; a QR code or a device link to scan (WhatsApp Web) is request_screen' });
         if (!d.present)
-          return json(res, { available: false, site: d.site.id, reason: "there is no login for this site in the owner's browser", next: "sign in fresh: open the site's login page, then request_screen so the human types the credentials themselves" });
+          return json(res, { available: false, site: d.site.id, reason: "there is no login for this site in the owner's browser", next: SIGN_IN_FRESH });
         if (lv.grants()[d.site.id]) {
           const r = await lv.transfer(id, raw);
-          return json(res, { available: true, autoApproved: true, ...r, ...(r.ok ? {} : { next: 'sign in fresh with request_screen' }) });
+          return json(res, { available: true, autoApproved: true, ...r, ...(r.ok ? {} : { next: SIGN_IN_FRESH }) });
         }
         const unknown = dec.source === 'default' || dec.source === 'storage';
         const action = {
@@ -6002,8 +7668,15 @@ export async function handle(
       if (kind && !agents.ACTION_KIND_RE.test(kind)) return badRequest(res, `invalid kind: ${kind} — lowercase letters, digits, :._- (max 40)`);
       const ag = sessionAgent(s) ? agents.getAgent(sessionAgent(s)!) : null;
       const action: Record<string, unknown> = { id: 'act_' + nano(), at: new Date().toISOString(), prompt, buttons, ...(kind ? { kind } : {}) };
+      if (kind === 'review') {
+        action.reviewCommit = reviewedCommit(s);
+        // what Approve will do here, so the card says it up front (and renders
+        // already-approved without a round-trip)
+        const ctx = await approvalContext(s);
+        action.approval = { mode: ctx.mode, sha: ctx.sha, ...(ctx.ref ? { pr: ctx.ref.number } : {}), branch: (s.metadata as any)?.branch || null, base: ctx.facts?.base || (s.metadata as any)?.prBase || (s.metadata as any)?.base || null };
+      }
       if (ag) action.agent = { slug: ag.slug, name: ag.name, emoji: ag.emoji, color: ag.color };
-      if (ag && kind && (ag.autoApprove || []).includes(kind)) {
+      if (ag && kind !== 'review' && kind && (ag.autoApprove || []).includes(kind)) {
         const pick = buttons.find((b: any) => b?.style === 'primary') || buttons[0];
         const value = String(pick?.value ?? '');
         ledger.appendActivity(ag.slug, { kind: 'action', sessionId: id, detail: String(prompt).slice(0, 200), actionKind: kind, value, auto: true });
@@ -6016,33 +7689,52 @@ export async function handle(
         return json(res, { ...action, autoApproved: true, value }, 201);
       }
       state.patchSession(id, { action });
+      // The card is part of the conversation: it sits in the transcript where it was raised,
+      // so it scrolls up with the chat once the human keeps talking (the live card renders
+      // inline while this action is still the current one; afterwards a one-line record).
+      claude.appendChat(id, { kind: 'action-request', actionId: action.id, prompt: String(prompt), actionKind: kind, ...(action.agent ? { agent: action.agent } : {}) });
       pushIntervention(id, 'action', String(prompt), 'waiting for your answer');
       return json(res, action, 201);
     }
     if (sub === 'action/answer' && m === 'POST') {
-      const { value, autoApprove } = (await readBody(req)) as any;
+      const { actionId, value, autoApprove } = (await readBody(req)) as any;
       if (value === undefined) return badRequest(res, 'value required');
       // A3: the human's answer goes to the agent's ledger; "auto-approve this
       // kind from now on" adds the kind to agent.json autoApprove.
-      const cur = (s as any).action as { kind?: string; prompt?: string; agent?: { slug: string }; share?: { artifactId: string; title?: string; days?: number } } | null;
+      const cur = state.getSession(id)?.action as any;
+      if (!cur || !actionId || cur.id !== actionId)
+        return json(res, { error: 'This request has expired. Use the current action card.' }, 409);
+      if (!cur.buttons?.some((b: any) => b.value === value)) return badRequest(res, 'value is not a current action option');
+      const cardKind = cur.kind;
+      if (([LOGIN_KIND, LOGIN_SAVE_KIND, SHARE_KIND, OUTBOUND_KIND, CALL_QUESTION_KIND, 'review'].includes(cardKind) && (req as any).auth?.kind === 'session') ||
+        (cardKind === SSO_KIND && ['session', 'host'].includes((req as any).auth?.kind)))
+        return json(res, { error: 'only a person can answer this card' }, 403);
+      // The review card's Approve ('verified' = cards raised before the rename)
+      // is THE approve action — same path as the Changes tab's.
+      if (cardKind === 'review' && (value === 'approve' || value === 'verified')) {
+        if (state.getSession(id)?.metadata?.branch && !cur.reviewCommit && (cur.approval?.mode || 'local') !== 'pr-review')
+          return json(res, { error: 'The reviewed commit has changed. Request a new review.' }, 409);
+        const by = principalLabel((req as any).auth);
+        const r = await approveSession(id, by, { expected: (cur.approval?.mode || 'local') === 'pr-review' ? null : cur.reviewCommit });
+        if ('error' in r) return json(res, { error: r.error }, r.status);
+        const agSlug = sessionAgent(s);
+        if (agSlug) ledger.appendActivity(agSlug, { kind: 'action', sessionId: id, detail: String(cur.prompt || '').slice(0, 200), actionKind: 'review', value: 'approve', auto: false, by });
+        state.patchSession(id, { action: null });
+        try { emitLocal('action.answered', { sessionId: id, actionId: cur.id, kind: 'review', value: 'approve' }); } catch {}
+        return json(res, r);
+      }
+      if (cardKind === 'review' && value === 'request-changes') markChangesRequested(id, principalLabel((req as any).auth));
       const agSlug = sessionAgent(s);
       if (agSlug && cur) {
         ledger.appendActivity(agSlug, { kind: 'action', sessionId: id, detail: String(cur.prompt || '').slice(0, 200), actionKind: cur.kind || null, value: String(value), auto: false, by: principalLabel((req as any).auth) });
-        if (autoApprove === true && cur.kind) {
+        if (autoApprove === true && cur.kind && cur.kind !== 'review') {
           const a = agents.getAgent(agSlug);
           if (a) agents.updateAgent(agSlug, { autoApprove: [...new Set([...(a.autoApprove || []), cur.kind])] });
         }
       }
-      // A login or share card is approved by a PERSON. A session's own token must
-      // not be able to answer it — that would be the agent approving itself.
-      const cardKind = (cur as any)?.kind;
-      if ((cardKind === LOGIN_KIND || cardKind === LOGIN_SAVE_KIND || cardKind === SHARE_KIND || cardKind === OUTBOUND_KIND) && (req as any).auth?.kind === 'session')
-        return json(res, { error: 'only a person can answer this card' }, 403);
       state.patchSession(id, { action: null });
       claude.kickAutoPlay(id); // the hold is gone; if no turn starts below, the queue resumes
       try { emitLocal('action.answered', { sessionId: id, actionId: (cur as any)?.id || null, kind: cur?.kind || null, value: String(value) }); } catch {}
-      // F7: request_review's ✓ Verified is a human approval of the branch.
-      if (value === 'verified') markApproved(id, principalLabel((req as any).auth));
       // A5 (#2): the share card is the ONLY place an agent's public link is minted
       // — the answer carries the link (or the refusal) back into the session.
       if (cardKind === OUTBOUND_KIND && (cur as any).outbound) {
@@ -6054,7 +7746,9 @@ export async function handle(
           // Exactly what the card showed — the stored arguments, nothing re-read.
           let r: any;
           try {
-            if (exec.via === 'whatsapp') {
+            if (exec.via === 'call' || exec.via === 'sms') {
+              r = await placeOutbound(id, exec);
+            } else if (exec.via === 'whatsapp') {
               const wp = await import('./whatsapp-proxy.js');
               r = await wp.callWhatsapp('send_message', exec.args);
             } else if (exec.via === 'mcp') {
@@ -6072,16 +7766,51 @@ export async function handle(
             r = { ok: false, error: (e as Error).message };
           }
           line = r?.ok
-            ? `[host] SENT on ${d.channel}${d.to ? ` to ${d.to}` : ''}, exactly as the owner approved it.`
-            : `[host] The owner approved, but sending on ${d.channel} failed: ${r?.error || 'unknown error'}. Tell them; do not retry on your own.`;
+            ? exec.via === 'call'
+              ? `[host] The owner pressed Send: calling ${d.to} now, exactly as the card showed. The outcome, summary and transcript arrive as a card and a "[host] The call … ended" message.`
+              : `[host] SENT on ${d.channel}${d.to ? ` to ${d.to}` : ''}, exactly as the owner approved it.`
+            : `[host] The owner approved, but ${exec.via === 'call' ? 'placing the call' : `sending on ${d.channel}`} failed: ${r?.error || 'unknown error'}. Tell them; do not retry on your own.`;
         } else {
-          line = `[host] The owner chose NOT to send the ${d.channel} message${d.to ? ` to ${d.to}` : ''}. Nothing was sent. Do not send it another way.`;
+          line = exec.via === 'call'
+            ? `[host] The owner chose NOT to place the call${d.to ? ` to ${d.to}` : ''}. Nothing was dialled. Do not call another way.`
+            : `[host] The owner chose NOT to send the ${d.channel} message${d.to ? ` to ${d.to}` : ''}. Nothing was sent. Do not send it another way.`;
         }
         try {
-          claude.sendMessage(id, line);
+          tellSession(id, line);
         } catch (e) {
           return json(res, { error: (e as Error).message }, 500);
         }
+        return json(res, { ok: true });
+      }
+      if (cardKind === CALL_QUESTION_KIND) {
+        const w = callQuestionWaiters.get(cur.id);
+        const label = (cur.buttons || []).find((b: any) => b.value === value)?.label;
+        if (w) { callQuestionWaiters.delete(cur.id); w(String(value) === CALL_LATER ? '' : String(label || value)); }
+        claude.appendChat(id, { kind: 'system', text: `📞 ${String(value) === CALL_LATER ? 'You will get back to them.' : `Answered on the call: ${label || value}`}` });
+        return json(res, { ok: true });
+      }
+      if (cardKind === SSO_KIND && (cur as any).sso?.site) {
+        const { site, label, url } = (cur as any).sso as { site: string; label: string; url: string };
+        const v = String(value);
+        let line: string;
+        if (v === 'use' || v === 'always') {
+          const lv = await import('./lib/login-vault.js');
+          if (v === 'always') lv.grantAlways('sso:' + site);
+          const r = await startSso(id, url);
+          line = r.ok
+            ? `[host] The owner APPROVED signing in to ${label} through SSO in their browser. ${label} is open in a tab of its own there. ${SSO_HOW}`
+            : `[host] The owner approved, but My browser could not be opened: ${r.error}. Use sign_in({site:"${site}"}) instead.`;
+        } else {
+          line = `[host] The owner does NOT want the SSO sign-in to ${label} in My browser. Use sign_in({site:"${site}"}) instead, or ask them.`;
+        }
+        state.patchSession(id, { action: null });
+        try { claude.sendMessage(id, line); } catch (e) { return json(res, { error: (e as Error).message }, 500); }
+        return json(res, { ok: true });
+      }
+      if (cardKind === LOGIN_KIND && (cur as any).signIn && signInCardWaiters.has(cur.id)) {
+        // sign_in raised it and waits: it does the transfer and tells the agent itself
+        signInCardWaiters.get(cur.id)!(String(value));
+        signInCardWaiters.delete(cur.id);
         return json(res, { ok: true });
       }
       if ((cardKind === LOGIN_KIND || cardKind === LOGIN_SAVE_KIND) && (cur as any).login?.site) {
@@ -6100,12 +7829,12 @@ export async function handle(
           if (v === 'always') lv.grantAlways(site);
           const r = await lv.transfer(id, site).catch((e) => ({ ok: false, error: (e as Error).message }) as any);
           line = r.ok
-            ? `[host] The human APPROVED their ${label} login for this session; it is now in your browser${r.check ? ` (checked: ${r.check.url})` : ''}. Open the site and continue.`
-            : `[host] The human approved, but the ${label} login could not be used: ${r.error}. Sign in fresh: open the login page, then request_screen so the human types the credentials themselves.`;
+            ? `[host] The human APPROVED their ${label} login for this session; it is now in your browser (from ${r.source === 'chrome' ? 'their everyday Chrome' : 'My browser'})${r.check ? ` (checked: ${r.check.url})` : ''}. Open the site and continue.`
+            : `[host] The human approved, but the ${label} login could not be used: ${r.error}. Sign in fresh with sign_in({site:"${site}"}).`;
           // Some sites allow one session only: check the owner kept theirs.
           if (r.ok)
             setTimeout(() => {
-              lv.vaultStillLoggedIn(site)
+              lv.vaultStillLoggedIn(site, undefined, r.source || 'vault')
                 .then((kept) => {
                   if (kept === false)
                     claude.appendChat(id, { kind: 'system', text: `⚠ Copying the ${label} login logged YOUR browser out — ${label} allows one session. Arigami will not offer to copy it again; sign in again in your own browser.` });
@@ -6113,7 +7842,7 @@ export async function handle(
                 .catch(() => {});
             }, 120_000).unref?.();
         } else if (v === 'fresh') {
-          line = `[host] The human wants a FRESH ${label} sign-in, not their own login. Open the site's login page, then call request_screen so the human types the credentials themselves — do not ask for a password in the chat.`;
+          line = `[host] The human wants a FRESH ${label} sign-in, not their own login: sign_in({site:"${site}"}). Do not ask for a password in the chat.`;
         } else {
           line = `[host] The human REFUSED the ${label} login. Do not sign in to ${label} and do not ask again in this turn.`;
         }
@@ -6154,7 +7883,31 @@ export async function handle(
     // Dismiss the sticky action bar without answering — the human chose none of
     // the options and just wants it gone. The request_action tool_use already
     // returned, so the model isn't blocked; clearing the state is enough.
+    // MODS: codex's PostToolUse (mcp/policy-hook.js --mods) hands a tool's result back to the mods chain that
+    // PreToolUse (.../policy/check) suspended at next(). Only the session itself may call (its own bearer).
+    // MODS: arigami-bridge (mods/arigami-bridge) forwards what a mod shows with $.ui.log/toast/notice in a Claude session.
+    if (sub === 'mods/notice' && m === 'POST') {
+      const me = (req as any).auth as import('./auth.js').Principal | null;
+      if (!(me?.kind === 'session' && me.sessionId === id) && !auth.isAdmin(me)) return json(res, { error: 'session token required' }, 403);
+      const body = ((await readBody(req).catch(() => ({}))) || {}) as any;
+      const text = String(body.text || '').slice(0, 2000);
+      if (text) claude.appendChat(id, { kind: 'ext-card', ext: String(body.plugin || 'mod').slice(0, 64), title: text });
+      return json(res, { ok: true });
+    }
+    if (sub === 'mods/tool-post' && m === 'POST') {
+      const me = (req as any).auth as import('./auth.js').Principal | null;
+      if (!(me?.kind === 'session' && me.sessionId === id) && !auth.isAdmin(me)) return json(res, { error: 'session token required' }, 403);
+      const body = ((await readBody(req).catch(() => ({}))) || {}) as any;
+      const mods = await import('./mods.js');
+      const v = await mods.toolPost(modsCtx(s), { id: String(body.tool_use_id || ''), output: body.output });
+      if ('replace' in v) claude.appendChat(id, { kind: 'ext-card', ext: 'mods', title: `${body.tool || 'Tool'} output rewritten by a mod`, body: 'The agent got the rewritten output.' });
+      if ('block' in v) claude.appendChat(id, { kind: 'ext-card', ext: 'mods', title: `${body.tool || 'Tool'} output withheld by a mod`, body: v.block });
+      return json(res, v);
+    }
     if (sub === 'action/dismiss' && m === 'POST') {
+      const { actionId } = (await readBody(req)) as any;
+      if (!actionId || (state.getSession(id)?.action as any)?.id !== actionId)
+        return json(res, { error: 'This request has expired. Use the current action card.' }, 409);
       state.patchSession(id, { action: null });
       claude.kickAutoPlay(id); // dismissing the card releases a held queue
       return json(res, { ok: true });
@@ -6194,6 +7947,59 @@ export async function handle(
       return json(res, { ok: true, mode, tracking: screens.setAutoSnapshotMode(String(body.requestId), mode) });
     }
     // capture_screen: one frame of the shared desktop → screenshot chat event.
+    // DESKTOP CONTROL (engine-neutral; MCP tools desktop_* call these): a fresh screenshot returned as data,
+    // and pointer/keyboard actions on the session's OWN desktop. Linux/x11 today.
+    // Only the ops handled here: desktop/type, /clipboard and /selection (the paste/copy path) have their own routes
+    // further down — a catch-all here answered them "unknown desktop op" and broke paste into the session screen.
+    // The shared desktop's lease (lib/shared-desktop.ts): one session at a time, the rest queued and woken.
+    if ((sub === 'shared-desktop/acquire' || sub === 'shared-desktop/release') && m === 'POST') {
+      if (!cfg.screen?.enabled) return json(res, { ok: false, error: 'screen share disabled', ...caps.needsSetup('desktop', 'use the shared desktop') });
+      try {
+        (await import('./lib/desktop-control.js')).sharedDisplay();
+      } catch (e) {
+        return json(res, { ok: false, error: (e as Error).message }, 409);
+      }
+      const body = ((await readBody(req).catch(() => ({}))) || {}) as any;
+      const L = sharedDesktop.get();
+      if (sub === 'shared-desktop/release') {
+        const did = L.release(id);
+        console.log(`[shared-desktop] ${new Date().toISOString()} ${id} release${did ? '' : ' (held nothing)'}`);
+        return json(res, { ok: true, released: did });
+      }
+      // The site is what the guards check typing against and what the owner sees in the cockpit: no site, no lease
+      // (an agent calling the tool before loading its schema sent {} and used to be granted a lease for nothing).
+      const site = sharedDesktop.leaseSite(body?.site);
+      if (!site) return badRequest(res, body?.site ? `not a site: ${body.site}` : 'site required — the site you are signing in to, e.g. {site:"example.com"}');
+      const r = L.acquire(id, site, String(body?.reason || '').slice(0, 200));
+      console.log(`[shared-desktop] ${new Date().toISOString()} ${id} acquire ${site || '-'} → ${'granted' in r ? 'granted' : `queued #${r.position}`}`);
+      return json(res, { ok: true, ...r }, 'granted' in r ? 200 : 202);
+    }
+    if (/^desktop\/(screenshot|act|launch|quit)$/.test(sub) && m === 'POST') {
+      if (!cfg.screen?.enabled) return json(res, { ok: false, error: 'screen share disabled', ...caps.needsSetup('desktop', 'control the desktop') });
+      const op = sub.slice('desktop/'.length);
+      const body = ((await readBody(req).catch(() => ({}))) || {}) as any;
+      const dc = await import('./lib/desktop-control.js');
+      if (body?.shared === true) return sharedDesktopOp(res, id, op, body, dc);
+      try {
+        if (op === 'screenshot') {
+          const r = await dc.desktopScreenshot(id);
+          return json(res, { ok: true, png_base64: r.png.toString('base64'), width: r.width, height: r.height, ts: r.ts, file: r.file });
+        }
+        if (op === 'act') {
+          const r = await dc.desktopAct(id, body);
+          console.log(`[desktop] ${id} ${String(body?.action)} ${r.ok ? 'ok' : 'failed: ' + (r as any).error}`);
+          return json(res, r, r.ok ? 200 : 400);
+        }
+        if (op === 'launch') return json(res, { ok: true, ...(await dc.desktopLaunch(id, String(body?.command || ''), Array.isArray(body?.args) ? body.args : [])) });
+        if (op === 'quit') {
+          const r = dc.desktopQuit(id, Number(body?.pid));
+          return json(res, r, r.ok ? 200 : 400);
+        }
+        return badRequest(res, `unknown desktop op: ${op}`);
+      } catch (e) {
+        return json(res, { ok: false, error: (e as Error).message }, 400);
+      }
+    }
     if (sub === 'screenshot' && m === 'POST') {
       const body = (await readBody(req)) as any;
       const caption = body.caption ? String(body.caption).slice(0, 300) : undefined;
@@ -6232,6 +8038,12 @@ export async function handle(
       const body = (await readBody(req)) as any;
       try {
         const r = await chrome.openChrome(id, body?.url ? String(body.url) : undefined);
+        // `window: true` is a person's click on the dock icon (desktop-terminal.ts chromeScript): a browser that is
+        // already up gets a new window, so the click always shows one. chrome.sh (agents) leaves it off.
+        if (body?.window && r.alreadyRunning) {
+          const cdp = await import('./lib/chrome-cdp.js');
+          await cdp.newWindow(id).catch((e: Error) => console.warn(`[browser] new window for ${id}: ${e.message}`));
+        }
         return json(res, { ok: true, ...r });
       } catch (e) {
         return json(res, { ok: false, error: `browser open failed: ${(e as Error).message}` }, 503);
@@ -6284,7 +8096,7 @@ export async function handle(
       }
     }
     if (sub === 'browser/close' && m === 'POST') {
-      return json(res, browserActions.close(id));
+      return json(res, await browserActions.close(id));
     }
     // screen-agnostic connect-*: a screenshot of the front TAB only (CDP
     // Page.captureScreenshot), not the desktop/root window — what
@@ -6332,6 +8144,19 @@ export async function handle(
         return json(res, await cdp.typeIntoDesktop(id, String(body?.text || ''), body?.enter ? 'Enter' : undefined));
       } catch (e) {
         return json(res, { ok: false, error: (e as Error).message }, 400);
+      }
+    }
+    // Paste fallback for a screen whose focused app is not a DevTools-controllable Chrome: the text goes on the
+    // desktop's X clipboard and the viewer sends Ctrl+V over VNC (desktop-clipboard.ts setXClipboard).
+    if (sub === 'desktop/clipboard' && m === 'POST') {
+      const dc = await import('./lib/desktop-clipboard.js');
+      const ds = await import('./lib/desktops.js');
+      const body = (await readBody(req).catch(() => ({}))) as any;
+      try {
+        await dc.setXClipboard(ds.screenTarget(id).display || '', String(body?.text || ''));
+        return json(res, { ok: true });
+      } catch (e) {
+        return json(res, { ok: false, error: (e as Error).message }, 409);
       }
     }
     // Copy from the remote screen: what is selected in the session's focused
@@ -6663,8 +8488,14 @@ export async function handle(
       if (s.metadata?.cronTriggerId) {
         const triggers = await import('./triggers.js');
         const { archive } = await triggers.onCronReport(id, result);
-        if (archive) state.patchSession(id, { archived: true });
-        return json(res, { ok: true, cron: true, archived: archive });
+        // A finished run leaves nothing worth keeping: its result is already
+        // delivered and recorded on the trigger, so the session is deleted (a
+        // few seconds on, once this very reply has gone out) instead of piling
+        // up in the archive. A failed run is only archived — it stays readable.
+        const remove = archive && result.state === 'done';
+        if (remove) setTimeout(() => void destroySession(id).catch(() => {}), 5000).unref?.();
+        else if (archive) state.patchSession(id, { archived: true });
+        return json(res, { ok: true, cron: true, archived: archive && !remove, deleted: remove });
       }
       if (!master)
         return json(res, {
@@ -6733,7 +8564,7 @@ export async function handle(
       }
     }
     if (sub === 'changes' && m === 'GET') {
-      return json(res, await changesFor(s, u.searchParams.get('mode')));
+      return json(res, await changesFor(s, u.searchParams.get('mode'), u.searchParams.get('base')));
     }
     if (sub === 'changes/diff' && m === 'GET') {
       return json(
@@ -6741,16 +8572,20 @@ export async function handle(
         await changeDiff(
           s,
           u.searchParams.get('path'),
-          u.searchParams.get('mode')
+          u.searchParams.get('mode'),
+          u.searchParams.get('base')
         )
       );
     }
     if (sub === 'changes/refs' && m === 'GET') {
-      return json(res, await prStatus(s));
+      return json(res, {
+        ...(await prStatus(s, u.searchParams.get('base'))),
+        ...(await listBaseRefs(s)),
+      });
     }
     // ---- F7: merge after approval (executed by the host) ----
     if (sub === 'merge/status' && m === 'GET') {
-      return json(res, await mergeStatus(s));
+      return json(res, await mergeStatus(s, (req as any).auth));
     }
     if (sub === 'merge' && m === 'POST') {
       const me = (req as any).auth;
@@ -6765,7 +8600,8 @@ export async function handle(
           runCleanup: body.runCleanup === true,
           force: body.force === true && auth.isAdmin(me),
         },
-        principalLabel(me)
+        principalLabel(me),
+        me
       );
       const { status, ...payload } = r;
       return json(res, payload, status || 200);
@@ -6852,7 +8688,7 @@ export async function handle(
           : !body.base || body.base === 'HEAD'
             ? 'uncommitted'
             : 'pr';
-      const identity = await changeIdentity(s, mode);
+      const identity = await changeIdentity(s, mode, typeof body.baseRef === 'string' ? body.baseRef : null);
       state.setChangesExplanation(id, mode, {
         language: typeof body.language === 'string' ? body.language : null,
         generatedAt: new Date().toISOString(),
@@ -7082,6 +8918,15 @@ export async function handle(
           : 'comment';
         const target = body.target === 'remote' ? 'remote' : 'local';
         const summary = body.summary ? String(body.summary) : '';
+        if (verdict === 'approve') {
+          // THE approve action — the session decides local stamp vs GitHub post;
+          // the local/remote toggle only routes comments and change requests.
+          const r = await approveSession(id, principalLabel((req as any).auth), { summary });
+          if ('error' in r) return json(res, { error: r.error }, r.status);
+          const sessTab = (s as any).tabs.find((t: any) => t.type === 'session') || (s as any).tabs[0];
+          if (sessTab && !r.already) state.activateTab(id, sessTab.id);
+          return json(res, r);
+        }
         const msg =
           target === 'remote'
             ? formatRemoteReview(s, verdict, summary)
@@ -7093,9 +8938,9 @@ export async function handle(
           return json(res, { error: error.message }, 500);
         }
         state.clearReview(id);
-        if (target === 'local' && verdict === 'approve') {
-          state.patchSession(id, { status: 'Approved' });
-          markApproved(id, principalLabel((req as any).auth)); // F7
+        if (target === 'local' && verdict === 'request-changes') {
+          if ((s as any).status === 'Approved') state.patchSession(id, { status: 'In Progress' });
+          markChangesRequested(id, principalLabel((req as any).auth));
         }
         const sessTab =
           (s as any).tabs.find((t: any) => t.type === 'session') ||

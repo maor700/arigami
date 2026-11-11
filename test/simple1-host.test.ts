@@ -9,10 +9,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { runInChild } from './_child.js';
+import { tmpDir } from './_tmp.js';
 
 let dir: string;
 beforeAll(() => {
-  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-simple1-'));
+  dir = tmpDir('arigami-simple1-');
 });
 afterAll(() => {
   fs.rmSync(dir, { recursive: true, force: true });
@@ -68,9 +69,18 @@ test('composeTurnText prepends the reminder per turn (source-level: after the fi
   const src = fs.readFileSync(path.resolve(import.meta.dir, '../server/claude.js'), 'utf8');
   const fn = src.slice(src.indexOf('function composeTurnText('), src.indexOf('function writeUserMessage('));
   const boot = fn.indexOf('memoryBootstrapPrefix(p)');
-  const mode = fn.indexOf('chatModePrefix(getSession(p.id)?.metadata)');
+  const mode = fn.indexOf('chatModePrefix(getSession(p.id)?.metadata');
   expect(boot).toBeGreaterThan(-1);
   expect(mode).toBeGreaterThan(boot);
   // the proc record carries the session id so the metadata is re-read live
   expect(src).toMatch(/const p = \{\n\s+id: s\.id,/);
+});
+
+test('a slash command is sent bare: no reminder/bootstrap/preamble in front of it (else /compact is plain text)', () => {
+  const src = fs.readFileSync(path.resolve(import.meta.dir, '../server/claude.js'), 'utf8');
+  const fn = src.slice(src.indexOf('function composeTurnText('), src.indexOf('function writeUserMessage('));
+  const guard = fn.indexOf('return txt;');
+  expect(guard).toBeGreaterThan(-1);
+  expect(guard).toBeLessThan(fn.indexOf('memoryBootstrapPrefix(p)'));
+  expect(fn.slice(0, guard)).toContain('^\\/[a-z]');
 });

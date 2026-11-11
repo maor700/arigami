@@ -16,6 +16,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { runInChild } from './_child.js';
+import { tmpDir } from './_tmp.js';
 
 const FIX = path.resolve(import.meta.dir, 'fixtures/codex-stream');
 const fixture = (prefix: string): string => {
@@ -27,7 +28,7 @@ const fixture = (prefix: string): string => {
 let dir: string;
 let codexHome: string;
 beforeAll(() => {
-  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-codexdrv-'));
+  dir = tmpDir('arigami-codexdrv-');
   // A stand-in for a real `codex login`: prepare() only ever symlinks this file.
   codexHome = path.join(dir, 'real-codex-home');
   fs.mkdirSync(codexHome, { recursive: true });
@@ -439,7 +440,7 @@ else if(j.method==='model/list')process.stdout.write(JSON.stringify({id:j.id,res
 }
 
 test('codexModels(): the engine\'s model/list for the ACTIVE login, its models_cache.json only until that lands, never a hardcoded list', () => {
-  const adir = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-codexmodels-'));
+  const adir = tmpDir('arigami-codexmodels-');
   try {
     const home = path.join(adir, 'machine-home');
     fs.mkdirSync(home, { recursive: true });
@@ -661,7 +662,7 @@ test('a session with no agent policy gets no hooks.json and no hook-trust flag',
 
 test('P1-7: composio-mcp from the host reaches config.toml with its own env; absent when not configured or not allowed', () => {
   const run = (claudeJson: unknown, tools: string[] | null) => {
-    const adir = fs.mkdtempSync(path.join(dir, 'composio-'));
+    const adir = tmpDir('composio-');
     const cdir = path.join(adir, 'claude');
     fs.mkdirSync(cdir);
     if (claudeJson) fs.writeFileSync(path.join(cdir, '.claude.json'), JSON.stringify(claudeJson));
@@ -807,14 +808,16 @@ test('the tool timeout is overridable, so the give-up path can be exercised', ()
 test('codexEffortLevels: the model row ladder, else every level codex knows (incl. minimal)', () => {
   const r = runInChild(
     "const cx=await import('./server/codex.ts');" +
-      "const cat=[{id:'gpt-5.5',efforts:['low','medium','high','xhigh']},{id:'gpt-5.6-terra',efforts:['low','medium','high','xhigh','max','ultra','bogus']}];" +
-      "emit(cx.codexEffortLevels('gpt-5.5',cat));emit(cx.codexEffortLevels('gpt-5.6-terra',cat));emit(cx.codexEffortLevels(null,cat));",
+      "const cat=[{id:'gpt-5.5',efforts:['low','medium','high','xhigh']},{id:'gpt-5.6-terra',efforts:['low','medium','high','xhigh','max','ultra','hyper','Not A Rung']}];" +
+      "emit(cx.codexEffortLevels('gpt-5.5',cat));emit(cx.codexEffortLevels('gpt-5.6-terra',cat));emit(cx.codexEffortLevels(null,cat));" +
+      "emit([cx.isCodexEffort('hyper',cat),cx.isCodexEffort('hyper',[]),cx.isCodexEffort('Not A Rung',cat),cx.isCodexEffort('ultra',[])]);",
     env()
   );
   expect(r.ok).toBe(true);
   expect(r.out[0]).toEqual(['low', 'medium', 'high', 'xhigh']);
-  expect(r.out[1]).toEqual(['low', 'medium', 'high', 'xhigh', 'max', 'ultra']);
+  expect(r.out[1]).toEqual(['low', 'medium', 'high', 'xhigh', 'max', 'ultra', 'hyper']); // a rung this code never heard of flows from the catalog
   expect(r.out[2]).toEqual(['minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']);
+  expect(r.out[3]).toEqual([true, false, false, true]); // what reaches the engine: known rungs + the catalog's own
 });
 
 test('setEffort: ultra is accepted on gpt-5.6-terra, refused on gpt-5.5 and on claude', () => {
