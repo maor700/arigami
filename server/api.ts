@@ -4826,7 +4826,10 @@ export async function handle(
     // P1-10: the `codex` CLI row — same shape, never auto-applied.
     if (p === '/__api/host/codex' && m === 'GET') {
       const cx = await import('./lib/codex-update.js');
-      const st = (await cx.codexUpdater()).status();
+      const up = await cx.codexUpdater();
+      // Nothing schedules codex checks: re-probe "latest" here, at most daily, without holding the row.
+      await Promise.race([up.check(), new Promise((r) => setTimeout(r, 3000))]);
+      const st = up.status();
       const sandbox = (await import('./lib/codex-sandbox.js')).readCodexSandbox(); // P4-6
       return json(res, { ...(st.installed ? st : { ...st, installed: await cx.codexInstalled() }), sandbox });
     }

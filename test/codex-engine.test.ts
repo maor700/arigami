@@ -808,14 +808,16 @@ test('the tool timeout is overridable, so the give-up path can be exercised', ()
 test('codexEffortLevels: the model row ladder, else every level codex knows (incl. minimal)', () => {
   const r = runInChild(
     "const cx=await import('./server/codex.ts');" +
-      "const cat=[{id:'gpt-5.5',efforts:['low','medium','high','xhigh']},{id:'gpt-5.6-terra',efforts:['low','medium','high','xhigh','max','ultra','bogus']}];" +
-      "emit(cx.codexEffortLevels('gpt-5.5',cat));emit(cx.codexEffortLevels('gpt-5.6-terra',cat));emit(cx.codexEffortLevels(null,cat));",
+      "const cat=[{id:'gpt-5.5',efforts:['low','medium','high','xhigh']},{id:'gpt-5.6-terra',efforts:['low','medium','high','xhigh','max','ultra','hyper','Not A Rung']}];" +
+      "emit(cx.codexEffortLevels('gpt-5.5',cat));emit(cx.codexEffortLevels('gpt-5.6-terra',cat));emit(cx.codexEffortLevels(null,cat));" +
+      "emit([cx.isCodexEffort('hyper',cat),cx.isCodexEffort('hyper',[]),cx.isCodexEffort('Not A Rung',cat),cx.isCodexEffort('ultra',[])]);",
     env()
   );
   expect(r.ok).toBe(true);
   expect(r.out[0]).toEqual(['low', 'medium', 'high', 'xhigh']);
-  expect(r.out[1]).toEqual(['low', 'medium', 'high', 'xhigh', 'max', 'ultra']);
+  expect(r.out[1]).toEqual(['low', 'medium', 'high', 'xhigh', 'max', 'ultra', 'hyper']); // a rung this code never heard of flows from the catalog
   expect(r.out[2]).toEqual(['minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']);
+  expect(r.out[3]).toEqual([true, false, false, true]); // what reaches the engine: known rungs + the catalog's own
 });
 
 test('setEffort: ultra is accepted on gpt-5.6-terra, refused on gpt-5.5 and on claude', () => {

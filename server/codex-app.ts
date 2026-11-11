@@ -22,7 +22,7 @@ import {
   flatToolName,
   isHookTrustNotice,
   CODEX_MODEL_RE,
-  EFFORTS,
+  isCodexEffort,
   textOfContent,
   reapGivenUpHostTool,
   onLimitText,
@@ -135,7 +135,7 @@ function modelOf(s: Session): string | null {
 
 function effortOf(s: Session): string | null {
   const e = s.claude?.effort;
-  return e && EFFORTS.has(e) ? e : null;
+  return e && isCodexEffort(e) ? e : null;
 }
 
 function threadParams(s: Session): Record<string, unknown> {

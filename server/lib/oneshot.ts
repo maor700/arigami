@@ -20,15 +20,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { supervise, killTree } from './children.js';
-import { tokenForSession, getActiveId, hasCredentials, codexAuthPathFor } from '../accounts.js';
+import { tokenForSession, getActiveId, hasCredentials, codexAuthPathFor, claudeBaseEnv, claudeAuthEnv } from '../accounts.js';
 import { claudeBin } from './claude-bin.js';
 import { cfg, defaultEngine } from './config.js';
 import { auth } from '../auth.js';
 
-function baseEnv(): NodeJS.ProcessEnv {
-  const { CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_API_KEY, ...rest } = process.env;
-  return rest;
-}
+const baseEnv = (): NodeJS.ProcessEnv => claudeBaseEnv();
 
 // Resolved AT CALL TIME (never cached across runs): the active account may be
 // switched, or its token refreshed by the oauth refresher, between two one-shots
@@ -37,12 +34,7 @@ function baseEnv(): NodeJS.ProcessEnv {
 function accountEnv(opts: OneShotOptions): NodeJS.ProcessEnv {
   if (opts.apiKey) return { ANTHROPIC_API_KEY: opts.apiKey };
   if (opts.token) return { CLAUDE_CODE_OAUTH_TOKEN: opts.token };
-  try {
-    const r = tokenForSession(opts.account ?? getActiveId());
-    return r ? { CLAUDE_CODE_OAUTH_TOKEN: r.token } : {};
-  } catch {
-    return {};
-  }
+  return claudeAuthEnv(opts.account ?? getActiveId());
 }
 
 // What `claude -p` says when its bearer token is dead. Matched on the
