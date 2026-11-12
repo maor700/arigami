@@ -160,3 +160,45 @@ export async function stop(pids: number[], graceMs = 4000): Promise<{ stopped: n
   while (Date.now() < hard && targets.some(pidAlive)) await sleep(50);
   return { stopped: targets.filter((p) => !pidAlive(p)), survived: targets.filter(pidAlive) };
 }
+
+/**
+ * Linux: the pids holding each of `files` open, from ONE in-process pass over
+ * /proc/<pid>/fd. Replaces `lsof -t -- <file>` per file: lsof stats every fd of
+ * every process and took ~0.7 s of CPU per call on a busy host (spawnSync, so it
+ * also blocked the event loop), run every 4 s for every running background shell.
+ * This pass is ~30 ms for all files together. Our own user's processes only —
+ * the same set lsof could see for us.
+ */
+export function holdersOf(files: string[], procRoot = '/proc'): Map<string, number[]> {
+  const out = new Map<string, number[]>(files.map((f) => [f, []]));
+  if (!files.length) return out;
+  let pids: string[];
+  try {
+    pids = fs.readdirSync(procRoot).filter((d) => /^\d+$/.test(d));
+  } catch {
+    return out;
+  }
+  for (const p of pids) {
+    let fds: string[];
+    try {
+      fds = fs.readdirSync(`${procRoot}/${p}/fd`);
+    } catch {
+      continue; // another user's process, or it exited while we looked
+    }
+    const seen = new Set<string>();
+    for (const fd of fds) {
+      let target: string;
+      try {
+        target = fs.readlinkSync(`${procRoot}/${p}/fd/${fd}`);
+      } catch {
+        continue;
+      }
+      const hit = out.get(target);
+      if (hit && !seen.has(target)) {
+        seen.add(target);
+        hit.push(Number(p));
+      }
+    }
+  }
+  return out;
+}

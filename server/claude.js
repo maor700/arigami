@@ -12,7 +12,7 @@ import { resourceRoot, docsDir } from './lib/resource-root.js';
 import { bunExec, bunExecShell } from './lib/bun-exec.js';
 import { claudeBin, EXTRA_BINS } from './lib/claude-bin.js';
 import { supervise, killTree, killByTag } from './lib/children.js';
-import { HOST_MARK } from './lib/session-procs.js';
+import { HOST_MARK, holdersOf } from './lib/session-procs.js';
 import { gatewayEnabled, claudeEntry, codexEntry, COMPOSIO_SERVER } from './lib/mcp-gateway.js';
 import { composioKey } from './lib/composio-mcp.js';
 import * as hostGrants from './lib/mcp-grants.js';
@@ -241,6 +241,7 @@ function writerPids(outputFile) {
       ], { stdout: 'pipe', stderr: 'ignore' });
       return new TextDecoder().decode(r.stdout).split('\n').map((s) => s.trim()).filter(Boolean);
     }
+    if (process.platform === 'linux') return (holdersOf([outputFile]).get(outputFile) || []).map(String);
     const r = Bun.spawnSync(['lsof', '-t', '--', outputFile]);
     return new TextDecoder().decode(r.stdout).split('\n').map((s) => s.trim()).filter(Boolean);
   } catch { return []; }
@@ -267,13 +268,19 @@ function ensureReaper() {
   if (reaper) return;
   reaper = setInterval(() => {
     let anyRunning = false;
-    for (const s of listSessions({ archived: true })) {
+    const sessions = listSessions({ archived: true });
+    // Linux: one /proc pass answers every running shell of every session at once.
+    const held = process.platform === 'linux'
+      ? holdersOf(sessions.flatMap((s) => (s.bg || []).filter((b) => b.status === 'running').map((b) => b.outputFile)))
+      : null;
+    const alive = (f) => (held ? (held.get(f) || []).length > 0 : bgAlive(f));
+    for (const s of sessions) {
       const list = s.bg || [];
       if (!list.length) continue;
       let changed = false;
       const next = list.map((b) => {
         if (b.status !== 'running') return b;
-        if (bgAlive(b.outputFile)) { anyRunning = true; return b; }
+        if (alive(b.outputFile)) { anyRunning = true; return b; }
         changed = true;
         return { ...b, status: 'exited', endedAt: Date.now() };
       });
