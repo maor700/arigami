@@ -1939,7 +1939,7 @@ export async function callExtTool(ext: string, tool: string, args: Record<string
       // have been started from a session's shell and carry its marker).
       const { ARIGAMI_SESSION_ID: _sid, ...hostEnv } = process.env as Record<string, string>;
       const transport = new StdioClientTransport({ command: s.command, args: s.args, cwd: s.cwd, env: { ...hostEnv, ...s.env } });
-      const client = new Client({ name: 'arigami-ext-caller', version: '0.1.0' }, { capabilities: {} });
+      const client = new Client({ name: 'arigami-ext-caller', version: '0.1.0' }, (await import('./lib/mcp-validator.js')).mcpClientOptions());
       try {
         await client.connect(transport);
         const list = (await client.listTools()) as { tools?: { name: string }[] };

@@ -98,7 +98,7 @@ async function extClient(name: string, spec: { command: string; args: string[]; 
     // The host's own env minus any session identity; the caller comes per call.
     const { ARIGAMI_SESSION_ID: _s, ARIGAMI_TOKEN: _t, ...base } = process.env as Record<string, string>;
     const transport = new StdioClientTransport({ command: spec.command, args: spec.args, cwd: spec.cwd, env: { ...base, ...spec.env, EXT_SHARED: '1' } });
-    const client = new Client({ name: 'arigami-gateway', version: '0.1.0' }, { capabilities: {} });
+    const client = new Client({ name: 'arigami-gateway', version: '0.1.0' }, (await import('./mcp-validator.js')).mcpClientOptions());
     transport.onclose = () => extClients.delete(key); // it died — the next call starts a new one
     await client.connect(transport);
     return client;

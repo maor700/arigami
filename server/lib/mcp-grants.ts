@@ -362,7 +362,7 @@ export async function clientFor(name: string): Promise<McpClient> {
       ...(g.auth === 'oauth' ? { authProvider: new HostProvider(name, g.redirect || '') as any } : {}),
       ...(g.auth === 'bearer' && g.header ? { requestInit: { headers: { [g.header.name]: g.header.value } } } : {}),
     });
-    const client = new Client({ name: 'arigami', version: '0.1.0' }, { capabilities: {} });
+    const client = new Client({ name: 'arigami', version: '0.1.0' }, (await import('./mcp-validator.js')).mcpClientOptions());
     transport.onclose = () => clients.delete(name);
     await client.connect(transport);
     return client;

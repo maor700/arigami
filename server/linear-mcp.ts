@@ -22,6 +22,7 @@ import type {
 } from '@modelcontextprotocol/sdk/shared/auth.js';
 import { cfg } from './state.js';
 import * as mcpGrants from './lib/mcp-grants.js';
+import { mcpClientOptions } from './lib/mcp-validator.js';
 
 const SERVER_URL = 'https://mcp.linear.app/mcp';
 const STORE = path.join(
@@ -152,7 +153,7 @@ async function connect(): Promise<Client> {
   if (connecting) return connecting;
   connecting = (async () => {
     pendingAuthUrl = null;
-    const c = new Client({ name: 'arigami', version: '0.1.0' }, { capabilities: {} });
+    const c = new Client({ name: 'arigami', version: '0.1.0' }, mcpClientOptions());
     const t = newTransport();
     try {
       await c.connect(t);
