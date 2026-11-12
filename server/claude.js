@@ -389,6 +389,11 @@ export function appendChat(id, ev) {
   return ev;
 }
 
+/** Drop a deleted session's in-memory chat tail (up to TAIL_MAX events, tool results included). */
+export function forgetChat(id) {
+  tails.delete(id);
+}
+
 // The latest seq of a session's chat (stage 1c: "events after now" without reading the log).
 export const chatSeq = (id) => tail(id).seq;
 

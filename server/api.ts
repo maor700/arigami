@@ -3288,6 +3288,7 @@ export async function destroySession(id: string): Promise<reap.ReapReport | null
   // dies with it too. Dynamically imported: codex.ts imports this module.
   import('./codex.js').then((m) => m.removeCodexSession(id)).catch(() => {});
   state.deleteSession(id);
+  claude.forgetChat(id);
   return report;
 }
 
