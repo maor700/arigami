@@ -30,6 +30,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { ARIGAMI_DIR } from './instance.js';
 import * as procs from './session-procs.js';
+import { hostHealth, type HostHealth } from './host-health.js';
 
 export type Pressure = 'ok' | 'busy' | 'critical';
 
@@ -69,6 +70,8 @@ export interface Snapshot {
   processes: ProcRow[];
   /** Per-session rollup of `processes`, heaviest first. */
   sessions: { session: string; cpuPct: number; rssMb: number; procs: number }[];
+  /** The host process itself — RSS, heap, fds (lib/host-health.ts). */
+  host: HostHealth;
   pressure: Pressure;
   /** Why `pressure` is what it is, in words an agent can pass to a human. */
   why: string;
@@ -441,6 +444,7 @@ export function sample({ topProcesses = 12 }: { topProcesses?: number } = {}): S
     disk: d,
     processes: top,
     sessions: [...bySession.values()].sort((a, b) => b.rssMb - a.rssMb),
+    host: hostHealth(),
     ...v,
   };
 }

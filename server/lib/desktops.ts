@@ -88,6 +88,9 @@ export interface AllocOpts {
 }
 
 /** `:107` is taken if X left a lock or a socket for it — regardless of who owns it. */
+/** Per-session desktops this host is running (host-health log). */
+export const aliveCount = (): number => alive.size;
+
 export function displayLocked(displayNum: number): boolean {
   return fs.existsSync(`/tmp/.X${displayNum}-lock`) || fs.existsSync(`/tmp/.X11-unix/X${displayNum}`);
 }

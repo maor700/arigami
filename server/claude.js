@@ -401,6 +401,9 @@ export function forgetChat(id) {
   tails.delete(id);
 }
 
+/** How many sessions hold an in-memory chat tail (host-health log). */
+export const chatTailCount = () => tails.size;
+
 // The latest seq of a session's chat (stage 1c: "events after now" without reading the log).
 export const chatSeq = (id) => tail(id).seq;
 
@@ -569,6 +572,9 @@ export function lastUserMessage(id) {
   for (let i = evs.length - 1; i >= 0; i--) if (evs[i].kind === 'user' && evs[i].text) return String(evs[i].text);
   return null;
 }
+
+/** Live claude children (host-health log). */
+export const procCount = () => procs.size;
 
 export function isRunning(id) {
   const p = record(id);

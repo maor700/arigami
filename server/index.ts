@@ -507,6 +507,18 @@ server.listen(cfg.port, cfg.bind, () => {
   import('./lib/resources.js')
     .then((m) => m.primeCpu())
     .catch(() => {});
+  // One line a minute of the host's own RSS/heap/fds and what it holds per session — logs/host-health.log.
+  Promise.all([import('./lib/host-health.js'), import('./claude.js'), import('./state.js'), import('./lib/desktops.js'), import('./lib/mcp-validator.js')])
+    .then(([h, cl, st, dk, mv]) =>
+      h.startHealthLog(() => ({
+        sessions: st.listSessions({ archived: true }).length,
+        claudeProcs: cl.procCount(),
+        desktops: dk.aliveCount(),
+        chatTails: cl.chatTailCount(),
+        mcpSchemas: mv.compiledSchemas(),
+      }))
+    )
+    .catch((e: any) => console.error('[host] health log failed to start:', e?.message));
   // EXT: load the installed extensions BEFORE the listener scheduler, so an
   // extension's listener type is registered by the time the first tick polls a
   // listener rehydrated from state.json.
