@@ -134,6 +134,8 @@ COPY docs/ ./docs/
 COPY profiles/ ./profiles/
 COPY bin/ ./bin/
 COPY .claude-plugin/ ./.claude-plugin/
+# Bundled extensions (off until an admin enables them; server/extensions.ts BUNDLED_EXT_DIR = <repo>/extensions).
+COPY extensions/ ./extensions/
 COPY tsconfig.json ./
 COPY --from=web /app/web/dist ./web/dist
 
