@@ -75,7 +75,7 @@ spec:
             - |
               # create what is missing, component by component, owned by the host's user (never a root-owned parent)
               mk() { p=""; for c in $(echo "$1" | tr '/' ' '); do p="$p/$c"; [ -d "$p" ] || { mkdir "$p"; chown 1000:1000 "$p"; }; done; }
-              for d in /data/.arigami/sandbox/sessions /data/.arigami/sandbox/egress /data/.arigami/skills /data/.arigami/user/skills \
+              for d in /data/.arigami/sandbox/sessions /data/.arigami/sandbox/egress /data/.arigami/user/skills \
                        /data/.arigami/user-plugin /data/.arigami/ext-plugin{{ range $sb.workRoots }} {{ . }}{{ end }}{{ range $sb.engineDirs }} {{ . }}{{ end }}; do
                 mk "$d"
               done
@@ -357,12 +357,18 @@ spec:
               subPath: {{ include "arigami-tenant.dataSubPath" . }}
               readOnly: true
             {{- end }}
-            {{- range list "skills" "user/skills" "user-plugin" "ext-plugin" }}
+            {{- range list "user/skills" "user-plugin" "ext-plugin" }}
             - name: data
               mountPath: {{ printf "/data/.arigami/%s" . }}
               subPath: {{ printf ".arigami/%s" . }}
               readOnly: true
             {{- end }}
+            # $ARIGAMI_DIR/skills is the host's symlink to user/skills, and a subPath may not be a symlink: the same
+            # folder, under the old name too
+            - name: data
+              mountPath: /data/.arigami/skills
+              subPath: .arigami/user/skills
+              readOnly: true
             - name: sandbox-tmp
               mountPath: /tmp
           resources:
