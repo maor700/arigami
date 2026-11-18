@@ -55,6 +55,24 @@ No tool name reads as "send / post / reply / comment": the host would turn those
 session's writes are already confined here (its own thread, its own repo, its team, its project), and running them
 autonomously inside those limits is the point.
 
+### TEST ONLY: `slack.testApproverApps`
+
+Empty by default. **Keep it empty in production.**
+
+A test harness often cannot make a person type in Slack. It posts the operator's words with the operator's user token
+through its own Slack app, so Slack marks the message with `bot_id` / `app_id`, and the gatekeeper rightly refuses it
+as "not a person's message". Listing that app's id makes such a message count, only when:
+
+- the message's `app_id` is in the list;
+- its `user` is a configured operator;
+- it is not a classic `bot_message`.
+
+Every other check stays as it is (the verb in its own words, not a quote, fresh, names no other PR, used once). A
+stranger posting through the same app is not an operator, the session's own bot is a bot user and never an operator,
+and display names or quotes are never read. Approvals that came this way are audited with `viaTestApp`. The read
+tools show such messages as the operator's (`bot: false, operatorViaTestApp: true`). The Permissions tab shows a
+warning while the list is non-empty.
+
 ### The incident thread
 
 A session writes and reads approvals only in its **bound** thread. A binding never changes; children inherit their

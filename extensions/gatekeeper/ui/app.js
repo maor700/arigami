@@ -354,7 +354,13 @@
           text('Incident channel id', () => cfg.slack.channel, (v) => (cfg.slack.channel = v.trim()), { placeholder: 'C…' }),
           area('Approvers — "USERID name" per line, checked by user id', () => (cfg.slack.operators || []).map((o) => `${o.id}${o.name ? ' ' + o.name : ''}`).join('\n'), (v) => (cfg.slack.operators = String(v).split('\n').map((l) => l.trim()).filter(Boolean).map((l) => { const [id, ...n] = l.split(/\s+/); return { id, name: n.join(' ') || undefined }; }))),
           area('Alert sources whose threads a session may bind to (user / bot / app ids)', () => lines(cfg.slack.threadOpeners), (v) => (cfg.slack.threadOpeners = unlines(v)))),
-          h('div', { style: 'margin-top:.5rem' }, opts(opt('A session may bind itself to such a thread, once', cfg.slack.bindOnFirstUse, (on) => (cfg.slack.bindOnFirstUse = on))))),
+          h('div', { style: 'margin-top:.5rem' }, opts(opt('A session may bind itself to such a thread, once', cfg.slack.bindOnFirstUse, (on) => (cfg.slack.bindOnFirstUse = on)))),
+          h('div', { class: 'grid2', style: 'margin-top:.5rem' },
+            area('TEST ONLY — apps whose posts for an approver count as the approver (app ids, A…)', () => lines(cfg.slack.testApproverApps), (v) => (cfg.slack.testApproverApps = unlines(v)))),
+          (cfg.slack.testApproverApps || []).length
+            ? h('div', { class: 'warn', role: 'alert', style: 'margin-top:.5rem;padding:.6rem .8rem;border:1px solid #d97706;background:rgba(217,119,6,.12);border-radius:8px;font-weight:600' },
+                `TEST ONLY: approvals posted through ${cfg.slack.testApproverApps.join(', ')} count as an approver's own word when the approver's user id is on them. A production install keeps this list empty.`)
+            : null),
         group('Linear', h('div', { class: 'grid2' },
           text('Team id', () => cfg.linear.teamId, (v) => (cfg.linear.teamId = v.trim())),
           text('Project id (optional)', () => cfg.linear.projectId || '', (v) => (cfg.linear.projectId = v.trim() || null)))),
