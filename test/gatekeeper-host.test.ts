@@ -257,3 +257,86 @@ test('writes land only in the bound thread; anything else is refused and audited
   expect(lines.some((l) => l.tool === 'github_merge' && l.decision === 'refused')).toBe(true);
   expect(fs.readFileSync(path.join(dir, 'gatekeeper', 'audit.log'), 'utf8')).not.toContain('xoxb-');
 });
+
+test('the host hook allows a granted gatekeeper tool under both engine spellings (claude hyphen, codex underscore)', async () => {
+  for (const name of ['mcp__ext-gatekeeper__gatekeeper_status', 'mcp__ext_gatekeeper__gatekeeper_status']) {
+    const v = await call(tR, 'POST', `/__api/sessions/${restricted}/policy/check`, { tool_name: name, input: {} });
+    expect(v.json).toMatchObject({ allow: true });
+  }
+  const no = await call(tR, 'POST', `/__api/sessions/${restricted}/policy/check`, { tool_name: 'mcp__ext_other__x', input: {} });
+  expect(no.json.allow).toBe(false);
+});
+
+test('a session started from a Slack thread (metadata.origin, set by its creator) is bound automatically; it cannot change its origin', async () => {
+  const r = await call(admin, 'POST', '/__api/sessions', { title: 'from thread', profile: 'fixer', metadata: { origin: { kind: 'slack', channel: 'CINCIDENT1', thread_ts: THREAD } } });
+  expect(r.status).toBe(201);
+  const sid = r.json.id;
+  const tok = (await spawnOf(sid)).env.ARIGAMI_TOKEN;
+  // its own PATCH cannot move the origin
+  await call(tok, 'PATCH', `/__api/sessions/${sid}`, { metadata: { origin: { kind: 'slack', channel: 'COTHER0001', thread_ts: '1700000000.000001' } } });
+  expect((await call(admin, 'GET', `/__api/sessions/${sid}`)).json.metadata.origin.channel).toBe('CINCIDENT1');
+  const c = await mcp('ext-gatekeeper', tok);
+  try {
+    const st = text(await c.callTool({ name: 'gatekeeper_status', arguments: {} }));
+    expect(st.incidentThread).toMatchObject({ channel: 'CINCIDENT1', thread_ts: THREAD, boundBy: 'origin' });
+    const say = text(await c.callTool({ name: 'slack_thread_say', arguments: { text: 'bound by origin' } }));
+    expect(say).toMatchObject({ ok: true, thread_ts: THREAD });
+  } finally {
+    await c.close();
+  }
+});
+
+test("triggers:'own-thread': a Slack listener only on the session's own recorded thread; another thread, other kinds and cron are refused with the reason", async () => {
+  const store = (await call(admin, 'GET', '/__api/session-profiles')).json;
+  const put = await call(admin, 'PUT', '/__api/session-profiles', {
+    profiles: { ...store.profiles, watcher: { tools: ['git', 'ext:gatekeeper'], triggers: 'own-thread', grants: ['gatekeeper:slack.read', 'gatekeeper:slack.post'] } },
+    attach: store.attach || {},
+  });
+  expect(put.status).toBe(200);
+  expect(put.json.profiles.watcher.triggers).toBe('own-thread');
+  const r = await call(admin, 'POST', '/__api/sessions', { title: 'watcher', profile: 'watcher', metadata: { origin: { kind: 'slack', channel: 'CINCIDENT1', thread_ts: THREAD } } });
+  const sid = r.json.id;
+  const tok = (await spawnOf(sid)).env.ARIGAMI_TOKEN;
+  // the tool is offered (not hidden), cron is not
+  const pol = (await call(tok, 'GET', `/__api/sessions/${sid}/policy?names=register_listener,cronjob,CronCreate`)).json;
+  expect(pol.hidden.sort()).toEqual(['CronCreate', 'cronjob']);
+  // own thread → past the profile gate (this test host has no Slack user token, so the listener itself then says so)
+  const own = await call(tok, 'POST', `/__api/sessions/${sid}/listeners`, { type: 'slack', channel_id: 'CINCIDENT1', thread_ts: THREAD });
+  expect(own.status).not.toBe(403);
+  expect(String(own.json.error || '')).toContain('Slack is not connected');
+  const other = await call(tok, 'POST', `/__api/sessions/${sid}/listeners`, { type: 'slack', channel_id: 'CINCIDENT1', thread_ts: '1700000000.000001' });
+  expect(other.status).toBe(403);
+  expect(other.json.error).toContain('only its own incident thread');
+  const chan = await call(tok, 'POST', `/__api/sessions/${sid}/listeners`, { type: 'slack', channel_id: 'COTHER0001' });
+  expect(chan.status).toBe(403);
+  const pr = await call(tok, 'POST', `/__api/sessions/${sid}/listeners`, { type: 'github-pr', owner: 'o', repo: 'r', number: 1 });
+  expect(pr.status).toBe(403);
+  expect(pr.json.error).toContain('only a Slack listener');
+  const cron = await call(tok, 'POST', '/__api/triggers', { type: 'cron', schedule: { kind: 'interval', every: '1h' }, prompt: 'x' });
+  expect(cron.status).toBe(403);
+  // …and never on another session (a listener wakes only the session that armed it)
+  const elsewhere = await call(tok, 'POST', `/__api/sessions/${restricted}/listeners`, { type: 'slack', channel_id: 'CINCIDENT1', thread_ts: THREAD });
+  expect(elsewhere.status).toBe(403);
+});
+
+test('the gatekeeper records the thread it bound as the session origin (once, through the gateway); the own-thread gate then accepts it', async () => {
+  const r = await call(admin, 'POST', '/__api/sessions', { title: 'binds itself', profile: 'watcher' });
+  const sid = r.json.id;
+  expect(r.json.metadata?.origin).toBeUndefined();
+  const tok = (await spawnOf(sid)).env.ARIGAMI_TOKEN;
+  const before = await call(tok, 'POST', `/__api/sessions/${sid}/listeners`, { type: 'slack', channel_id: 'CINCIDENT1', thread_ts: THREAD });
+  expect(before.status).toBe(403);
+  expect(before.json.error).toContain('no recorded incident thread');
+  const c = await mcp('ext-gatekeeper', tok);
+  try {
+    const say = text(await c.callTool({ name: 'slack_thread_say', arguments: { text: 'on it', thread_ts: THREAD } }));
+    expect(say).toMatchObject({ ok: true, thread_ts: THREAD });
+    expect(say._meta).toBeUndefined(); // the host's record never reaches the model
+  } finally {
+    await c.close();
+  }
+  const s = (await call(admin, 'GET', `/__api/sessions/${sid}`)).json;
+  expect(s.metadata.origin).toMatchObject({ kind: 'slack', channel: 'CINCIDENT1', thread_ts: THREAD, recordedBy: 'ext-gatekeeper' });
+  const after = await call(tok, 'POST', `/__api/sessions/${sid}/listeners`, { type: 'slack', channel_id: 'CINCIDENT1', thread_ts: THREAD });
+  expect(after.status).not.toBe(403);
+});

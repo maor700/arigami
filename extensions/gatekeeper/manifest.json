@@ -37,6 +37,7 @@
     "gk_admin_audit"
   ],
   "permissions": [
+    "session:origin",
     "tools:gk_admin_state",
     "tools:gk_admin_save_config",
     "tools:gk_admin_set_identity",

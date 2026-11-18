@@ -58,6 +58,10 @@ async function gated(tool: string, action: string | null, ctx: Ctx, target: stri
   try {
     const out = await body({ caller, cfg: S.readConfig() }, deny, (a) => (approval = a));
     S.audit({ ...base, decision: 'allowed', ...(approval ? { approval } : {}), result: summary(out) });
+    // The session's thread is bound here but the host has no record of it yet: hand it over once (manifest permission
+    // session:origin; the gateway records metadata.origin, which the host uses for a triggers:'own-thread' listener).
+    const b = bindingFor(caller);
+    if (b && !caller.origin && out && typeof out === 'object' && !Array.isArray(out)) return { ...(out as object), _meta: { 'arigami/origin': { channel: b.channel, thread_ts: b.thread_ts } } };
     return out;
   } catch (e) {
     if (e instanceof Deny) {
@@ -79,6 +83,35 @@ const summary = (out: unknown): Record<string, unknown> | undefined => {
 };
 
 const bindingFor = (caller: D.Caller) => D.effectiveBinding(caller.session!, caller.lineage || [], S.readState().bindings);
+
+/**
+ * The session's incident thread, binding it automatically when it has none yet: from where its creator said it was
+ * started (`metadata.origin`, trusted like an admin's choice), else from a Slack thread its family watches with a host
+ * listener, else from a thread_ts the call names. The last two are the session's own claims, so they pass the same
+ * check as slack_bind_thread (incident channel, a thread an alert source or operator opened). Once bound, never changes.
+ */
+async function ensureBinding(call: Call, named?: { channel?: unknown; thread_ts?: unknown } | null) {
+  const { caller, cfg } = call;
+  const have = bindingFor(caller);
+  if (have) return have;
+  if (!cfg.slack.channel) return null;
+  for (const cand of D.bindingCandidates(caller, cfg.slack.channel, named)) {
+    if (cand.by !== 'origin') {
+      if (!cfg.slack.bindOnFirstUse) continue;
+      const r = await X.slack(cfg, 'conversations.replies', { channel: cand.channel, ts: cand.thread_ts, limit: 1 }).catch(() => null);
+      const v = D.checkBind({ channel: cand.channel, thread_ts: cand.thread_ts, configuredChannel: cfg.slack.channel, root: (r?.messages || [])[0] || null, openers: [...cfg.slack.threadOpeners, ...cfg.slack.operators.map((o) => o.id)], existing: null, allowFirstUse: true });
+      if (!v.ok) continue;
+    }
+    const b = { channel: cand.channel, thread_ts: cand.thread_ts, by: cand.by, at: new Date().toISOString() };
+    S.updateState((s) => {
+      if (!s.bindings[caller.session!]) s.bindings[caller.session!] = b;
+    });
+    S.audit({ session: caller.session, profile: caller.profile?.name || null, tool: 'binding', target: `${b.channel}/${b.thread_ts}`, decision: 'config', reason: `incident thread bound automatically (${cand.by})` });
+    return bindingFor(caller);
+  }
+  return null;
+}
+const notBefore = (caller: D.Caller, b: D.Binding | null) => (b && D.SELF_CHOSEN.has(b.by) && caller.createdAt ? Date.parse(caller.createdAt) || null : null);
 const repoPath = (cfg: S.Config) => `/repos/${cfg.github.repo}`;
 const needRepo = (cfg: S.Config, deny: (r: string) => never) => (D.validRepo(cfg.github.repo) ? cfg.github.repo : deny('no GitHub repo configured'));
 const prNum = (v: unknown, deny: (r: string) => never) => {
@@ -99,9 +132,9 @@ const trimText = (s: unknown, n = 4000) => {
 };
 
 /** Operator approval (thread) or, for a merge, the auto-rule. Returns what approved it, or denies with every reason. */
-async function approve(call: Call, action: string, target: string, approvalTs: string | null, deny: (r: string) => never, autoRule?: () => Promise<{ ok: true; checks: string[]; approvedBy: string[] } | { ok: false; reason: string }>) {
+async function approve(call: Call, action: string, target: string, approvalTs: string | null, deny: (r: string) => never, autoRule?: () => Promise<{ ok: true; checks: string[]; approvedBy: string[] } | { ok: false; reason: string }>, named?: { channel?: unknown; thread_ts?: unknown } | null) {
   const { caller, cfg } = call;
-  const b = bindingFor(caller);
+  const b = await ensureBinding(call, named);
   const reasons: string[] = [];
   if (b) {
     const msgs = (await X.slackThread(cfg, b.channel, b.thread_ts)) as D.SlackMessage[];
@@ -116,6 +149,7 @@ async function approve(call: Call, action: string, target: string, approvalTs: s
       maxAgeMin: cfg.approvals.maxAgeMin,
       verbs: cfg.approvals.verbs,
       approvalTs: approvalTs || null,
+      notBeforeMs: notBefore(caller, b),
     });
     if (v.ok) return { kind: 'operator', approver: v.approver, approverName: cfg.slack.operators.find((o) => o.id === v.approver)?.name || null, channel: v.channel, ts: v.ts };
     reasons.push(v.reason);
@@ -143,15 +177,16 @@ const sessionTools: Tool[] = [
     description: 'What this restricted session may do through the gatekeeper: its grants, its incident thread, the repo / channel / team / project in scope, and which actions need an operator approval. Call this first.',
     inputSchema: obj({}),
     run: (_a, ctx) =>
-      gated('gatekeeper_status', null, ctx, '', async ({ caller, cfg }) => {
+      gated('gatekeeper_status', null, ctx, '', async (call) => {
+        const { caller, cfg } = call;
         const grants = (caller.profile?.grants || []).filter((g) => g.startsWith(D.GRANT_PREFIX)).map((g) => g.slice(D.GRANT_PREFIX.length));
-        const b = bindingFor(caller);
+        const b = await ensureBinding(call).catch(() => bindingFor(caller));
         return {
           ok: true,
           session: caller.session,
           profile: caller.profile?.name,
           may: grants.filter((g) => D.ACTIONS[g]).map((g) => ({ action: g, what: D.ACTIONS[g].label, needsApproval: !!D.ACTIONS[g].approval })),
-          incidentThread: b ? { channel: b.channel, thread_ts: b.thread_ts, inheritedFrom: b.from === caller.session ? null : b.from } : null,
+          incidentThread: b ? { channel: b.channel, thread_ts: b.thread_ts, boundBy: b.by, inheritedFrom: b.from === caller.session ? null : b.from } : 'none yet — pass the alert thread\'s thread_ts to a Slack tool (or slack_bind_thread) and it is bound',
           scope: {
             githubRepo: cfg.github.repo || null,
             slackChannel: cfg.slack.channel || null,
@@ -198,13 +233,15 @@ const sessionTools: Tool[] = [
   },
   {
     name: 'slack_read_thread',
-    description: 'Read this session\'s incident thread (root first).',
-    inputSchema: obj({ limit: num('max messages (default 100)') }),
+    description: 'Read this session\'s incident thread (root first). With no thread bound yet, pass the thread_ts of its alert thread and it is bound.',
+    inputSchema: obj({ limit: num('max messages (default 100)'), thread_ts: str('optional: the alert thread to bind when none is bound yet'), channel: str('optional; must be the incident channel') }),
     run: (a, ctx) =>
-      gated('slack_read_thread', 'slack.read', ctx, '', async ({ caller, cfg }, deny) => {
-        const b = bindingFor(caller) || deny('no incident thread bound to this session');
+      gated('slack_read_thread', 'slack.read', ctx, '', async (call, deny) => {
+        const { cfg } = call;
+        const b = (await ensureBinding(call, a)) || deny('no incident thread bound to this session — pass the alert thread\'s thread_ts, or an admin binds one');
+        if (a.thread_ts && String(a.thread_ts) !== b.thread_ts) deny(`only its own incident thread — thread ${String(a.thread_ts)} is not ${b.thread_ts}`);
         const msgs = await X.slackThread(cfg, b.channel, b.thread_ts, Math.min(500, Number(a.limit) || 100));
-        return { ok: true, channel: b.channel, thread_ts: b.thread_ts, messages: msgs.map((m: any) => ({ ts: m.ts, user: m.user || null, bot: !!(m.bot_id || m.app_id), text: trimText(m.text, 3000) })) };
+        return { ok: true, channel: b.channel, thread_ts: b.thread_ts, messages: msgs.map((m: any) => ({ ts: m.ts, user: m.user || null, bot: D.isBotMessage(m), text: trimText(m.text, 3000) })) };
       }),
   },
   {
@@ -215,16 +252,17 @@ const sessionTools: Tool[] = [
       gated('slack_read_channel', 'slack.read', ctx, '', async ({ cfg }, deny) => {
         if (!cfg.slack.channel) deny('no incident channel configured');
         const r = await X.slack(cfg, 'conversations.history', { channel: cfg.slack.channel, limit: Math.min(100, Number(a.limit) || 20) });
-        return { ok: true, channel: cfg.slack.channel, messages: (r.messages || []).map((m: any) => ({ ts: m.ts, user: m.user || null, bot: !!(m.bot_id || m.app_id), thread_ts: m.thread_ts || null, replies: m.reply_count || 0, text: trimText(m.text, 1500) })) };
+        return { ok: true, channel: cfg.slack.channel, messages: (r.messages || []).map((m: any) => ({ ts: m.ts, user: m.user || null, bot: D.isBotMessage(m), thread_ts: m.thread_ts || null, replies: m.reply_count || 0, text: trimText(m.text, 1500) })) };
       }),
   },
   {
     name: 'slack_thread_say',
-    description: 'Write a message in this session\'s own incident thread (the only place it can write in Slack). Mention a person with <@USERID>.',
+    description: 'Write a message in this session\'s own incident thread (the only place it can write in Slack). Mention a person with <@USERID>. With no thread bound yet, pass the alert thread\'s thread_ts and it is bound.',
     inputSchema: obj({ text: str('the message'), channel: str('optional; must be the thread\'s channel'), thread_ts: str('optional; must be the session\'s thread') }, ['text']),
     run: (a, ctx) =>
-      gated('slack_thread_say', 'slack.post', ctx, String(a.channel || ''), async ({ caller, cfg }, deny) => {
-        const b = bindingFor(caller);
+      gated('slack_thread_say', 'slack.post', ctx, String(a.channel || ''), async (call, deny) => {
+        const { cfg } = call;
+        const b = await ensureBinding(call, a);
         const v = D.checkSlackWrite(a, b);
         if (!v.ok) deny(v.reason);
         const r = await X.slack(cfg, 'chat.postMessage', { channel: b!.channel, thread_ts: b!.thread_ts, text: String(a.text), reply_broadcast: false, unfurl_links: false, unfurl_media: false }, true);
@@ -382,7 +420,7 @@ const sessionTools: Tool[] = [
   {
     name: 'github_merge',
     description: 'Merge a PR of the repo. Runs ONLY when an operator said "merge" in this session\'s incident thread (checked by Slack user id; pass approval_ts to point at that message) or under the auto-rule (CI green + an approving review on the head commit).',
-    inputSchema: obj({ pr: num('PR number'), approval_ts: str('optional: the ts of the operator\'s message in the thread'), method: str('merge | squash | rebase (default from config)') }, ['pr']),
+    inputSchema: obj({ pr: num('PR number'), approval_ts: str('optional: the ts of the operator\'s message in the thread'), method: str('merge | squash | rebase (default from config)'), thread_ts: str('optional: the incident thread, when none is bound yet') }, ['pr']),
     run: (a, ctx) =>
       gated('github_merge', 'github.merge', ctx, String(a.pr || ''), async (call, deny, note) => {
         const { cfg, caller } = call;
@@ -399,7 +437,7 @@ const sessionTools: Tool[] = [
             X.gh(cfg, 'GET', `${repoPath(cfg)}/pulls/${n}/reviews?per_page=100`),
           ]);
           return D.checkAutoRule(cfg.github.autoMerge, pr, checks.check_runs || [], status.statuses || [], reviews);
-        });
+        }, a);
         note(ap);
         const method = ['merge', 'squash', 'rebase'].includes(a.method) ? a.method : cfg.github.mergeMethod;
         // `sha`: GitHub refuses if the head moved after the approval was checked.
@@ -411,7 +449,7 @@ const sessionTools: Tool[] = [
   {
     name: 'github_revert',
     description: 'Open a revert PR for a merged PR of the repo. Runs ONLY when an operator said "revert" in this session\'s incident thread (checked by Slack user id). Merging the revert PR is a separate github_merge.',
-    inputSchema: obj({ pr: num('the merged PR number'), approval_ts: str('optional: the ts of the operator\'s message in the thread') }, ['pr']),
+    inputSchema: obj({ pr: num('the merged PR number'), approval_ts: str('optional: the ts of the operator\'s message in the thread'), thread_ts: str('optional: the incident thread, when none is bound yet') }, ['pr']),
     run: (a, ctx) =>
       gated('github_revert', 'github.revert', ctx, String(a.pr || ''), async (call, deny, note) => {
         const { cfg, caller } = call;
@@ -419,7 +457,7 @@ const sessionTools: Tool[] = [
         const n = prNum(a.pr, deny);
         const pr = await getPr(cfg, n, deny);
         if (!pr.merged) deny(`PR #${n} is not merged`);
-        const ap = await approve(call, 'github.revert', String(n), a.approval_ts ? String(a.approval_ts) : null, deny);
+        const ap = await approve(call, 'github.revert', String(n), a.approval_ts ? String(a.approval_ts) : null, deny, undefined, a);
         note(ap);
         const d = await X.ghGraphql(cfg, 'mutation($id: ID!) { revertPullRequest(input: { pullRequestId: $id }) { revertPullRequest { number url } } }', { id: pr.node_id });
         consume(ap, 'github.revert', String(n), caller.session!);
@@ -447,7 +485,7 @@ const sessionTools: Tool[] = [
         const i = await linearIssue(cfg, a.id, deny);
         const input: Record<string, unknown> = {};
         if (a.state) {
-          const st = await X.linear(cfg, 'query($t: ID!) { team(id: $t) { states { nodes { id name type } } } }', { t: cfg.linear.teamId });
+          const st = await X.linear(cfg, 'query($t: String!) { team(id: $t) { states { nodes { id name type } } } }', { t: cfg.linear.teamId });
           const v = D.linearStateAllowed(String(a.state), st.team?.states?.nodes || []);
           if (!v.ok) deny(v.reason);
           input.stateId = (st.team.states.nodes as any[]).find((x) => x.name === (v as any).state.name).id;
@@ -572,14 +610,14 @@ const sessionTools: Tool[] = [
   {
     name: 'sentry_update_alert_rule',
     description: 'Change an alert rule the gatekeeper manages. Runs ONLY when an operator approved it in this session\'s incident thread (checked by Slack user id; e.g. "apply filters"). `changes` is merged into the rule.',
-    inputSchema: obj({ id: str('the alert rule (workflow) id'), changes: { type: 'object', description: 'fields to change' }, approval_ts: str('optional: the ts of the operator\'s message') }, ['id', 'changes']),
+    inputSchema: obj({ id: str('the alert rule (workflow) id'), changes: { type: 'object', description: 'fields to change' }, approval_ts: str('optional: the ts of the operator\'s message'), thread_ts: str('optional: the incident thread, when none is bound yet') }, ['id', 'changes']),
     run: (a, ctx) =>
       gated('sentry_update_alert_rule', 'sentry.alerts', ctx, String(a.id || ''), async (call, deny, note) => {
         const { cfg, caller } = call;
         const v = D.alertRuleInScope(a.id, cfg.sentry.alertRules);
         if (!v.ok) deny(v.reason);
         if (!a.changes || typeof a.changes !== 'object' || Array.isArray(a.changes) || !Object.keys(a.changes).length) deny('changes must be a non-empty object');
-        const ap = await approve(call, 'sentry.alerts', String(a.id), a.approval_ts ? String(a.approval_ts) : null, deny);
+        const ap = await approve(call, 'sentry.alerts', String(a.id), a.approval_ts ? String(a.approval_ts) : null, deny, undefined, a);
         note(ap);
         const cur = await X.sentry(cfg, 'GET', `/api/0/organizations/${cfg.sentry.org}/workflows/${a.id}/`);
         const r = await X.sentry(cfg, 'PUT', `/api/0/organizations/${cfg.sentry.org}/workflows/${a.id}/`, { ...cur, ...a.changes }, { alerts: true });

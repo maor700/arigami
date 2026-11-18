@@ -164,7 +164,7 @@
       desktop: p.desktop || 'none',
       talkTo: p.talkTo || ['parent', 'children'],
       maySpawn: !!p.maySpawn,
-      triggers: !!p.triggers,
+      triggers: p.triggers === true ? true : p.triggers === 'own-thread' ? 'own-thread' : false,
       hostRoutes: p.hostRoutes || [],
       domains: (p.domains || []).join(', '),
       grants: p.grants || [],
@@ -236,7 +236,10 @@
             opt('Its parent', d.talkTo.includes('parent'), (on) => (d.talkTo = toggleIn(d.talkTo, 'parent', on))),
             opt('Its children', d.talkTo.includes('children'), (on) => (d.talkTo = toggleIn(d.talkTo, 'children', on))),
             opt('May start children — they inherit and can only narrow this profile', d.maySpawn, (on) => (d.maySpawn = on)),
-            opt('May create cron jobs and listeners — only its own', d.triggers, (on) => (d.triggers = on)))),
+          )),
+        group('Wake-ups',
+          seg([[false, 'None'], ['own-thread', 'Listener on its own thread'], [true, 'Cron + listeners']], d.triggers, (v) => (d.triggers = v)),
+          h('p', { class: 'hint' }, 'Own thread: one Slack listener on the session\'s incident thread, waking only itself and ending with it. Cron stays off.')),
         group('Host features',
           opts((S.store?.hostRouteGroups || []).map((g) => opt(g, d.hostRoutes.includes(g), (on) => (d.hostRoutes = toggleIn(d.hostRoutes, g, on))))),
           h('div', { style: 'margin-top:.5rem' }, field('Web and browser domains (comma separated)', input({ value: d.domains, placeholder: 'example.com, docs.example.com', oninput: (e) => (d.domains = e.target.value) })))),
@@ -377,7 +380,15 @@
     const detail = (e) => e.reason || (e.approval ? `Approved by ${e.approval.kind === 'operator' ? `${e.approval.approverName || e.approval.approver} in the thread` : 'the auto-rule'}` : '') || (e.result ? JSON.stringify(e.result) : '');
     fill($('view-activity'), h('div', { class: 'stack' },
       card('Incident threads', {
-        foot: btn('Bind', async () => { try { await gk('gk_admin_bind', nb); await refresh('activity'); toast('Bound'); } catch (e) { toast(e.message); } }),
+        foot: btn('Bind', async () => {
+          try {
+            await gk('gk_admin_bind', nb);
+            // the host's own record of the session's thread (its triggers:'own-thread' listener may watch only this one)
+            await api('PATCH', `/__api/sessions/${encodeURIComponent(nb.session)}`, { metadata: { origin: { kind: 'slack', channel: nb.channel, thread_ts: nb.thread_ts } } }).catch(() => {});
+            await refresh('activity');
+            toast('Bound');
+          } catch (e) { toast(e.message); }
+        }),
         body: [
           Object.keys(bindings).length
             ? h('div', { class: 'rows' }, Object.entries(bindings).map(([sid, b]) => h('div', { class: 'rowline' },

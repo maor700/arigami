@@ -1177,7 +1177,7 @@ export async function registerLinearIssueListener(
 // Parse a Slack target from explicit args or a Slack archive URL:
 //   .../archives/C0123ABCD                 → { channelId }
 //   .../archives/C0123ABCD/p1699999999123  → { channelId, threadTs: 1699999999.123 }
-function parseSlackTarget(args: {
+export function parseSlackTarget(args: {
   channel_id?: string;
   channelId?: string;
   thread_ts?: string;

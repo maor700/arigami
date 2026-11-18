@@ -105,7 +105,7 @@ const SKILL_NAME_RE = /^[a-z0-9][a-z0-9-]*$/;
 // process, with whatever permissionMode the caller asks for. It is the
 // strongest grant an extension can hold, so it reads differently in the
 // install dialog instead of hiding among its neighbours.
-const KNOWN_PERMISSIONS = ['session:message', 'session:prompts', 'session:tabs', 'session:artifacts', 'session:listeners', 'session:inbox', 'host:create-session', 'notify'];
+const KNOWN_PERMISSIONS = ['session:message', 'session:prompts', 'session:tabs', 'session:artifacts', 'session:listeners', 'session:inbox', 'session:origin', 'host:create-session', 'notify'];
 /** Surfaces a manifest tab may ask for. `slash:<name>` is matched separately. */
 const KNOWN_OPEN_FROM = ['tab-bar', 'launcher'];
 const GATE_NAMES = ['merge.before'];
