@@ -23,6 +23,12 @@ spec:
     metadata:
       labels:
         {{- include "arigami-tenant.labels" . | nindent 8 }}
+      {{- if .Values.isolation.enabled }}
+      annotations:
+        # Two containers: `kubectl exec` / `kubectl cp` without -c (the control plane's busy probe, backups, support)
+        # must keep landing in the host, not the gatekeeper.
+        kubectl.kubernetes.io/default-container: arigami
+      {{- end }}
     spec:
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
@@ -50,9 +56,18 @@ spec:
         - name: arigami
           image: {{ include "arigami-tenant.imageRef" . | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- if and .Values.isolation.enabled .Values.isolation.noSudo }}
+          # isolation.noSudo: no_new_privs makes the image's setuid sudo inert (`sudo -n true` fails), and no
+          # capability is left to regain root with. docker/entrypoint.sh already skips its sudo-only steps then.
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          {{- else }}
           {{- with .Values.containerSecurityContext }}
           securityContext:
             {{- toYaml . | nindent 12 }}
+          {{- end }}
           {{- end }}
           {{- with .Values.command }}
           command:
@@ -113,6 +128,24 @@ spec:
             - name: ARIGAMI_ORG_HOST
               value: "1"
             {{- end }}
+            {{- if include "arigami-tenant.gatekeeperOn" . }}
+            # The gatekeeper's tools are served by the sidecar below over the pod's loopback (server/lib/ext-remote.ts).
+            - name: ARIGAMI_EXT_REMOTE
+              value: {{ printf "gatekeeper=http://127.0.0.1:%v" .Values.isolation.gatekeeper.port | quote }}
+            {{- end }}
+            {{- if include "arigami-tenant.egressProxyOn" . }}
+            # Everything leaves through this tenant's egress proxy (the NetworkPolicy allows nothing else). No password:
+            # from this container only isolation.egressProxy.sessionDomains are reachable.
+            {{- $proxy := include "arigami-tenant.egressUrl" . }}
+            {{- range list "HTTPS_PROXY" "HTTP_PROXY" "https_proxy" "http_proxy" }}
+            - name: {{ . }}
+              value: {{ $proxy | quote }}
+            {{- end }}
+            {{- range list "NO_PROXY" "no_proxy" }}
+            - name: {{ . }}
+              value: "127.0.0.1,localhost,::1"
+            {{- end }}
+            {{- end }}
             {{- range .Values.extraEnv }}
             - name: {{ .name }}
               value: {{ .value | quote }}
@@ -149,11 +182,97 @@ spec:
             periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
             timeoutSeconds: {{ .Values.probes.readiness.timeoutSeconds }}
             failureThreshold: {{ .Values.probes.readiness.failureThreshold }}
+        {{- if include "arigami-tenant.gatekeeperOn" . }}
+        {{- $gk := .Values.isolation.gatekeeper }}
+        {{- if not $gk.identitiesSecret }}
+        {{- fail "isolation.gatekeeper.identitiesSecret must name a Secret holding identities.json (create it out of band)" }}
+        {{- end }}
+        # The gatekeeper (extensions/gatekeeper) as a sidecar: the same image, serving only the gatekeeper's tools on
+        # 127.0.0.1 (mcp/ext-serve.ts). The bot identities are mounted HERE ONLY; the host container never sees them.
+        - name: gatekeeper
+          image: {{ include "arigami-tenant.imageRef" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["bun", "/app/mcp/ext-serve.ts", "/app/extensions/gatekeeper/tools/module.ts"]
+          workingDir: /app
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          env:
+            - name: EXT_NAME
+              value: gatekeeper
+            - name: EXT_SERVE_PORT
+              value: {{ $gk.port | quote }}
+            - name: ARIGAMI_URL
+              value: {{ printf "http://127.0.0.1:%v" .Values.service.port | quote }}
+            - name: GATEKEEPER_DIR
+              value: /gatekeeper/state
+            - name: GATEKEEPER_IDENTITIES_FILE
+              value: /run/gatekeeper/identities/identities.json
+            - name: GATEKEEPER_CONFIG_FILE
+              value: /run/gatekeeper/config/config.json
+            - name: HOME
+              value: /gatekeeper/state
+            - name: TMPDIR
+              value: /tmp
+            - name: TZ
+              value: {{ .Values.env.TZ | quote }}
+            {{- if include "arigami-tenant.egressProxyOn" . }}
+            # The gatekeeper authenticates to the proxy, which is what opens isolation.egressProxy.gatekeeperDomains.
+            - name: EGRESS_PROXY_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "arigami-tenant.fullname" . }}-egress-auth
+                  key: password
+            {{- $hostport := printf "%s.%s.svc.cluster.local:%v" (include "arigami-tenant.egressName" .) .Values.isolation.egressProxy.namespace .Values.isolation.egressProxy.port }}
+            {{- range list "HTTPS_PROXY" "HTTP_PROXY" "https_proxy" "http_proxy" }}
+            - name: {{ . }}
+              value: {{ printf "http://gatekeeper:$(EGRESS_PROXY_PASSWORD)@%s" $hostport | quote }}
+            {{- end }}
+            {{- range list "NO_PROXY" "no_proxy" }}
+            - name: {{ . }}
+              value: "127.0.0.1,localhost,::1"
+            {{- end }}
+            {{- end }}
+          volumeMounts:
+            - name: gatekeeper-identities
+              mountPath: /run/gatekeeper/identities
+              readOnly: true
+            - name: gatekeeper-config
+              mountPath: /run/gatekeeper/config
+              readOnly: true
+            - name: gatekeeper-state
+              mountPath: /gatekeeper/state
+            # Read-only: github_push reads the commits from a checkout inside the calling session's directory.
+            - name: data
+              mountPath: /data
+              readOnly: true
+            - name: gatekeeper-tmp
+              mountPath: /tmp
+          resources:
+            {{- toYaml $gk.resources | nindent 12 }}
+        {{- end }}
       volumes:
         - name: dshm
           emptyDir:
             medium: Memory
             sizeLimit: {{ .Values.shm.sizeLimit }}
+        {{- if include "arigami-tenant.gatekeeperOn" . }}
+        - name: gatekeeper-identities
+          secret:
+            secretName: {{ .Values.isolation.gatekeeper.identitiesSecret }}
+            defaultMode: 0440 # root:fsGroup — readable by the sidecar's uid 1000 through its group
+        - name: gatekeeper-config
+          configMap:
+            name: {{ include "arigami-tenant.fullname" . }}-gatekeeper
+        - name: gatekeeper-state
+          persistentVolumeClaim:
+            claimName: {{ include "arigami-tenant.fullname" . }}-gatekeeper
+        - name: gatekeeper-tmp
+          emptyDir:
+            sizeLimit: 256Mi
+        {{- end }}
         {{- if not .Values.persistence.enabled }}
         - name: data
           emptyDir: {}

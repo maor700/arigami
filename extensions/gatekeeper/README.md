@@ -84,9 +84,24 @@ Credentials are not in `extensions.json` (whose secrets become a tool server's e
 files or tool results. The tool server that holds the code runs once, in the host's MCP gateway, never as a child of a
 session; it refuses to act when called any other way (`ARIGAMI_MCP_GATEWAY=0`).
 
-**Limit until isolation (phase 4):** a restricted session still runs as the host's OS user, so `Bash` could read
-`$ARIGAMI_DIR/gatekeeper/` like any other file of that user. Running restricted sessions in a container / as another
-user (or the gatekeeper as a sidecar with the store mounted only there) closes that; nothing in this extension changes.
+**Same OS user:** on a standalone host a restricted session still runs as the host's OS user, so `Bash` could read
+`$ARIGAMI_DIR/gatekeeper/` like any other file of that user. On Kubernetes the tenant chart closes that (below).
+
+## As a sidecar (Kubernetes, `isolation.gatekeeper`)
+
+The tenant chart can run this extension's tools in a second container of the tenant pod
+(`deploy/helm/arigami-tenant`, values `isolation`; docs/K8S.md "Isolation"):
+
+- The sidecar runs `mcp/ext-serve.ts`, which serves the same `tools/module.ts` on the pod's loopback: `/shared` for
+  sessions (the host's MCP gateway relays each call with its `_meta`, as it does to a local process) and `/host` for
+  the tab. The host is told with `ARIGAMI_EXT_REMOTE=gatekeeper=http://127.0.0.1:<port>` and spawns nothing.
+- **Managed mode.** `GATEKEEPER_IDENTITIES_FILE` (a Secret) and `GATEKEEPER_CONFIG_FILE` (a ConfigMap) are mounted
+  read-only into the sidecar only. The tab shows them but cannot change them; scope, identity and binding writes
+  answer "managed by the deployment". State, the audit log and the push mirrors live on the sidecar's own volume.
+- **What is left.** A session in the host container can reach the sidecar's loopback port and could call `/shared`
+  with a made-up `_meta`, i.e. pose as another restricted session. That is bounded: the scope, the operators and the
+  identities cannot change from inside the pod, a merge / revert / alert-rule change still needs an operator's word or
+  the CI + review rule checked against GitHub and Slack, and the identities themselves never leave the sidecar.
 
 ## Model calls without the Claude token (design, not built)
 

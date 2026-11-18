@@ -1,0 +1,199 @@
+{{- if include "arigami-tenant.egressProxyOn" . -}}
+{{- $ep := .Values.isolation.egressProxy -}}
+{{- $name := include "arigami-tenant.egressName" . -}}
+{{- $pw := include "arigami-tenant.egressPassword" . -}}
+{{- $sel := printf "arigami.dev/egress-proxy: %s" (.Values.tenant.id | toString | quote) -}}
+# This tenant's egress proxy (isolation.egressProxy). The tenant pod's NetworkPolicy allows it nothing but DNS and
+# this proxy; the proxy allows CONNECT to 443 on the listed domains only. Objects live in $ep.namespace and belong to
+# this release, so uninstalling the tenant removes them.
+#
+# The gatekeeper's password, in the TENANT namespace, mounted only into the gatekeeper container.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "arigami-tenant.fullname" . }}-egress-auth
+  labels:
+    {{- include "arigami-tenant.labels" . | nindent 4 }}
+type: Opaque
+data:
+  password: {{ $pw | b64enc | quote }}
+---
+# The same password, hashed, for the proxy.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $name }}
+  namespace: {{ $ep.namespace }}
+  labels:
+    {{- include "arigami-tenant.labels" . | nindent 4 }}
+type: Opaque
+data:
+  passwd: {{ htpasswd "gatekeeper" $pw | b64enc | quote }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}
+  namespace: {{ $ep.namespace }}
+  labels:
+    {{- include "arigami-tenant.labels" . | nindent 4 }}
+data:
+  squid.conf: |
+    http_port {{ $ep.port }}
+    auth_param basic program /usr/lib/squid/basic_ncsa_auth /etc/squid/auth/passwd
+    auth_param basic realm arigami-egress
+    auth_param basic children 2
+    acl gatekeeper proxy_auth gatekeeper
+    acl CONNECT method CONNECT
+    acl tls_port port 443
+    acl ip_literal dstdom_regex ^[0-9.]+$ ^\[?[0-9a-fA-F:]+\]?$
+    acl private_dst dst {{ join " " (concat .Values.networkPolicy.egress.exceptCidrs (list "169.254.0.0/16" "127.0.0.0/8" "fc00::/7" "fe80::/10" "::1")) }}
+    acl session_sites dstdomain {{ join " " $ep.sessionDomains }}
+    acl gatekeeper_sites dstdomain {{ join " " $ep.gatekeeperDomains }}
+    http_access deny !CONNECT
+    http_access deny !tls_port
+    http_access deny ip_literal
+    http_access deny private_dst
+    http_access allow session_sites
+    http_access allow gatekeeper_sites gatekeeper
+    http_access deny all
+    # The access log on stdout is the evidence: every allowed and denied destination (kubectl logs).
+    logformat arigami %{%Y-%m-%dT%H:%M:%S}tl %>a %Ss/%03>Hs %rm %ru %un
+    access_log stdio:/dev/stdout arigami
+    cache_log stdio:/dev/stderr
+    cache deny all
+    logfile_rotate 0
+    pid_filename none
+    coredump_dir /tmp
+    shutdown_lifetime 2 seconds
+    pinger_enable off
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  namespace: {{ $ep.namespace }}
+  labels:
+    {{- include "arigami-tenant.labels" . | nindent 4 }}
+    {{- $sel | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- $sel | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- $sel | nindent 8 }}
+      annotations:
+        checksum/config: {{ printf "%v%v%v" $ep.sessionDomains $ep.gatekeeperDomains $ep.port | sha256sum | trunc 16 }}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 13   # `proxy` in the Ubuntu squid image
+        runAsGroup: 13
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: squid
+          image: {{ $ep.image | quote }}
+          command: ["squid", "-N", "-f", "/etc/squid/arigami/squid.conf"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - name: proxy
+              containerPort: {{ $ep.port }}
+          readinessProbe:
+            tcpSocket:
+              port: proxy
+            periodSeconds: 5
+          volumeMounts:
+            - name: conf
+              mountPath: /etc/squid/arigami
+              readOnly: true
+            - name: auth
+              mountPath: /etc/squid/auth
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+            - name: run
+              mountPath: /run
+            - name: spool
+              mountPath: /var/spool/squid
+            - name: logs
+              mountPath: /var/log/squid
+          resources:
+            {{- toYaml $ep.resources | nindent 12 }}
+      volumes:
+        - name: conf
+          configMap:
+            name: {{ $name }}
+        - name: auth
+          secret:
+            secretName: {{ $name }}
+            defaultMode: 0444
+        - name: tmp
+          emptyDir: {}
+        - name: run
+          emptyDir: {}
+        - name: spool
+          emptyDir: {}
+        - name: logs
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  namespace: {{ $ep.namespace }}
+  labels:
+    {{- include "arigami-tenant.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- $sel | nindent 4 }}
+  ports:
+    - name: proxy
+      port: {{ $ep.port }}
+      targetPort: proxy
+---
+# The proxy's own policy. Every tenant admits ingress from the edge namespace, so without this a proxy there would be a
+# way into other tenants: it may only reach DNS and public addresses on 443, and only this tenant may use it.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $name }}
+  namespace: {{ $ep.namespace }}
+  labels:
+    {{- include "arigami-tenant.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- $sel | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              {{ .Values.networkPolicy.ingressNamespaceLabelKey }}: {{ .Release.Namespace | quote }}
+      ports:
+        - protocol: TCP
+          port: {{ $ep.port }}
+  egress:
+    {{- include "arigami-tenant.dnsEgressRule" . | nindent 4 }}
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            # The private ranges the tenant policy subtracts (networkPolicy.egress.exceptCidrs), all of link-local
+            # (cloud metadata) and loopback.
+            except:
+              {{- range (concat .Values.networkPolicy.egress.exceptCidrs (list "169.254.0.0/16" "127.0.0.0/8") | uniq) }}
+              - {{ . }}
+              {{- end }}
+      ports:
+        - protocol: TCP
+          port: 443
+{{- end -}}

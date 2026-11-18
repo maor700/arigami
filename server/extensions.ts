@@ -32,6 +32,7 @@ import { linkDir } from './lib/platform.js';
 import { bunExec } from './lib/bun-exec.js';
 import { gitEnvFor } from './lib/git-auth.js';
 import { checkDeps, declaredDeps, installDeps, STAMP_FILE } from './lib/ext-deps.js';
+import { extRemoteUrl, remoteEndpoint } from './lib/ext-remote.js';
 import { createHash } from 'node:crypto';
 import { appendIncident } from './incidents.js';
 import { broadcast, emitLocal, subscribe } from './bus.js';
@@ -2000,7 +2001,11 @@ export async function callExtTool(ext: string, tool: string, args: Record<string
       // Never let a host call pass for a session call (the host process may itself
       // have been started from a session's shell and carry its marker).
       const { ARIGAMI_SESSION_ID: _sid, ...hostEnv } = process.env as Record<string, string>;
-      const transport = new StdioClientTransport({ command: s.command, args: s.args, cwd: s.cwd, env: { ...hostEnv, ...s.env } });
+      // Served by a sidecar (lib/ext-remote.ts): its host-call endpoint, nothing spawned here.
+      const remote = extRemoteUrl(e.name);
+      const transport = remote
+        ? new (await import('@modelcontextprotocol/sdk/client/streamableHttp.js')).StreamableHTTPClientTransport(remoteEndpoint(remote, 'host'))
+        : new StdioClientTransport({ command: s.command, args: s.args, cwd: s.cwd, env: { ...hostEnv, ...s.env } });
       const client = new Client({ name: 'arigami-ext-caller', version: '0.1.0' }, (await import('./lib/mcp-validator.js')).mcpClientOptions());
       try {
         await client.connect(transport);

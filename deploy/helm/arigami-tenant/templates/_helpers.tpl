@@ -114,3 +114,73 @@ Envoy/Contour namespace plus an auth proxy such as Pomerium, for instance).
 {{- end -}}
 {{- $out | uniq | toJson -}}
 {{- end -}}
+
+{{/*
+Tenant isolation (values `isolation`, off by default). Everything below renders only when it is on; with it off the
+chart's output is byte-identical to before it existed.
+*/}}
+{{- define "arigami-tenant.egressProxyOn" -}}
+{{- if and .Values.isolation.enabled .Values.isolation.egressProxy.enabled -}}true{{- end -}}
+{{- end -}}
+
+{{- define "arigami-tenant.gatekeeperOn" -}}
+{{- if and .Values.isolation.enabled .Values.isolation.gatekeeper.enabled -}}true{{- end -}}
+{{- end -}}
+
+{{/* Name of this tenant's egress proxy objects (in isolation.egressProxy.namespace). */}}
+{{- define "arigami-tenant.egressName" -}}
+{{- printf "arigami-egress-%s" .Values.tenant.id | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
+{{- define "arigami-tenant.egressUrl" -}}
+{{- printf "http://%s.%s.svc.cluster.local:%v" (include "arigami-tenant.egressName" .) .Values.isolation.egressProxy.namespace .Values.isolation.egressProxy.port -}}
+{{- end -}}
+
+{{/*
+The gatekeeper's proxy password: kept across upgrades (read back from the Secret it lives in), random on first install.
+*/}}
+{{- define "arigami-tenant.egressPassword" -}}
+{{- $ep := .Values.isolation.egressProxy -}}
+{{- if not (hasKey $ep "_password") -}}
+{{- $name := printf "%s-egress-auth" (include "arigami-tenant.fullname" .) -}}
+{{- $have := lookup "v1" "Secret" .Release.Namespace $name -}}
+{{- if and $have $have.data (hasKey $have.data "password") -}}
+{{- $_ := set $ep "_password" (index $have.data "password" | b64dec) -}}
+{{- else -}}
+{{- $_ := set $ep "_password" (randAlphaNum 40) -}}
+{{- end -}}
+{{- end -}}
+{{- $ep._password -}}
+{{- end -}}
+
+{{/*
+Egress to the cluster DNS — shared by the tenant policy and its egress proxy's policy.
+*/}}
+{{- define "arigami-tenant.dnsEgressRule" -}}
+# Cluster DNS. Without this nothing resolves and every other rule is moot.
+#
+# Two ways a pod reaches DNS, and a policy must allow both:
+#   - the kube-dns pods themselves (the namespaceSelector), and
+#   - the kube-dns Service IP. With NodeLocal DNSCache (GKE's default) the node answers on that IP locally, so the
+#     packet is never rewritten to a kube-dns pod and the selector above does not match it — every lookup times out
+#     while egress by IP works. The Service IP is read from the cluster when the chart is rendered against one
+#     (`lookup`), and `networkPolicy.egress.dnsServiceCidrs` adds any others.
+- to:
+    - namespaceSelector:
+        matchLabels:
+          {{ .Values.networkPolicy.ingressNamespaceLabelKey }}: {{ .Values.networkPolicy.egress.dnsNamespace | quote }}
+    {{- $dnsSvc := lookup "v1" "Service" .Values.networkPolicy.egress.dnsNamespace "kube-dns" }}
+    {{- if and $dnsSvc $dnsSvc.spec $dnsSvc.spec.clusterIP }}
+    - ipBlock:
+        cidr: {{ printf "%s/32" $dnsSvc.spec.clusterIP }}
+    {{- end }}
+    {{- range .Values.networkPolicy.egress.dnsServiceCidrs }}
+    - ipBlock:
+        cidr: {{ . | quote }}
+    {{- end }}
+  ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+{{- end -}}

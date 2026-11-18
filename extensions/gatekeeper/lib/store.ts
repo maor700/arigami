@@ -100,18 +100,39 @@ function deepMerge<T>(base: T, over: unknown): T {
   return out as T;
 }
 
-export const readConfig = (): Config => deepMerge(DEFAULT_CONFIG, readJson('config.json', {}));
-export const readIdentities = (): Identities => readJson<Identities>('identities.json', {});
+// MANAGED mode — the gatekeeper runs as a sidecar (Helm chart `isolation.gatekeeper`): the identities and the scope come
+// from files the deployment mounts read-only into this container only (a Secret and a ConfigMap), and nothing inside the
+// pod can change them — not the tab, not a session that reaches this process over the pod's loopback. State, the audit
+// log and the push mirrors stay in DIR. Read per call, so a test (or a remount) needs no restart.
+export const managedFiles = () => ({ identities: process.env.GATEKEEPER_IDENTITIES_FILE || '', config: process.env.GATEKEEPER_CONFIG_FILE || '' });
+export const isManaged = (): boolean => { const m = managedFiles(); return !!(m.identities || m.config); };
+export class ManagedError extends Error {
+  constructor(what: string) { super(`${what} is managed by the deployment (read-only here)`); }
+}
+function readFileJson<T>(file: string, fallback: T): T {
+  try { return JSON.parse(fs.readFileSync(file, 'utf8')) as T; } catch { return fallback; }
+}
+
+export const readConfig = (): Config => {
+  const file = managedFiles().config;
+  return deepMerge(DEFAULT_CONFIG, file ? readFileJson(file, {}) : readJson('config.json', {}));
+};
+export const readIdentities = (): Identities => {
+  const file = managedFiles().identities;
+  return file ? readFileJson<Identities>(file, {}) : readJson<Identities>('identities.json', {});
+};
 export const readState = (): GkState => {
   const s = readJson<Partial<GkState>>('state.json', {});
   return { bindings: isObj(s.bindings) ? (s.bindings as any) : {}, consumed: isObj(s.consumed) ? (s.consumed as any) : {} };
 };
 
 export function writeConfig(c: Config): Config {
+  if (managedFiles().config) throw new ManagedError('the gatekeeper configuration');
   writeJson('config.json', c);
   return readConfig();
 }
 export function writeIdentities(i: Identities): void {
+  if (managedFiles().identities) throw new ManagedError('the bot identities');
   writeJson('identities.json', i);
 }
 export function updateState(fn: (s: GkState) => void): GkState {

@@ -40,35 +40,24 @@ spec:
               {{ $.Values.networkPolicy.ingressNamespaceLabelKey }}: {{ . | quote }}
     {{- end }}
   egress:
-    {{- if eq .Values.networkPolicy.egress.mode "open" }}
+    {{- if and (eq .Values.networkPolicy.egress.mode "open") (not (include "arigami-tenant.egressProxyOn" .)) }}
     - {}
     {{- else }}
-    # Cluster DNS. Without this nothing resolves and every other rule is moot.
-    #
-    # Two ways a pod reaches DNS, and a policy must allow both:
-    #   - the kube-dns pods themselves (the namespaceSelector), and
-    #   - the kube-dns Service IP. With NodeLocal DNSCache (GKE's default) the node answers on that IP locally, so the
-    #     packet is never rewritten to a kube-dns pod and the selector above does not match it — every lookup times out
-    #     while egress by IP works. The Service IP is read from the cluster when the chart is rendered against one
-    #     (`lookup`), and `networkPolicy.egress.dnsServiceCidrs` adds any others.
+    {{- include "arigami-tenant.dnsEgressRule" . | nindent 4 }}
+    {{- if include "arigami-tenant.egressProxyOn" . }}
+    # isolation.egressProxy: nothing but this tenant's own proxy. No ipBlock at all, so no public address, no
+    # in-cluster Service and no metadata endpoint is reachable directly; the proxy decides by domain.
     - to:
         - namespaceSelector:
             matchLabels:
-              {{ .Values.networkPolicy.ingressNamespaceLabelKey }}: {{ .Values.networkPolicy.egress.dnsNamespace | quote }}
-        {{- $dnsSvc := lookup "v1" "Service" .Values.networkPolicy.egress.dnsNamespace "kube-dns" }}
-        {{- if and $dnsSvc $dnsSvc.spec $dnsSvc.spec.clusterIP }}
-        - ipBlock:
-            cidr: {{ printf "%s/32" $dnsSvc.spec.clusterIP }}
-        {{- end }}
-        {{- range .Values.networkPolicy.egress.dnsServiceCidrs }}
-        - ipBlock:
-            cidr: {{ . | quote }}
-        {{- end }}
+              {{ .Values.networkPolicy.ingressNamespaceLabelKey }}: {{ .Values.isolation.egressProxy.namespace | quote }}
+          podSelector:
+            matchLabels:
+              arigami.dev/egress-proxy: {{ .Values.tenant.id | toString | quote }}
       ports:
-        - protocol: UDP
-          port: 53
         - protocol: TCP
-          port: 53
+          port: {{ .Values.isolation.egressProxy.port }}
+    {{- else }}
     # The public internet, minus everything private. `except` entries must be
     # inside the cidr they subtract from, so this is one 0.0.0.0/0 rule rather
     # than a list of public ranges.
@@ -79,6 +68,7 @@ spec:
               {{- toYaml .Values.networkPolicy.egress.exceptCidrs | nindent 14 }}
     {{- with .Values.networkPolicy.egress.extraRules }}
     {{- toYaml . | nindent 4 }}
+    {{- end }}
     {{- end }}
     {{- end }}
 {{- end -}}

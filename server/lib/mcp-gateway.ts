@@ -32,6 +32,7 @@ import { createHash } from 'node:crypto';
 import { cfg, getSession } from '../state.js';
 import { auth } from '../auth.js';
 import * as extensions from '../extensions.js';
+import { extRemoteUrl, remoteEndpoint } from './ext-remote.js';
 
 export const GATEWAY_PREFIX = '/__mcp/s/';
 export const COMPOSIO_SERVER = 'composio-mcp';
@@ -94,6 +95,17 @@ async function extClient(name: string, spec: { command: string; args: string[]; 
   }
   const made = (async () => {
     const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
+    // An extension served by a sidecar (lib/ext-remote.ts): no child process here, the remote one holds the code and
+    // whatever it needs. The caller still rides in each call's _meta, exactly as with a local shared process.
+    const remote = extRemoteUrl(String(spec.env?.EXT_NAME || ''));
+    if (remote) {
+      const { StreamableHTTPClientTransport } = await import('@modelcontextprotocol/sdk/client/streamableHttp.js');
+      const transport = new StreamableHTTPClientTransport(remoteEndpoint(remote, 'shared'));
+      const client = new Client({ name: 'arigami-gateway', version: '0.1.0' }, (await import('./mcp-validator.js')).mcpClientOptions());
+      transport.onclose = () => extClients.delete(key);
+      await client.connect(transport);
+      return client;
+    }
     const { StdioClientTransport } = await import('@modelcontextprotocol/sdk/client/stdio.js');
     // The host's own env minus any session identity; the caller comes per call.
     const { ARIGAMI_SESSION_ID: _s, ARIGAMI_TOKEN: _t, ...base } = process.env as Record<string, string>;

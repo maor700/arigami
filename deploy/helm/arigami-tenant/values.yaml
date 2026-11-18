@@ -334,3 +334,63 @@ existingSecret: ""
 # `--set` are also stored in Helm's own release Secret. An org that wants this
 # key to exist in exactly one place should create the Secret out-of-band and
 # point `existingSecret` at it instead.
+
+# Tenant isolation for restricted sessions (docs/K8S.md "Isolation"). OFF by default: with `enabled: false` nothing
+# below renders and the chart's output is exactly what it was before this block existed. On, it changes the whole
+# tenant — every session in it, Full ones included:
+#
+#   gatekeeper   the gatekeeper extension's tools run in a SIDECAR container of the same pod. Its bot identities come
+#                from a Secret mounted only into that container, its scope from a read-only ConfigMap; the host
+#                container never holds either (extensions/gatekeeper/README.md).
+#   noSudo       no privilege escalation in the host container: the image's passwordless sudo stops working.
+#   egressProxy  the tenant's NetworkPolicy lets the pod reach only cluster DNS and its own egress proxy (a small squid
+#                in `egressProxy.namespace`, one per tenant, rendered and deleted with this release); the proxy
+#                allows only the listed domains, over CONNECT/443. The cloud metadata endpoint and every IP literal
+#                are unreachable by construction.
+isolation:
+  enabled: false
+  noSudo: true
+  gatekeeper:
+    enabled: true
+    port: 3199
+    # Name of an existing Secret in this namespace with the key `identities.json` (the gatekeeper's identities file:
+    # {github:{appId,installationId,privateKey}, slack:{botToken}, linear:{apiKey}, sentry:{token,alertsToken}}).
+    # Create it out of band (kubectl create secret generic … --from-file=identities.json=…) so no credential passes
+    # through Helm values or Helm's release Secret. Required when the gatekeeper is on.
+    identitiesSecret: ""
+    # The gatekeeper scope (extensions/gatekeeper/lib/store.ts Config, partial) — rendered into a ConfigMap, read-only.
+    config: {}
+    # Its own small volume: thread bindings, approvals already used, the audit log, push mirrors. Not shared with the
+    # host container. A standalone claim (not a volumeClaimTemplate), so turning isolation off again is a plain upgrade.
+    persistence:
+      size: 1Gi
+      storageClassName: ""
+    resources:
+      requests: {cpu: 50m, memory: 128Mi}
+      limits: {cpu: 500m, memory: 384Mi}
+  egressProxy:
+    enabled: true
+    # Where the proxy runs. Must be a namespace this release may create objects in. Its pods get their own
+    # NetworkPolicy (ingress only from this tenant's namespace; egress DNS + public 443), so a proxy living next to the
+    # cluster's edge cannot become a path into other tenants.
+    namespace: edge
+    image: ubuntu/squid:6.6-24.04_edge
+    port: 3128
+    # Everything in the tenant may reach these (the engines). Leading dot = the domain and its subdomains.
+    sessionDomains:
+      - .anthropic.com
+      - .claude.ai
+      - .claude.com
+      - .openai.com
+      - .chatgpt.com
+      - registry.npmjs.org
+    # Only the gatekeeper sidecar may reach these (it authenticates to the proxy; the host container has no password).
+    gatekeeperDomains:
+      - api.github.com
+      - github.com
+      - slack.com
+      - api.linear.app
+      - .sentry.io
+    resources:
+      requests: {cpu: 20m, memory: 64Mi}
+      limits: {cpu: 200m, memory: 192Mi}

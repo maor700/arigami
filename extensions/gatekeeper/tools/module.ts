@@ -613,10 +613,17 @@ async function sentryIssue(cfg: S.Config, id: unknown, deny: (r: string) => neve
 // ---- admin tools: the owner's tab only (host call; the host also refuses session tokens for them) ------------------
 
 const isHost = (ctx: Ctx) => !!ctx.caller?.hostCall;
+// Managed (sidecar) mode: a "host call" reaches this process over the pod's loopback, which a session in the host
+// container can reach too — so nothing that changes scope, identities or bindings is served there at all.
+const ADMIN_WRITES = new Set(['gk_admin_save_config', 'gk_admin_set_identity', 'gk_admin_clear_identity', 'gk_admin_bind']);
 const adminOnly = (tool: string, ctx: Ctx, fn: () => Promise<unknown> | unknown) => {
   if (!isHost(ctx)) {
     S.audit({ session: ctx.caller?.session || null, tool, decision: 'refused', reason: 'admin tool called by a session' });
     return refused('admin tools are for the owner\'s tab only');
+  }
+  if (S.isManaged() && ADMIN_WRITES.has(tool)) {
+    S.audit({ session: null, tool, decision: 'refused', reason: 'managed by the deployment' });
+    return { ok: false, error: 'managed by the deployment: change the gatekeeper\'s Secret / ConfigMap, not the tab' };
   }
   return fn();
 };
@@ -689,6 +696,7 @@ const adminTools: Tool[] = [
       adminOnly('gk_admin_state', ctx, () => ({
         ok: true,
         dir: S.DIR,
+        managed: S.isManaged(),
         config: S.readConfig(),
         identities: S.identityStatus(),
         bindings: S.readState().bindings,
