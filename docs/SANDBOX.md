@@ -190,6 +190,50 @@ restricted sessions' requests with their own token pass the listener: any other 
   next step: the image would add Xvfb + Chromium, and the host would reach VNC/CDP through `docker exec` pipes. Until
   then, use `desktop: "none"` for the strongest isolation.
 
+## Kubernetes: a sandbox container in the tenant's pod (`sandbox.mode: "sidecar"`)
+
+A control-plane tenant has no Docker to start containers with. The tenant chart's `isolation.sandbox`
+(deploy/helm/arigami-tenant, docs/K8S.md "Isolation") gives the pod two more containers instead, and the host runs
+every restricted session's engine in the first one:
+
+- **`sandbox`** runs `docker/sandbox/sidecar-agent.ts`. The host's launcher (`server/lib/sandbox-sidecar-launch.ts`, in
+  place of `sandbox-launch.ts`) connects to it on the pod's loopback, hands it the engine's argv, env and folder, and
+  relays the engine's stdin, stdout, stderr, signals and exit code. The engine driver sees the same stream as from a
+  local child.
+- **`egress`** runs this page's egress proxy (`docker/sandbox/egress-proxy.ts`) on the pod's loopback, with the same
+  per-session credentials, allowlist and JSON log. It reads them from `$ARIGAMI_DIR/sandbox/egress`, the only part of
+  the disk it sees. There is no relay: the sandbox shares the pod's loopback with the host.
+
+The same rules as a container per session apply:
+
+- The restricted env holds this engine's credential only, from a per-run spec file that is deleted before the engine
+  starts.
+- Codex gets a minimal, read-only login without a refresh token. It is staged in its own `CODEX_HOME` under the
+  session's sandbox dir, next to a copy of the session's codex config.
+- `HOME` and `TMPDIR` are per session (`$ARIGAMI_DIR/sandbox/sessions/<id>/{home,tmp}`).
+- The egress allowlist comes from the profile.
+
+How the container is held:
+
+| | |
+|---|---|
+| user | the host's uid, so shared files keep one owner, with its **own primary group** (`isolation.sandbox.gid`) |
+| privileges | no new privileges, every capability dropped, read-only image: the image's `sudo` cannot start |
+| disk | only `isolation.sandbox.workRoots`, the per-session homes and, read-only, the user skills and plugins and the engine's install dir. Never `$ARIGAMI_DIR`, the host's home, `accounts.json`, the gatekeeper store or any token file |
+| network | a root init step (`NET_ADMIN`, that step only) installs a packet filter in the pod's network namespace for that group. It allows established flows, the host's API port and the egress proxy on loopback, and nothing else: no DNS, no internet and no other loopback port (VNC, CDP, the gatekeeper, dev servers). The container itself has no capability to change it. |
+| X displays | the host starts Xvfb with `-nolisten local` (`ARIGAMI_X_NOLISTEN_LOCAL=1`). Abstract unix sockets belong to the shared network namespace. |
+
+A restricted session's folder must be inside a work root. Any other folder is refused with the reason, and the session
+never runs on the host. Full sessions and the host container are untouched: their spawn is what the engine driver
+built, and they keep sudo and the pod's usual egress.
+
+What is weaker than a container per session, stated:
+
+- All restricted sessions share the one sandbox container and its uid. A session can read another restricted
+  session's work roots and home, and the environment of its processes (its engine credential and proxy credentials
+  included).
+- Full sessions in the host container can reach the agent's port. They already run with more than the sandbox has.
+
 ## Linux-only variant: a dedicated uid + nftables (design note)
 
 The alternative on Linux, without Docker:

@@ -59,7 +59,11 @@ export function hostAllowed(host: string, patterns: string[]): boolean {
 
 // ---- names ---------------------------------------------------------------------------------------------------------
 
-export const enabled = (): boolean => cfg.sandbox?.mode === 'docker';
+export const enabled = (): boolean => cfg.sandbox?.mode === 'docker' || cfg.sandbox?.mode === 'sidecar';
+/** The sandbox is a container of the host's own pod (Helm chart `isolation.sandbox`), not a container per session. */
+export const sidecarMode = (): boolean => cfg.sandbox?.mode === 'sidecar';
+export const SIDECAR_AGENT = (): string => cfg.sandbox?.agent || '127.0.0.1:3299';
+export const SIDECAR_EGRESS = (): string => cfg.sandbox?.egress || '127.0.0.1:3128';
 /** Is this session run in a sandbox? Restricted (has a profile) and the sandbox is on. */
 export const isSandboxed = (s: { profile?: unknown } | null | undefined): boolean => enabled() && !!s?.profile;
 
@@ -390,6 +394,7 @@ type Built = { bin: string; args: string[]; env: Record<string, string | undefin
  */
 export function wrapSpawn<T extends Built>(s: { id: string; profile?: { name?: string; egress?: string[] } | null } | null | undefined, built: T, engineId: string): T | Built {
   if (!s || !isSandboxed(s)) return built;
+  if (sidecarMode()) return wrapSidecar(s as { id: string; profile: { name?: string; egress?: string[] } }, built, engineId);
   const spec = launchSpec(s as { id: string; profile: { name?: string; egress?: string[] } }, built, engineId);
   const dir = path.join(SANDBOX_DIR(), 'run');
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -458,6 +463,134 @@ export function launchSpec(s: { id: string; profile: { name?: string; egress?: s
     mounts: [...plan.mounts, ...extraMounts].map((m) => ({ source: daemonPath(m.host), target: m.target, ro: m.ro })),
     ...(ephemeral.length ? { ephemeral } : {}),
   };
+}
+
+// ---- sidecar mode (a sandbox container in the host's own pod) ------------------------------------------------------
+//
+// The pod (Helm chart `isolation.sandbox`) has a `sandbox` container next to the host's: no secrets, no sudo, a
+// different primary group that the pod's packet filter lets reach only the host's API port and the egress proxy on
+// the pod's loopback, and only cfg.sandbox.workRoots of the shared disk (plus the per-session HOMEs under
+// $ARIGAMI_DIR/sandbox/sessions). Its agent (docker/sandbox/sidecar-agent.ts) starts the engine there; the host's
+// launcher (sandbox-sidecar-launch.ts) relays the engine's stdio. Same rules as a container per session: the
+// restricted env, this engine's credential only, a per-session HOME and TMPDIR, the egress policy of its profile.
+
+const SIDECAR_LAUNCHER = () => path.join(resourceRoot(), 'server', 'lib', 'sandbox-sidecar-launch.ts');
+
+/** Why a restricted session's folder cannot run in the sidecar (it is not inside a shared work root), or null. */
+export function sidecarCwdError(cwd: string, roots: string[], guard: { home: string; arigamiDir: string; root: string }, fsx: Pick<PlanFs, 'realpath' | 'git'> = realFs): string | null {
+  if (!roots.length) return 'the sandbox sidecar has no shared work roots (sandbox.workRoots)';
+  const real = fsx.realpath(cwd) || cwd;
+  const g = fsx.git(real);
+  for (const p of [real, g?.top, g?.common].filter(Boolean) as string[]) {
+    if (!roots.some((r) => within(p, r))) return `${p} is not in a folder the sandbox shares (${roots.join(', ')}). Give the session a project folder there.`;
+    for (const d of [guard.home, guard.arigamiDir, guard.root]) if (covers(p, d)) return `${p} would expose ${d}`;
+  }
+  return null;
+}
+
+/** codex in the sidecar: its own CODEX_HOME under the session's sandbox dir, with the config and a staged login. */
+function sidecarCodexHome(sessionId: string, hostCodexHome: string | undefined): { dir: string; staged?: string; error?: string } {
+  const dir = path.join(SANDBOX_DIR(), 'sessions', sessionId, 'codex');
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  let source: string | null = null;
+  if (hostCodexHome && fs.existsSync(hostCodexHome)) {
+    for (const e of fs.readdirSync(hostCodexHome, { withFileTypes: true })) {
+      const from = path.join(hostCodexHome, e.name);
+      if (e.name === 'auth.json') { try { source = fs.realpathSync(from); } catch {} continue; }
+      // the host's config for this session (MCP servers, model, …): plain files only, refreshed at every launch
+      if (e.isFile()) try { fs.copyFileSync(from, path.join(dir, e.name)); } catch {}
+    }
+  }
+  if (!source) return { dir };
+  const staged = stageCodexAuth(sessionId, source);
+  if (!staged) return { dir, error: `the codex login (${source}) is unreadable or has no token — sign codex in again` };
+  const auth = path.join(dir, 'auth.json');
+  try { fs.rmSync(auth, { force: true }); } catch {}
+  fs.copyFileSync(staged, auth);
+  fs.chmodSync(auth, 0o400);
+  fs.rmSync(staged, { force: true });
+  return { dir, staged: auth };
+}
+
+export function sidecarSpec(s: { id: string; profile: { name?: string; egress?: string[] } }, built: Built, engineId: string): import('./sandbox-sidecar-launch.js').SidecarSpec {
+  const base = { v: 1 as const, sessionId: s.id, agent: SIDECAR_AGENT(), cwd: built.cwd };
+  const roots = (cfg.sandbox?.workRoots || []).map((r) => path.resolve(r));
+  const why = sidecarCwdError(built.cwd, roots, { home: HOME, arigamiDir: ARIGAMI_DIR, root: resourceRoot() });
+  if (why) return { ...base, argv: [], env: {}, error: `the session's folder cannot be used in its sandbox: ${why}` };
+  const env: Record<string, string> = {};
+  for (const [k, v] of Object.entries(built.env)) if (v !== undefined && !DROP_ENV.includes(k)) env[k] = String(v);
+  const keepCred = ENGINE_ENV_CREDENTIALS[engineId] || [];
+  for (const k of ALL_ENV_CREDENTIALS) if (!keepCred.includes(k)) delete env[k];
+  const sessDir = path.join(SANDBOX_DIR(), 'sessions', s.id);
+  const home = sessionHome(s.id);
+  const tmp = path.join(sessDir, 'tmp');
+  for (const d of [home, tmp]) fs.mkdirSync(d, { recursive: true, mode: 0o700 });
+  seedGitIdentity(home);
+  const ephemeral: string[] = [];
+  if (engineId === 'codex') {
+    const c = sidecarCodexHome(s.id, env.CODEX_HOME);
+    if (c.error) return { ...base, argv: [], env: {}, error: c.error };
+    env.CODEX_HOME = c.dir;
+    if (c.staged) ephemeral.push(c.staged);
+  } else delete env.CODEX_HOME;
+  writePolicy(s.id, s.profile);
+  const cred = `${encodeURIComponent(s.id)}:${secretOf(egressKey(), s.id)}`;
+  const proxy = `http://${cred}@${SIDECAR_EGRESS()}`;
+  Object.assign(env, {
+    HOME: home,
+    TMPDIR: tmp,
+    PATH: `${home}/.local/bin:${home}/.bun/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`,
+    USER: 'sandbox',
+    SHELL: '/bin/bash',
+    HTTP_PROXY: proxy, HTTPS_PROXY: proxy, http_proxy: proxy, https_proxy: proxy,
+    NO_PROXY: 'localhost,127.0.0.1,::1', no_proxy: 'localhost,127.0.0.1,::1',
+    ARIGAMI_SANDBOX: 'sidecar',
+    DISABLE_AUTOUPDATER: '1',
+    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
+  });
+  // The engine binary: cfg.sandbox.engines, else the file the driver resolved, by its REAL path (an engine the host
+  // installed in its home is a symlink into a versions dir the chart shares read-only — isolation.sandbox.engineDirs).
+  let bin = cfg.sandbox?.engines?.[engineId] || built.bin;
+  if (!cfg.sandbox?.engines?.[engineId]) try { bin = fs.realpathSync(built.bin); } catch {}
+  return { ...base, argv: [bin, ...built.args], env, ...(ephemeral.length ? { ephemeral } : {}) };
+}
+
+function wrapSidecar(s: { id: string; profile: { name?: string; egress?: string[] } }, built: Built, engineId: string): Built {
+  const spec = sidecarSpec(s, built, engineId);
+  const dir = path.join(SANDBOX_DIR(), 'run');
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const f = path.join(dir, `${s.id}.${crypto.randomBytes(4).toString('hex')}.json`);
+  fs.writeFileSync(f, JSON.stringify(spec), { mode: 0o600 });
+  const env: Record<string, string> = {};
+  for (const k of ['PATH', 'HOME', 'LANG', 'TMPDIR']) if (process.env[k]) env[k] = process.env[k]!;
+  return { bin: process.execPath, args: [SIDECAR_LAUNCHER(), f], env, cwd: SANDBOX_DIR() };
+}
+
+/** Boot in sidecar mode: the egress proxy's key and config (it shares $ARIGAMI_DIR/sandbox/egress), no listener. */
+export async function startSidecar(log: (m: string) => void = console.log): Promise<SandboxStatus> {
+  try {
+    fs.mkdirSync(egressDir(), { recursive: true, mode: 0o700 });
+    const run = path.join(SANDBOX_DIR(), 'run');
+    for (const f of fs.existsSync(run) ? fs.readdirSync(run) : []) try { fs.rmSync(path.join(run, f), { force: true }); } catch {}
+    const sessDir = path.join(SANDBOX_DIR(), 'sessions');
+    for (const sid of fs.existsSync(sessDir) ? fs.readdirSync(sessDir) : []) {
+      try { fs.rmSync(path.join(sessDir, sid, 'cred'), { recursive: true, force: true }); } catch {}
+      try { fs.rmSync(path.join(sessDir, sid, 'codex', 'auth.json'), { force: true }); } catch {}
+    }
+    egressKey();
+    const [, port] = SIDECAR_EGRESS().split(':');
+    const f = path.join(egressDir(), 'config.json');
+    // relayPort 0: no relay — the sandbox shares the pod's loopback with the host and reaches its API directly
+    fs.writeFileSync(`${f}.tmp`, JSON.stringify({ proxyPort: Number(port) || 3128, relayPort: 0, bind: '127.0.0.1', updatedAt: new Date().toISOString() }, null, 2), { mode: 0o640 });
+    fs.renameSync(`${f}.tmp`, f);
+    if (!(cfg.sandbox?.workRoots || []).length) throw new Error('sandbox.workRoots is empty: the sidecar shares no folder with the host');
+    Object.assign(status, { ready: true, listen: null, target: SIDECAR_AGENT(), error: null });
+    log(`[sandbox] restricted sessions run in the pod's sandbox sidecar (agent ${SIDECAR_AGENT()}, egress ${SIDECAR_EGRESS()}, work roots ${(cfg.sandbox?.workRoots || []).join(', ')})`);
+  } catch (e) {
+    Object.assign(status, { ready: false, error: (e as Error).message });
+    log(`[sandbox] NOT ready — restricted sessions will refuse to start: ${(e as Error).message}`);
+  }
+  return sandboxStatus();
 }
 
 // ---- the host's sandbox listener -----------------------------------------------------------------------------------
@@ -561,5 +694,6 @@ export async function startSandbox(deps: ListenerDeps, log: (m: string) => void 
 /** For the API: where a sandboxed session lives (the bench's kit-direct enters it with `docker exec`). */
 export function sessionSandbox(s: { id: string; profile?: unknown } | null | undefined) {
   if (!s || !isSandboxed(s)) return null;
+  if (sidecarMode()) return { mode: 'sidecar', container: 'sandbox', home: sessionHome(s.id), agent: SIDECAR_AGENT(), proxyLog: proxyLog() };
   return { container: containerName(s.id), home: sessionHome(s.id), image: image(), network: `${prefix()}-int`, proxyLog: proxyLog(), docker: dockerBin() };
 }

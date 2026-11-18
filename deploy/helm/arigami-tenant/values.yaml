@@ -349,6 +349,8 @@ existingSecret: ""
 #                are unreachable by construction.
 isolation:
   enabled: false
+  # Takes sudo away from the WHOLE host container (Full sessions too). With `sandbox` on, leave it false: restricted
+  # sessions then run in the sandbox container, which never has sudo, and Full sessions keep today's behaviour.
   noSudo: true
   gatekeeper:
     enabled: true
@@ -392,5 +394,33 @@ isolation:
       - api.linear.app
       - .sentry.io
     resources:
+      requests: {cpu: 20m, memory: 64Mi}
+      limits: {cpu: 200m, memory: 192Mi}
+  # Restricted sessions in a SANDBOX container of this pod (docs/SANDBOX.md § Kubernetes): the host starts their
+  # engines there through the sandbox agent on the pod's loopback. That container has no secrets, no sudo (no new
+  # privileges, no capabilities), sees only `workRoots` of the data disk plus the per-session homes, and a packet
+  # filter set by a root init step lets its group reach nothing but the host's API port and the egress container on
+  # the pod's loopback — no DNS, no internet, no other port of the host. The egress container is the standalone
+  # sandbox's proxy: the model APIs plus each profile's `egress`, per-session credentials, a JSON line per decision in
+  # $ARIGAMI_DIR/sandbox/egress/proxy.log. Full sessions and the host container are not changed by this block.
+  sandbox:
+    enabled: false
+    agentPort: 3299
+    egressPort: 3128
+    # Primary groups the pod's packet filter matches (the uid stays the host's, so files on the shared disk keep one owner).
+    gid: 2000
+    egressGid: 3000
+    # Folders of the data disk (absolute, under /data) shared with the sandbox. A restricted session's folder must be
+    # inside one of them.
+    workRoots:
+      - /data/sandbox-work
+    # Engine installs on the data disk, shared READ-ONLY (binaries only): the host installs Claude Code's native build
+    # under its home at first boot, and the sandbox runs that same file by its real path.
+    engineDirs:
+      - /data/home/.local/share/claude/versions
+    resources:
+      requests: {cpu: 100m, memory: 512Mi}
+      limits: {cpu: "2", memory: 3Gi}
+    egressResources:
       requests: {cpu: 20m, memory: 64Mi}
       limits: {cpu: 200m, memory: 192Mi}

@@ -248,7 +248,21 @@ export interface NotifyConfig {
  * internal network whose only way out is the egress proxy; Full sessions are never touched.
  */
 export interface SandboxConfig {
-  mode: 'off' | 'docker';
+  /**
+   * `sidecar` = the host runs in a pod next to a sandbox container that shares the pod's loopback (Helm chart
+   * `isolation.sandbox`): restricted engines are started there by its agent (docker/sandbox/sidecar-agent.ts), and its
+   * only way out is the egress proxy on the pod's loopback.
+   */
+  mode: 'off' | 'docker' | 'sidecar';
+  /** sidecar: the sandbox agent's address on the pod's loopback (default 127.0.0.1:3299). */
+  agent?: string;
+  /** sidecar: the egress proxy as the sandbox reaches it (default 127.0.0.1:3128). */
+  egress?: string;
+  /**
+   * sidecar: the only directories the sandbox container shares with the host (absolute). A restricted session's
+   * folder must be inside one of them; nothing else of the host's disk is visible to it.
+   */
+  workRoots?: string[];
   /** The docker CLI (default `docker` on PATH). DOCKER_HOST in the host env picks the daemon (e.g. a docker gate). */
   docker?: string;
   /** Image with the engines (docker/sandbox/Dockerfile). Default `arigami-sandbox:latest`. */
@@ -619,7 +633,10 @@ function envOverrides(): Partial<Config> {
   if (Object.keys(sup).length) o.supervisor = { ...DEFAULTS.supervisor, ...sup };
   // Sandbox for restricted sessions (docs/SANDBOX.md). Each knob alone materializes o.sandbox; deepMerge fills the rest.
   const sbx: Partial<SandboxConfig> = {};
-  if (E.ARIGAMI_SANDBOX === 'docker' || E.ARIGAMI_SANDBOX === 'off') sbx.mode = E.ARIGAMI_SANDBOX;
+  if (E.ARIGAMI_SANDBOX === 'docker' || E.ARIGAMI_SANDBOX === 'off' || E.ARIGAMI_SANDBOX === 'sidecar') sbx.mode = E.ARIGAMI_SANDBOX;
+  if (E.ARIGAMI_SANDBOX_AGENT) sbx.agent = E.ARIGAMI_SANDBOX_AGENT;
+  if (E.ARIGAMI_SANDBOX_EGRESS) sbx.egress = E.ARIGAMI_SANDBOX_EGRESS;
+  if (E.ARIGAMI_SANDBOX_WORK_ROOTS) sbx.workRoots = E.ARIGAMI_SANDBOX_WORK_ROOTS.split(',').map((d) => d.trim()).filter((d) => d.startsWith('/'));
   if (E.ARIGAMI_SANDBOX_DOCKER) sbx.docker = E.ARIGAMI_SANDBOX_DOCKER;
   if (E.ARIGAMI_SANDBOX_IMAGE) sbx.image = E.ARIGAMI_SANDBOX_IMAGE;
   if (E.ARIGAMI_SANDBOX_HOST_LISTEN) sbx.hostListen = E.ARIGAMI_SANDBOX_HOST_LISTEN;

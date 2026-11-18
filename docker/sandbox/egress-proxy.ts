@@ -19,7 +19,7 @@ const DIR = process.argv[2] || '/egress';
 const LOG = path.join(DIR, 'proxy.log');
 const MAX_LOG = 20 * 1024 * 1024;
 
-interface Config { hostTarget?: string; proxyPort?: number; relayPort?: number; allowPrivate?: string[] }
+interface Config { hostTarget?: string; proxyPort?: number; relayPort?: number; bind?: string; allowPrivate?: string[] }
 const cache = new Map<string, { mtime: number; v: unknown }>();
 function readJson<T>(f: string): T | null {
   try {
@@ -191,7 +191,10 @@ function handleRelay(sock: net.Socket): void {
 
 if (import.meta.main) {
   const c = config();
-  net.createServer(handleProxy).listen(c.proxyPort || 3128, '0.0.0.0', () => process.stderr.write(`[egress] proxy on :${c.proxyPort || 3128}\n`));
-  net.createServer(handleRelay).listen(c.relayPort || 8080, '0.0.0.0', () => process.stderr.write(`[egress] host relay on :${c.relayPort || 8080}\n`));
+  // bind: 0.0.0.0 on its own docker network; 127.0.0.1 as a sidecar in the host's pod (config.bind).
+  const bind = c.bind || '0.0.0.0';
+  net.createServer(handleProxy).listen(c.proxyPort || 3128, bind, () => process.stderr.write(`[egress] proxy on ${bind}:${c.proxyPort || 3128}\n`));
+  // relayPort 0: no host relay (a sidecar shares the pod's loopback with the host)
+  if (c.relayPort !== 0) net.createServer(handleRelay).listen(c.relayPort || 8080, bind, () => process.stderr.write(`[egress] host relay on ${bind}:${c.relayPort || 8080}\n`));
   log({ decision: 'START', note: 'egress proxy up' });
 }

@@ -218,3 +218,15 @@ coredump_dir /tmp
 shutdown_lifetime 2 seconds
 pinger_enable off
 {{- end -}}
+
+{{- define "arigami-tenant.sandboxOn" -}}
+{{- if and .Values.isolation.enabled .Values.isolation.sandbox.enabled -}}true{{- end -}}
+{{- end -}}
+
+{{/* A path under /data as a subPath of the data volume ("/data/a/b" -> "a/b"); fails for anything else. */}}
+{{- define "arigami-tenant.dataSubPath" -}}
+{{- if not (hasPrefix "/data/" .) -}}
+{{- fail (printf "isolation.sandbox.workRoots: %s is not under /data/" .) -}}
+{{- end -}}
+{{- trimPrefix "/data/" . | trimSuffix "/" -}}
+{{- end -}}

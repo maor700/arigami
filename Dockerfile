@@ -29,9 +29,11 @@ ARG TARGETARCH
 #              a real TTY and needs no bridge.
 #   jq       : JSON in shell skills (queue scripts, PR context, upload URLs)
 #   sudo     : the workspace owner is admin in their own container (below)
+#   iptables : only for the Helm chart's `isolation.sandbox` init step, which limits the pod's sandbox container to
+#              the host's API and the egress proxy (it runs with NET_ADMIN; nothing else here can use it)
 #   gh        comes from the apt repo below
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      git curl ca-certificates ripgrep procps lsof python3-minimal less openssh-client gnupg gosu jq sudo \
+      git curl ca-certificates ripgrep procps lsof python3-minimal less openssh-client gnupg gosu jq sudo iptables \
     && rm -rf /var/lib/apt/lists/*
 
 # --- Everyday CLI tools agents reach for (~30MB): archives (unzip/zip, xz,
@@ -136,6 +138,8 @@ COPY bin/ ./bin/
 COPY .claude-plugin/ ./.claude-plugin/
 # Bundled extensions (off until an admin enables them; server/extensions.ts BUNDLED_EXT_DIR = <repo>/extensions).
 COPY extensions/ ./extensions/
+# The sandbox's agent, egress proxy and init (docs/SANDBOX.md): run by the tenant chart's sandbox containers.
+COPY docker/sandbox/ ./docker/sandbox/
 COPY tsconfig.json ./
 COPY --from=web /app/web/dist ./web/dist
 

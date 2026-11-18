@@ -109,4 +109,50 @@ describe.skipIf(!HELM)('tenant chart: isolation', () => {
     expect(sts(d).spec.template.spec.containers.map((c: any) => c.name)).toEqual(['arigami']);
     expect(container(d, 'arigami').env.map((e: any) => e.name)).not.toContain('ARIGAMI_EXT_REMOTE');
   });
+
+  const SB = ['--set', 'isolation.enabled=true', '--set', 'isolation.noSudo=false', '--set', 'isolation.egressProxy.enabled=false', '--set', 'isolation.sandbox.enabled=true', '--set-string', 'isolation.gatekeeper.identitiesSecret=gk-ids'];
+
+  test('sandbox: the host container keeps today\'s sudo context and egress; restricted sessions go to the sandbox', () => {
+    const d = render(SB);
+    const host = container(d, 'arigami');
+    expect(host.securityContext.allowPrivilegeEscalation).toBe(true); // Full sessions keep sudo
+    const env = Object.fromEntries(host.env.map((e: any) => [e.name, e.value]));
+    expect(env.HTTPS_PROXY).toBeUndefined();
+    expect(env.ARIGAMI_SANDBOX).toBe('sidecar');
+    expect(env.ARIGAMI_SANDBOX_WORK_ROOTS).toBe('/data/sandbox-work');
+    expect(env.ARIGAMI_X_NOLISTEN_LOCAL).toBe('1');
+    expect(JSON.stringify(find(d, 'NetworkPolicy')[0].spec.egress)).toContain('0.0.0.0/0'); // the pod's usual restricted egress
+    expect(d.filter((x) => x.metadata?.namespace === 'edge')).toEqual([]);
+  });
+
+  test('sandbox: no secrets, no sudo, no state dir — only the work roots, the session homes and read-only code', () => {
+    const d = render(SB);
+    const sb = container(d, 'sandbox');
+    expect(sb.securityContext).toMatchObject({ runAsUser: 1000, runAsGroup: 2000, allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: ['ALL'] } });
+    expect(sb.envFrom).toBeUndefined();
+    expect(JSON.stringify(sb.env)).not.toMatch(/secretKeyRef|TOKEN|KEY|PASSWORD/);
+    const mounts = sb.volumeMounts.map((m: any) => `${m.mountPath}${m.readOnly ? ':ro' : ''}`);
+    expect(mounts.sort()).toEqual(['/data/.arigami/ext-plugin:ro', '/data/.arigami/sandbox/sessions', '/data/.arigami/skills:ro', '/data/.arigami/user-plugin:ro', '/data/.arigami/user/skills:ro', '/data/home/.local/share/claude/versions:ro', '/data/sandbox-work', '/tmp'].sort());
+    for (const m of sb.volumeMounts) if (m.name === 'data') expect(m.subPath).toBeTruthy(); // never the whole disk
+    const eg = container(d, 'egress');
+    expect(eg.securityContext).toMatchObject({ runAsGroup: 3000, allowPrivilegeEscalation: false, capabilities: { drop: ['ALL'] } });
+    expect(eg.volumeMounts.filter((m: any) => m.name === 'data').map((m: any) => m.subPath)).toEqual(['.arigami/sandbox/egress']);
+  });
+
+  test("sandbox: the packet filter confines the sandbox's group to the host API and the egress proxy on loopback", () => {
+    const d = render(SB);
+    const init = sts(d).spec.template.spec.initContainers[0];
+    expect(init.securityContext.capabilities.add).toContain('NET_ADMIN');
+    const script = init.args[0];
+    expect(script).toContain('--gid-owner 2000 -j ARIGAMI-SANDBOX');
+    expect(script).toContain('-o lo -d 127.0.0.1 -p tcp --dport 3099 -j ACCEPT');
+    expect(script).toContain('-o lo -d 127.0.0.1 -p tcp --dport 3128 -j ACCEPT');
+    expect(script.trim().split('\n').filter((l: string) => /-A ARIGAMI-SANDBOX/.test(l)).at(-1)).toContain('-j REJECT');
+    expect(script).not.toMatch(/--dport 53|udp/); // no DNS for the sandbox
+  });
+
+  test('sandbox: a work root outside the data disk fails the render', () => {
+    expect(() => render([...SB, '--set', 'isolation.sandbox.workRoots={/etc}'])).toThrow(/not under \/data/);
+  });
 });
+

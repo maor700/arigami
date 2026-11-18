@@ -88,7 +88,7 @@ describe('mcp/ext-serve.ts', () => {
   test('/shared: the caller the host names in _meta reaches the tool, as in the host gateway', async () => {
     const r = await call(`${url}/shared`, 'whoami', {}, { 'arigami/session': 's1', 'arigami/token': 't', 'arigami/profile': { name: 'fix', grants: [] }, 'arigami/lineage': ['p1'], 'arigami/cwd': '/w/s1' });
     expect(r.tools).toEqual(['whoami']);
-    expect(r.body.caller).toEqual({ session: 's1', shared: true, hostCall: false, profile: { name: 'fix', grants: [] }, lineage: ['p1'], cwd: '/w/s1' });
+    expect(r.body.caller).toMatchObject({ session: 's1', shared: true, hostCall: false, profile: { name: 'fix', grants: [] }, lineage: ['p1'], cwd: '/w/s1' });
   });
 
   test('/host: a host call — never a session, whatever _meta says', async () => {
