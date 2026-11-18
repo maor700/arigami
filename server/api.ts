@@ -3600,7 +3600,9 @@ async function hostWorktree(
     dir: o.dir || null,
     prefix: o.prefix || 'child',
     base: o.base || info.branch || null,
-    reposDir: cfg.reposDir,
+    // A restricted master in the pod's sandbox sidecar: its child's worktree stays inside the work root its repo is
+    // in (the only folders the sandbox shares) — next to the repo, not in the host's reposDir.
+    reposDir: (master.profile && sandbox.sidecarMode() && sandbox.workRootOf(parentDir)) || cfg.reposDir,
   });
   if (!r.ok) throw new Error(`worktree add failed: ${r.error}`);
   return {

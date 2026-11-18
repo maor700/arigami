@@ -190,4 +190,13 @@ describe('the spawn in sidecar mode (server/lib/sandbox.ts)', () => {
     expect(o.ephemeral).toEqual([path.join(home, 'auth.json')]);
     expect(JSON.stringify(o)).not.toContain('LONG-LIVED');
   });
+
+  test('workRootOf: the shared root a folder is in (where a restricted master\'s child worktree goes), else null', () => {
+    const d = tmpDir('arigami-sbxc-');
+    const work = tmpDir('arigami-sbxc-work-');
+    fs.mkdirSync(path.join(work, 'repo'));
+    const o = run(d, work, `emit({in:sb.workRootOf(${JSON.stringify(path.join(work, 'repo'))}),out:sb.workRootOf('/'),self:sb.workRootOf(${JSON.stringify(work)})});`);
+    expect(o).toEqual({ in: fs.realpathSync(work), out: null, self: fs.realpathSync(work) });
+  });
 });
+

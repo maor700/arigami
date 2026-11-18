@@ -474,6 +474,13 @@ export function launchSpec(s: { id: string; profile: { name?: string; egress?: s
 // launcher (sandbox-sidecar-launch.ts) relays the engine's stdio. Same rules as a container per session: the
 // restricted env, this engine's credential only, a per-session HOME and TMPDIR, the egress policy of its profile.
 
+/** The shared work root (cfg.sandbox.workRoots) a folder is in, or null. */
+export function workRootOf(dir: string, roots: string[] = cfg.sandbox?.workRoots || []): string | null {
+  let real = dir;
+  try { real = fs.realpathSync(dir); } catch {}
+  return roots.map((r) => path.resolve(r)).find((r) => within(real, r)) || null;
+}
+
 const SIDECAR_LAUNCHER = () => path.join(resourceRoot(), 'server', 'lib', 'sandbox-sidecar-launch.ts');
 
 /** Why a restricted session's folder cannot run in the sidecar (it is not inside a shared work root), or null. */
