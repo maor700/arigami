@@ -54,6 +54,14 @@ export const EXT_API_VERSION = 1;
 
 export const USER_DIR = path.join(ARIGAMI_DIR, 'user');
 export const EXT_DIR = path.join(USER_DIR, 'extensions');
+/**
+ * BUNDLED extensions: shipped inside the Arigami checkout (`<repo>/extensions/<name>/`), loaded IN PLACE and OFF by
+ * default. One is loaded only once an admin enabled it (`extensions.json` → `enabled[<name>] === true`); until then it
+ * is not in the registry at all, so a host that never turns one on lists, spawns and serves exactly what it did before.
+ * A user extension of the same name wins. Bundled code ships with the host, so a tab it marks `trusted` needs no
+ * separate grant (it is as trusted as the core UI it came with); it cannot be removed or `git pull`ed, only disabled.
+ */
+export const BUNDLED_EXT_DIR = process.env.ARIGAMI_BUNDLED_EXT_DIR || path.join(REPO_ROOT, 'extensions');
 // Where importFresh() stages a throwaway copy of an extension. Under user/ so
 // `@arigami/sdk` still resolves by walking up, and OUTSIDE extensions/ so a
 // staged copy is never mistaken for an installed extension.
@@ -756,6 +764,39 @@ function dirsIn(root: string): string[] {
   }
 }
 
+/** Is `name` served from the bundled dir (no user extension of that name)? */
+export function isBundled(name: string): boolean {
+  return !fs.existsSync(path.join(EXT_DIR, name, 'manifest.json')) && fs.existsSync(path.join(BUNDLED_EXT_DIR, name, 'manifest.json'));
+}
+
+/** Where extension `name` lives: the user's dir, else the bundled one. */
+export function extDirOf(name: string): string {
+  return isBundled(name) ? path.join(BUNDLED_EXT_DIR, name) : path.join(EXT_DIR, name);
+}
+
+/** The names to load: every user extension, plus the bundled ones an admin turned on. */
+function loadableNames(st: ExtState): string[] {
+  const user = dirsIn(EXT_DIR);
+  const bundled = path.resolve(BUNDLED_EXT_DIR) === path.resolve(EXT_DIR) ? [] : dirsIn(BUNDLED_EXT_DIR).filter((n) => !user.includes(n) && st.enabled[n] === true);
+  return [...user, ...bundled].sort();
+}
+
+/** GET /__api/extensions/bundled — what ships with this host and whether it is on. Never settings or secrets. */
+export function listBundled(): { name: string; title: string; description: string; version: string | null; enabled: boolean; shadowed: boolean }[] {
+  const st = readState();
+  return dirsIn(BUNDLED_EXT_DIR).map((name) => {
+    const m = parseManifest(path.join(BUNDLED_EXT_DIR, name)).manifest;
+    return {
+      name,
+      title: m?.title || name,
+      description: m?.description || '',
+      version: m?.version || null,
+      enabled: st.enabled[name] === true,
+      shadowed: fs.existsSync(path.join(EXT_DIR, name, 'manifest.json')),
+    };
+  });
+}
+
 function watchedFiles(dir: string, m: Manifest | null): string[] {
   // package.json/lockfile: an edit re-checks (and, when allowed, re-installs) the
   // dependencies. node_modules itself: its mtime moves when a package is added or
@@ -780,12 +821,14 @@ function shaOf(dir: string): string | undefined {
 
 /** Load one extension into the registry. Never throws — a failure is an `error` entry. */
 async function loadOne(name: string, st: ExtState): Promise<ExtEntry> {
-  const dir = path.join(EXT_DIR, name);
+  const bundled = isBundled(name);
+  const dir = extDirOf(name);
   const entry: ExtEntry = {
     name,
     dir,
     manifest: null,
-    enabled: st.enabled[name] !== false,
+    // A bundled extension is OFF unless an admin turned it on; a user one is on unless turned off.
+    enabled: bundled ? st.enabled[name] === true : st.enabled[name] !== false,
     state: 'error',
     trustRequested: false,
     trusted: false,
@@ -821,7 +864,8 @@ async function loadOne(name: string, st: ExtState): Promise<ExtEntry> {
   // changes nothing on its own — the tab stays sandboxed and the extension
   // carries a warning until a human grants it.
   entry.trustRequested = manifest.trusted === true;
-  entry.trusted = entry.trustRequested && st.trusted[name] === true;
+  // Bundled: the code shipped with the host itself, so its tab is as trusted as the core UI — no second grant.
+  entry.trusted = entry.trustRequested && (bundled || st.trusted[name] === true);
   if (entry.trustRequested && !entry.trusted)
     entry.warnings.push(
       'this extension asks for the TRUSTED tier (its tab would run without the sandbox, with your full cockpit session) and this host has not granted it — the tab stays sandboxed. Grant it in Settings › Extensions, or reinstall with `bin/host ext add --trust`.'
@@ -932,7 +976,7 @@ export async function reload(opts: { only?: string[]; reason?: string } = {}): P
   try {
     ensureUserRepo();
     const st = readState();
-    const names = dirsIn(EXT_DIR);
+    const names = loadableNames(st);
     const only = opts.only?.length ? new Set(opts.only) : null;
     autoInstall = [];
 
@@ -948,9 +992,9 @@ export async function reload(opts: { only?: string[]; reason?: string } = {}): P
         entry = await loadOne(name, st);
       } catch (e) {
         entry = {
-          name, dir: path.join(EXT_DIR, name), manifest: prev?.manifest || null, enabled: st.enabled[name] !== false,
-          state: 'error', trustRequested: false, trusted: false, error: (e as Error).message, warnings: [], mtime: newestMtime(watchedFiles(path.join(EXT_DIR, name), prev?.manifest || null)),
-          deps: depsStatus(name, path.join(EXT_DIR, name), st),
+          name, dir: extDirOf(name), manifest: prev?.manifest || null, enabled: isBundled(name) ? st.enabled[name] === true : st.enabled[name] !== false,
+          state: 'error', trustRequested: false, trusted: false, error: (e as Error).message, warnings: [], mtime: newestMtime(watchedFiles(extDirOf(name), prev?.manifest || null)),
+          deps: depsStatus(name, extDirOf(name), st),
           contributions: { tools: 0, listeners: 0, docs: 0, tabs: 0, hooks: 0, gates: 0, channels: 0, webhooks: 0 },
           unsubs: [], gates: {}, channels: {}, listenerTypes: [],
         };
@@ -1114,13 +1158,13 @@ export function stop(): void {
 export async function pollMtimes(): Promise<string[]> {
   const changed: string[] = [];
   try {
-    for (const name of dirsIn(EXT_DIR)) {
+    for (const name of loadableNames(readState())) {
       const e = extensions.get(name);
-      const dir = path.join(EXT_DIR, name);
+      const dir = extDirOf(name);
       const mt = newestMtime(watchedFiles(dir, e?.manifest || parseManifest(dir).manifest || null));
       if (!e || mt > e.mtime) changed.push(name);
     }
-    for (const [name] of extensions) if (!fs.existsSync(path.join(EXT_DIR, name, 'manifest.json'))) changed.push(name);
+    for (const [name] of extensions) if (!fs.existsSync(path.join(extDirOf(name), 'manifest.json'))) changed.push(name);
     if (changed.length) {
       hostLog(`change detected in ${changed.join(', ')} — reloading`);
       await reload({ only: changed, reason: 'mtime' });
@@ -1210,7 +1254,7 @@ function serversFor(e: ExtEntry, hostAuth = false): Record<string, { command: st
       ...(e.deps.needed ? { EXT_DEPS_STAMP: e.deps.stamp } : {}),
       ...(e.deps.error ? { EXT_DEPS_ERROR: e.deps.error } : {}),
     };
-    for (const [k, v] of Object.entries(t.env || {})) env[k] = String(v).replaceAll('${EXT_DIR}', e.dir);
+    for (const [k, v] of Object.entries(t.env || {})) env[k] = String(v).replaceAll('${EXT_DIR}', e.dir).replaceAll('${ARIGAMI_DIR}', ARIGAMI_DIR);
     // Secrets ride as env and are NEVER logged or returned by the REST view.
     for (const [k, v] of Object.entries(secrets)) env[k] = String(v);
     out[key] =
@@ -1221,14 +1265,24 @@ function serversFor(e: ExtEntry, hostAuth = false): Record<string, { command: st
   return out;
 }
 
+/** Does this extension serve its tools only to restricted (profiled) sessions? (manifest `audience: "restricted"`) */
+export const restrictedAudience = (e: ExtEntry): boolean => (e.manifest as any)?.audience === 'restricted';
+
 /**
  * The `--mcp-config` contribution of every ENABLED extension, for one owner.
  * (Owner-scoped extensions are a later step; A3's allowlist already controls
  * which of these tools an agent may call, through the `ext:<name>` family.)
+ *
+ * `session`: an extension with `audience: "restricted"` is listed only for a session that runs under a session
+ * profile, and only when the MCP gateway serves it (its tools then run in the host's process, never as a child of the
+ * session). Without a session — or for a Full one — it is left out, so a Full session's spawn is unchanged.
  */
-export function extServersFor(_owner: string = 'global'): Record<string, unknown> {
+export function extServersFor(_owner: string = 'global', session?: { profile?: unknown } | null): Record<string, unknown> {
   const out: Record<string, unknown> = {};
-  for (const e of enabledExtensions()) Object.assign(out, serversFor(e));
+  for (const e of enabledExtensions()) {
+    if (restrictedAudience(e) && !(session?.profile && process.env.ARIGAMI_MCP_GATEWAY !== '0')) continue;
+    Object.assign(out, serversFor(e));
+  }
   return out;
 }
 
@@ -1360,6 +1414,8 @@ export function extPluginHasSkills(): boolean {
 function buildSummaryLine(): string {
   const parts: string[] = [];
   for (const e of enabledExtensions()) {
+    // A restricted-audience extension is not something a Full session can use — the line stays what it was for them.
+    if (restrictedAudience(e)) continue;
     const bits: string[] = [];
     const skills = (e.manifest?.docs || []).map((d) => `/arigami-ext:${d.skill}`);
     if (skills.length) bits.push(`skill${skills.length > 1 ? 's' : ''} ${skills.join(', ')}`);
@@ -1906,6 +1962,12 @@ export function proxySites(): ProxySite[] {
     }
   }
   return out;
+}
+
+/** Is `tool` one the manifest reserves for an admin PERSON (`adminTools`)? A session token never runs it over REST. */
+export function isAdminTool(ext: string, tool: string): boolean {
+  const list = (extensions.get(ext)?.manifest as any)?.adminTools;
+  return Array.isArray(list) && list.map(String).includes(tool);
 }
 
 export function toolPermitted(ext: string, tool: string): boolean {

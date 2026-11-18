@@ -291,7 +291,7 @@ function mcpTables(s: Session, st: CodexSessionState): string[] {
   const servers: Record<string, any> = { arigami: gw ? codexEntry('arigami') : bunExec('host') };
   const slug = typeof s.metadata?.agent === 'string' && s.metadata.agent ? s.metadata.agent : null;
   try {
-    const ext = extensions.extServersFor(slug ? `agent:${slug}` : 'global');
+    const ext = extensions.extServersFor(slug ? `agent:${slug}` : 'global', s);
     for (const name of Object.keys(ext)) servers[name] = gw ? codexEntry(name) : ext[name];
   } catch {
     /* a broken extension must never stop a session from starting */

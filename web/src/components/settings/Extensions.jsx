@@ -11,7 +11,7 @@
 // before there is a manifest to validate. That path therefore asks first
 // ("clone from a source you trust"), and shows the permissions right after the
 // install with "keep on / turn off / remove" — the same decision, one step later.
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { api } from '../../lib/api.js';
 import { useStore, loadExtensions } from '../../lib/store.js';
 import { useT } from '../../lib/i18n.js';
@@ -525,6 +525,51 @@ export function ExtensionCard({ ext }) {
   );
 }
 
+/* ---------- bundled with Arigami (off until an admin turns one on) -------- */
+
+// Extensions that ship inside the Arigami checkout (GET /__api/extensions/bundled). One that is on is a normal row
+// above; one that is off is not loaded at all, so it is offered here. Nothing renders when there is none.
+export function BundledExtensions() {
+  const t = useT();
+  const { extensions } = useStore();
+  const [rows, setRows] = useState([]);
+  const [busy, setBusy] = useState('');
+  const load = () => api.get('/extensions/bundled').then((r) => setRows(r?.bundled || [])).catch(() => setRows([]));
+  useEffect(() => { load(); }, [extensions.length]);
+  const off = rows.filter((b) => !b.enabled && !b.shadowed);
+  if (!off.length) return null;
+  const turnOn = async (name) => {
+    setBusy(name);
+    try {
+      await api.patch(`/extensions/${name}`, { enabled: true });
+      await loadExtensions();
+      await load();
+      toast(t('ext.bundled.on', { name }));
+    } catch (e) {
+      toastError(e);
+    } finally {
+      setBusy('');
+    }
+  };
+  return (
+    <Section id="extensions-bundled" title={t('ext.bundled.title')}>
+      <p className="mb-2 text-xs leading-snug text-fgdim">{t('ext.bundled.sub')}</p>
+      {off.map((b) => (
+        <SettingCard
+          key={b.name}
+          title={b.title}
+          hint={b.description}
+          actions={
+            <button type="button" disabled={busy === b.name} onClick={() => turnOn(b.name)} className={BTN_SM}>
+              {t('ext.bundled.turnOn')}
+            </button>
+          }
+        />
+      ))}
+    </Section>
+  );
+}
+
 /* ---------- the page ------------------------------------------------------ */
 
 export default function ExtensionsPage() {
@@ -565,6 +610,8 @@ export default function ExtensionsPage() {
           extensions.map((e) => <ExtensionCard key={e.name} ext={e} />)
         )}
       </Section>
+
+      <BundledExtensions />
 
       <Section id="extensions-add" title={t('ext.add')}>
         <AddExtension />

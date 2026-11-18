@@ -172,7 +172,7 @@ export function mcpConfigFor(s) {
   const slug = typeof s?.metadata?.agent === 'string' && s.metadata.agent ? s.metadata.agent : null;
   let ext = {};
   try {
-    ext = extensions.extServersFor(slug ? `agent:${slug}` : 'global');
+    ext = extensions.extServersFor(slug ? `agent:${slug}` : 'global', s);
   } catch {
     ext = {}; // a broken extension must never stop a session from starting
   }
@@ -620,7 +620,7 @@ function policyArgs(s) {
   // name `ext:<name>` denies the whole server at layer 1, exactly like any
   // other external MCP server the agent was not granted.
   try {
-    for (const name of Object.keys(extensions.extServersFor(slug ? `agent:${slug}` : 'global'))) servers.add(name);
+    for (const name of Object.keys(extensions.extServersFor(slug ? `agent:${slug}` : 'global', s))) servers.add(name);
   } catch {
     /* loader not ready — the hook still enforces */
   }

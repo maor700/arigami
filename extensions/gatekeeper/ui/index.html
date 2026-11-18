@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Permissions</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>Permissions</h1>
+  <p class="muted">Sessions without a profile are <b>Full</b> and behave exactly as before. A restricted session holds no credentials: the gatekeeper holds the bot identities and does only what its profile allows.</p>
+  <nav id="nav">
+    <button data-view="profiles" class="on">Profiles</button>
+    <button data-view="attach">Where it applies</button>
+    <button data-view="connections">Connections</button>
+    <button data-view="activity">Activity</button>
+  </nav>
+</header>
+<main>
+  <section id="view-profiles"></section>
+  <section id="view-attach" hidden></section>
+  <section id="view-connections" hidden></section>
+  <section id="view-activity" hidden></section>
+</main>
+<div id="toast" hidden></div>
+<script src="/__ext-sdk.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

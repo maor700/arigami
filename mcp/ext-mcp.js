@@ -136,6 +136,17 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
   const meta = SHARED ? req.params._meta || {} : {};
   const callSession = SHARED ? String(meta['arigami/session'] || '') : SESSION_ID;
   const callCtx = SHARED ? makeCtx(String(meta['arigami/token'] || '')) : ctx;
+  // Who is calling, as the HOST recorded it (shared mode only — this process's stdin is the host there): the session id
+  // and, for a restricted session, its effective profile, its ancestors and its cwd. `hostCall`: a person's tab / the
+  // owner's Send (callExtTool), not a session. A tool that acts on someone's behalf decides on these, never on its args.
+  callCtx.caller = {
+    session: callSession || null,
+    shared: SHARED,
+    hostCall: HOST_CALL,
+    profile: SHARED && meta['arigami/profile'] && typeof meta['arigami/profile'] === 'object' ? meta['arigami/profile'] : null,
+    lineage: SHARED && Array.isArray(meta['arigami/lineage']) ? meta['arigami/lineage'].map(String) : [],
+    cwd: SHARED && typeof meta['arigami/cwd'] === 'string' ? meta['arigami/cwd'] : null,
+  };
   const missing = missingArgs(tool, req.params.arguments || {});
   if (missing.length)
     return { content: [{ type: 'text', text: `missing required argument(s): ${missing.join(', ')}` }], isError: true };

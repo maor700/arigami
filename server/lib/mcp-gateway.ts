@@ -116,7 +116,7 @@ export async function closeShared(): Promise<void> {
 }
 
 async function extProxy(name: string, session: any, token: string) {
-  const specs = extensions.extServersFor(ownerOf(session)) as Record<string, { command: string; args: string[]; cwd: string; env: Record<string, string> }>;
+  const specs = extensions.extServersFor(ownerOf(session), session) as Record<string, { command: string; args: string[]; cwd: string; env: Record<string, string> }>;
   const spec = specs[name];
   if (!spec) return null;
   const client = await extClient(name, spec);
@@ -124,14 +124,30 @@ async function extProxy(name: string, session: any, token: string) {
   const { ListToolsRequestSchema, CallToolRequestSchema } = await import('@modelcontextprotocol/sdk/types.js');
   const server = new Server({ name, version: '0.1.0' }, { capabilities: { tools: {} } });
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: ((await client.listTools()) as any).tools || [] }));
+  // Restricted run mode: the caller's host-recorded profile rides along, so an extension that acts FOR a restricted
+  // session (a gatekeeper) decides on what the host enforces, not on anything the session says. Full sessions: unchanged.
+  const extra = session.profile ? await callerFacts(session) : null;
   server.setRequestHandler(CallToolRequestSchema, async (req: any) =>
     (await client.callTool({
       name: req.params.name,
       arguments: req.params.arguments || {},
-      _meta: { 'arigami/session': session.id, 'arigami/token': token },
+      _meta: { 'arigami/session': session.id, 'arigami/token': token, ...(extra || {}) },
     } as any)) as any
   );
   return server;
+}
+
+/** What the host knows about a restricted caller: its effective profile, its ancestors (host-recorded), its cwd. */
+async function callerFacts(session: any): Promise<Record<string, unknown>> {
+  const { describe } = await import('../session-profile.js');
+  const lineage: string[] = [];
+  const seen = new Set<string>([session.id]);
+  for (let p = session.profile?.parent as string | null; p && !seen.has(p) && lineage.length < 16; ) {
+    lineage.push(p);
+    seen.add(p);
+    p = (getSession(p) as any)?.profile?.parent ?? null;
+  }
+  return { 'arigami/profile': describe(session.profile), 'arigami/lineage': lineage, 'arigami/cwd': String(session.cwd || '') };
 }
 
 /** A host-held remote grant, for a session whose owner may use it. */

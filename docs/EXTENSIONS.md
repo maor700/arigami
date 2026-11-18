@@ -351,6 +351,27 @@ REST (admin-only, same gate as `/__api/profiles`):
 | `GET /__api/listener-types` | core + extension listener types (this is what the MCP `register_listener` enum is built from) |
 | `POST /__api/ext/:name/tool/:tool {args}` | one tool call, for the browser SDK's `runTool` |
 
+### 6.0 Bundled extensions (shipped with Arigami, off by default)
+
+`<repo>/extensions/<name>/` (override: `ARIGAMI_BUNDLED_EXT_DIR`) holds extensions that ship **with** Arigami. They are
+loaded in place, and only once an admin turned one on — `extensions.json` → `enabled[<name>] === true`, set by
+`PATCH /__api/extensions/<name> {"enabled":true}`, `bin/host ext enable <name>` or Settings › Extensions › *Bundled with
+Arigami*. Until then a bundled extension is not in the registry at all: no tools, no tab, no summary line — a host that
+never turns one on behaves exactly as before. `GET /__api/extensions/bundled` lists them (`{name, title, description,
+version, enabled, shadowed}`); a user extension of the same name wins (`shadowed`). Bundled code ships with the host, so
+a bundled tab that asks for the trusted tier gets it without a second grant; it cannot be removed or `ext update`d,
+only turned off. The one bundled today is `gatekeeper` (restricted sessions — see `extensions/gatekeeper/README.md`).
+
+Two manifest fields exist for extensions like it:
+
+- `"audience": "restricted"` — the `tools[]` servers are listed only for a session that runs under a session profile,
+  and only through the MCP gateway (the tools then run in the host's shared process, never as a child of the session).
+  A Full session's `--mcp-config`, `--disallowedTools` and first-turn summary line are unchanged. Calls through the
+  gateway from a restricted session carry the host's facts about the caller in `_meta` (`arigami/profile` — the
+  effective profile incl. its `grants`, `arigami/lineage`, `arigami/cwd`), which a module tool reads as `ctx.caller`.
+- `"adminTools": [...]` — tools `POST /__api/ext/<name>/tool/<tool>` runs only for a signed-in admin **person** (the
+  owner's tab); a session token or the host token gets 403.
+
 ### 6.1 Dependencies (`package.json`)
 
 An extension may ship a `package.json`. Its `dependencies` are installed **into

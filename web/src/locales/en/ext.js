@@ -8,6 +8,10 @@ export const strings = {
   'ext.reloading': 'Reloading…',
   'ext.reloaded': 'Extensions reloaded',
   'ext.apiVersion': 'API v{n}',
+  'ext.bundled.title': 'Bundled with Arigami',
+  'ext.bundled.sub': 'These ship with Arigami and stay off until you turn them on. While off, they change nothing.',
+  'ext.bundled.turnOn': 'Turn on',
+  'ext.bundled.on': '“{name}” is on',
 
   // state
   'ext.state.loaded': 'Active',

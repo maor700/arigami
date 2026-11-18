@@ -153,6 +153,17 @@ export interface Manifest {
   settings?: { schema?: Record<string, { type?: string; default?: unknown; title?: string; description?: string }> };
   /** parsed but NOT run in wave 1 */
   daemons?: ManifestDaemon[];
+  /**
+   * Who gets this extension's tools[] in their MCP config. Absent / "all" = every session (the default).
+   * "restricted" = only sessions that run under a session profile (the restricted run mode), and only through the
+   * host's MCP gateway; a Full session's spawn never lists them, and the summary line does not name them.
+   */
+  audience?: 'all' | 'restricted';
+  /**
+   * Tools only a signed-in ADMIN PERSON may run through POST /__api/ext/<name>/tool/<tool> (a trusted tab of the
+   * owner). A session token — Full or restricted — gets 403 for these.
+   */
+  adminTools?: string[];
 }
 
 // ---------------------------------------------------------------------------

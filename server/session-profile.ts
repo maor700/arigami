@@ -12,7 +12,10 @@
 //   - talkTo     parent / children — whom it may message (send_message, task_session, report_to_master);
 //   - maySpawn   whether it may create sessions (always its own children, always inheriting this profile);
 //   - triggers   whether it may create cron triggers and listeners;
-//   - hostRoutes the host route groups it may reach besides its own session (memory, setup, agents…).
+//   - hostRoutes the host route groups it may reach besides its own session (memory, setup, agents…);
+//   - grants     actions an extension performs FOR the session (`<ext>:<action>`, e.g. a gatekeeper's
+//                `gatekeeper:github.push`). The host only stores and narrows them; the extension reads them from the
+//                caller facts the MCP gateway attaches to each call and enforces them in its own code.
 //
 // The narrowing rule: a child's profile is its parent's profile narrowed by whatever else applies (folder, agent,
 // trigger, an explicit pick) — never wider. Tool allowlists are kept as LAYERS (every layer must allow a tool), so
@@ -60,6 +63,8 @@ export interface ProfileSpec {
   maySpawn?: boolean;
   triggers?: boolean;
   hostRoutes?: string[];
+  /** Extension action grants (`<ext>:<action>`); absent = none. Narrowing intersects them. */
+  grants?: string[];
 }
 
 export interface ProfileLayer {
@@ -77,9 +82,15 @@ export interface SessionProfile {
   maySpawn: boolean;
   triggers: boolean;
   hostRoutes: string[];
+  /** Extension action grants (see ProfileSpec.grants). Absent on profiles stored before grants existed = none. */
+  grants?: string[];
   /** The host-recorded parent (set at creation, never changed by the session). */
   parent: string | null;
 }
+
+/** `<ext>:<action>` — an extension name, then a dotted action (no wildcards: narrowing is a plain intersection). */
+export const GRANT_RE = /^[a-z0-9][a-z0-9-]*:[a-z0-9][a-z0-9._-]{0,63}$/;
+const grantsOf = (p: { grants?: string[] } | null | undefined): string[] => (Array.isArray(p?.grants) ? p!.grants! : []);
 
 /** The shipped profile: the narrowest useful one — read/write files and run commands, report up, nothing else. */
 export const BUILTIN_PROFILES: Record<string, ProfileSpec> = {
@@ -107,6 +118,7 @@ export function normalizeSpec(spec: ProfileSpec, fallbackName = 'restricted'): R
   const talkTo = (list(spec.talkTo) || ['parent', 'children']).filter((t): t is TalkTo => (TALK_TO as readonly string[]).includes(t));
   const hostRoutes = (list(spec.hostRoutes) || []).filter((g) => g in HOST_ROUTE_GROUPS);
   const domains = list(spec.domains);
+  const grants = (list(spec.grants) || []).filter((g) => GRANT_RE.test(g));
   return {
     name: String(spec.name || fallbackName).slice(0, 80),
     tools: merged,
@@ -116,6 +128,7 @@ export function normalizeSpec(spec: ProfileSpec, fallbackName = 'restricted'): R
     maySpawn: spec.maySpawn === true,
     triggers: spec.triggers === true,
     hostRoutes,
+    grants,
   };
 }
 
@@ -126,7 +139,7 @@ const layerOf = (n: { name: string; tools: string[] | null; domains: string[] | 
 export function fromSpec(spec: ProfileSpec, parent: string | null = null): SessionProfile {
   const n = normalizeSpec(spec);
   const layer = layerOf(n);
-  return { name: n.name, layers: layer ? [layer] : [], desktop: n.desktop, talkTo: n.talkTo, maySpawn: n.maySpawn, triggers: n.triggers, hostRoutes: n.hostRoutes, parent };
+  return { name: n.name, layers: layer ? [layer] : [], desktop: n.desktop, talkTo: n.talkTo, maySpawn: n.maySpawn, triggers: n.triggers, hostRoutes: n.hostRoutes, grants: n.grants, parent };
 }
 
 /**
@@ -146,6 +159,7 @@ export function narrow(base: SessionProfile | null, by: SessionProfile | Profile
     maySpawn: base.maySpawn && other.maySpawn,
     triggers: base.triggers && other.triggers,
     hostRoutes: base.hostRoutes.filter((g) => other.hostRoutes.includes(g)),
+    grants: grantsOf(base).filter((g) => grantsOf(other).includes(g)),
     parent,
   };
 }
@@ -161,7 +175,8 @@ export function isWithin(child: SessionProfile | null, parent: SessionProfile | 
     child.talkTo.every((t) => parent.talkTo.includes(t)) &&
     (!child.maySpawn || parent.maySpawn) &&
     (!child.triggers || parent.triggers) &&
-    child.hostRoutes.every((g) => parent.hostRoutes.includes(g))
+    child.hostRoutes.every((g) => parent.hostRoutes.includes(g)) &&
+    grantsOf(child).every((g) => grantsOf(parent).includes(g))
   );
 }
 
@@ -203,7 +218,7 @@ export function writeStore(next: ProfileStore): ProfileStore {
   for (const [id, spec] of Object.entries(next.profiles || {})) {
     if (!ID_RE.test(id) || !spec || typeof spec !== 'object') throw Object.assign(new Error(`invalid profile id: ${id}`), { status: 400 });
     const n = normalizeSpec(spec, id);
-    clean.profiles[id] = { name: n.name, tools: n.tools, domains: n.domains, desktop: n.desktop, talkTo: n.talkTo, maySpawn: n.maySpawn, triggers: n.triggers, hostRoutes: n.hostRoutes };
+    clean.profiles[id] = { name: n.name, tools: n.tools, domains: n.domains, desktop: n.desktop, talkTo: n.talkTo, maySpawn: n.maySpawn, triggers: n.triggers, hostRoutes: n.hostRoutes, ...(n.grants.length ? { grants: n.grants } : {}) };
   }
   for (const [key, v] of Object.entries(next.attach || {})) {
     if (!/^(folder|agent|trigger):[A-Za-z0-9_-]{1,80}$/.test(key)) throw Object.assign(new Error(`invalid attach key: ${key}`), { status: 400 });
@@ -483,7 +498,7 @@ export function sanitizeOwnPatch(body: Record<string, unknown>): Record<string, 
 
 /** The short, wire-safe description of a session's profile (cockpit badge, /policy). */
 export const describe = (p: SessionProfile | null | undefined) =>
-  p ? { name: p.name, desktop: p.desktop, talkTo: p.talkTo, maySpawn: p.maySpawn, triggers: p.triggers, hostRoutes: p.hostRoutes, parent: p.parent, layers: p.layers.map((l) => l.name) } : null;
+  p ? { name: p.name, desktop: p.desktop, talkTo: p.talkTo, maySpawn: p.maySpawn, triggers: p.triggers, hostRoutes: p.hostRoutes, grants: grantsOf(p), parent: p.parent, layers: p.layers.map((l) => l.name) } : null;
 
 // ---- shared desktop by approval -----------------------------------------------------------------------------------
 

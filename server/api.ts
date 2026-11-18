@@ -5498,6 +5498,10 @@ export async function handle(
       const reg = await import('./listeners-registry.js');
       return json(res, { types: reg.listTypes() });
     }
+    if (p === '/__api/extensions/bundled' && m === 'GET') {
+      const ext = await import('./extensions.js');
+      return json(res, { bundled: ext.listBundled(), dir: ext.BUNDLED_EXT_DIR });
+    }
     if (p.startsWith('/__api/extensions')) {
       const me = (req as any).auth as import('./auth.js').Principal | null;
       if (!auth.isAdmin(me)) return json(res, { error: 'admin only' }, 403);
@@ -5564,6 +5568,12 @@ export async function handle(
       const ext = await import('./extensions.js');
       if (!ext.toolPermitted(extName, toolName))
         return json(res, { error: `extension "${extName}" does not declare permission tools:${toolName}` }, 403);
+      // `adminTools`: the extension's configuration surface — only a signed-in admin PERSON (its trusted tab), never a
+      // session token or the host token (the same rule as PUT /__api/session-profiles).
+      if (ext.isAdminTool(extName, toolName)) {
+        const who = (req as any).auth as import('./auth.js').Principal | null;
+        if (!auth.isAdmin(who) || who?.kind === 'session' || who?.kind === 'host') return json(res, { error: `${toolName} is an admin tool of "${extName}" — a signed-in admin only` }, 403);
+      }
       // This route runs a tool with the HOST's authority, so a session must not
       // be able to reach a sender through it and skip the owner's approval.
       if (((req as any).auth as any)?.kind === 'session') {

@@ -159,6 +159,16 @@ user, egress allowlist). With `auth.mode: off` a local caller without any token 
 host-route limits hold only with auth on (the host logs a warning when one is created with auth off). A profile binds at
 creation: moving a session into a folder later does not change it.
 
+**Grants and the gatekeeper.** A profile may also carry `grants` (`<ext>:<action>`), narrowed by intersection like
+`hostRoutes`. The host only stores them; an extension that acts for restricted sessions reads them from the caller facts
+the MCP gateway attaches to each call. The bundled `gatekeeper` extension (off by default, `extensions/gatekeeper/`)
+is that extension: it holds the bot identities (a GitHub App narrowed to one repo, a Slack bot without
+`chat:write.public`/`im:write`, Linear, Sentry without alert-rule write) in its own 0600 store, never in a session's
+env or files, and performs only the granted actions in its configured scope. Merge, revert and alert-rule changes run
+only on an operator's word in the session's own thread, verified by the message author's Slack user id in its code, or
+— for a merge — under the auto-rule (CI green + an approving review on the head commit). Every decision is audit-logged
+(`$ARIGAMI_DIR/gatekeeper/audit.log`). Until the isolation step, the same-user limit above applies to its store too.
+
 ## Reporting
 
 Open a private security advisory on the repository, or contact the maintainer

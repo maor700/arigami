@@ -8,6 +8,10 @@ export const strings = {
   'ext.reloading': 'טוען מחדש…',
   'ext.reloaded': 'ההרחבות נטענו מחדש',
   'ext.apiVersion': 'API v{n}',
+  'ext.bundled.title': 'מגיעות עם Arigami',
+  'ext.bundled.sub': 'הרחבות שמגיעות עם Arigami וכבויות עד שמדליקים אותן. כשהן כבויות הן לא משנות כלום.',
+  'ext.bundled.turnOn': 'הדלק',
+  'ext.bundled.on': '“{name}” פועלת',
 
   // מצב
   'ext.state.loaded': 'פעילה',
