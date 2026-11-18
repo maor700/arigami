@@ -39,34 +39,7 @@ metadata:
     {{- include "arigami-tenant.labels" . | nindent 4 }}
 data:
   squid.conf: |
-    http_port {{ $ep.port }}
-    auth_param basic program /usr/lib/squid/basic_ncsa_auth /etc/squid/auth/passwd
-    auth_param basic realm arigami-egress
-    auth_param basic children 2
-    acl gatekeeper proxy_auth gatekeeper
-    acl CONNECT method CONNECT
-    acl tls_port port 443
-    acl ip_literal dstdom_regex ^[0-9.]+$ ^\[?[0-9a-fA-F:]+\]?$
-    acl private_dst dst {{ join " " (concat .Values.networkPolicy.egress.exceptCidrs (list "169.254.0.0/16" "127.0.0.0/8" "fc00::/7" "fe80::/10" "::1")) }}
-    acl session_sites dstdomain {{ join " " $ep.sessionDomains }}
-    acl gatekeeper_sites dstdomain {{ join " " $ep.gatekeeperDomains }}
-    http_access deny !CONNECT
-    http_access deny !tls_port
-    http_access deny ip_literal
-    http_access deny private_dst
-    http_access allow session_sites
-    http_access allow gatekeeper_sites gatekeeper
-    http_access deny all
-    # The access log on stdout is the evidence: every allowed and denied destination (kubectl logs).
-    logformat arigami %{%Y-%m-%dT%H:%M:%S}tl %>a %Ss/%03>Hs %rm %ru %un
-    access_log stdio:/dev/stdout arigami
-    cache_log stdio:/dev/stderr
-    cache deny all
-    logfile_rotate 0
-    pid_filename none
-    coredump_dir /tmp
-    shutdown_lifetime 2 seconds
-    pinger_enable off
+    {{- include "arigami-tenant.squidConf" . | nindent 4 }}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -86,7 +59,8 @@ spec:
       labels:
         {{- $sel | nindent 8 }}
       annotations:
-        checksum/config: {{ printf "%v%v%v" $ep.sessionDomains $ep.gatekeeperDomains $ep.port | sha256sum | trunc 16 }}
+        # restart the proxy when its configuration or the gatekeeper's password changes
+        checksum/config: {{ printf "%s%s" (include "arigami-tenant.squidConf" .) $pw | sha256sum | trunc 16 }}
     spec:
       automountServiceAccountToken: false
       securityContext:

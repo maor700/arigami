@@ -184,3 +184,37 @@ Egress to the cluster DNS — shared by the tenant policy and its egress proxy's
     - protocol: TCP
       port: 53
 {{- end -}}
+
+{{/* The egress proxy's squid.conf (templates/egress-proxy.yaml). */}}
+{{- define "arigami-tenant.squidConf" -}}
+http_port {{ .Values.isolation.egressProxy.port }}
+auth_param basic program /usr/lib/squid/basic_ncsa_auth /etc/squid/auth/passwd
+auth_param basic realm arigami-egress
+auth_param basic children 2
+acl gatekeeper proxy_auth gatekeeper
+acl CONNECT method CONNECT
+acl tls_port port 443
+acl ip_literal dstdom_regex ^[0-9.]+$ ^\[?[0-9a-fA-F:]+\]?$
+acl private_dst dst {{ join " " (concat .Values.networkPolicy.egress.exceptCidrs (list "169.254.0.0/16" "127.0.0.0/8" "fc00::/7" "fe80::/10" "::1")) }}
+acl session_sites dstdomain {{ join " " .Values.isolation.egressProxy.sessionDomains }}
+acl gatekeeper_sites dstdomain {{ join " " .Values.isolation.egressProxy.gatekeeperDomains }}
+http_access deny !CONNECT
+http_access deny !tls_port
+http_access deny ip_literal
+http_access deny private_dst
+http_access allow session_sites
+http_access allow gatekeeper_sites gatekeeper
+http_access deny all
+# The access log on stdout is the evidence: every allowed and denied destination (kubectl logs).
+logformat arigami %{%Y-%m-%dT%H:%M:%S}tl %>a %Ss/%03>Hs %rm %ru %un
+# hasRequest: a TCP connect with no request (the readiness probe) is not a destination — keep it out of the log.
+acl hasRequest has request
+access_log stdio:/dev/stdout arigami hasRequest
+cache_log stdio:/dev/stderr
+cache deny all
+logfile_rotate 0
+pid_filename none
+coredump_dir /tmp
+shutdown_lifetime 2 seconds
+pinger_enable off
+{{- end -}}
