@@ -168,6 +168,9 @@
       hostRoutes: p.hostRoutes || [],
       domains: (p.domains || []).join(', '),
       grants: p.grants || [],
+      // Not edited in this tab (yet), but kept: the sandbox egress and the host-side caps (docs/SANDBOX.md).
+      egress: Array.isArray(p.egress) ? p.egress.slice() : undefined,
+      limits: p.limits && typeof p.limits === 'object' ? { ...p.limits } : undefined,
     };
   }
   const usageCount = (id) => Object.values(S.store?.attach || {}).filter((v) => v === id).length;
@@ -202,7 +205,7 @@
       if (d.isNew && allProfiles()[id] && !isBuiltin(id)) return toast(`A profile "${id}" already exists`);
       const tools = d.tools.filter((t) => t !== GK_FAMILY);
       if (d.grants.length) tools.push(GK_FAMILY);
-      const spec = { name: d.name || id, tools, desktop: d.desktop, talkTo: d.talkTo, maySpawn: d.maySpawn, triggers: d.triggers, hostRoutes: d.hostRoutes, grants: d.grants, domains: d.domains.split(',').map((x) => x.trim()).filter(Boolean) };
+      const spec = { name: d.name || id, tools, desktop: d.desktop, talkTo: d.talkTo, maySpawn: d.maySpawn, triggers: d.triggers, hostRoutes: d.hostRoutes, grants: d.grants, domains: d.domains.split(',').map((x) => x.trim()).filter(Boolean), ...(d.egress ? { egress: d.egress } : {}), ...(d.limits ? { limits: d.limits } : {}) };
       if (!spec.domains.length) delete spec.domains;
       try {
         await saveStore({ ...(S.store.profiles || {}), [id]: spec }, S.store.attach || {});
