@@ -26,7 +26,7 @@ import { refreshOne } from './oauth-login.js';
 import { getMemoryBootstrap } from './memory.js';
 import { personaBlock, getAgent } from './agents.js';
 import { isRestrictive, disallowedToolsFor, hookSettings, strictMcpFor, serverReachable } from './agent-policy.js';
-import { policyForSession } from './session-profile.js';
+import { policyForSession, spawnEnvFor } from './session-profile.js';
 import { appendActivity, budgetState, localDay, budgetRefusal, turnBlocked } from './agent-ledger.js';
 import { auth } from './auth.js';
 import { ensureUserPlugin, USER_SKILLS_DIR } from './skills.js';
@@ -702,7 +702,8 @@ function buildClaudeSpawn(s, { resume, sessionId }) {
     // async childEnv() (server/lib/screen-driver.ts).
     ...(screenHandle?.display ? { DISPLAY: String(screenHandle.display) } : {}),
   };
-  return { bin: claudeBin(), args, env, cwd };
+  // Restricted run mode: an allowlisted env, none of the host's secrets. A Full session's env is this object, unchanged.
+  return { bin: claudeBin(), args, env: spawnEnvFor(s, env), cwd };
 }
 
 function spawnProc(s, resume) {
@@ -2502,6 +2503,8 @@ function runHeadless(s, prompt, onExit, { effort } = {}) {
     timeoutMs: 5 * 60 * 1000,
     effort,
     env,
+    // a restricted session's one-shot (explain / auto-review) reads its worktree: the same allowlisted env
+    restricted: !!s.profile,
     // ONLY the arigami MCP — skip the user's global servers (fast, focused); codex MCP children need the identity explicitly
     mcpServers: engine === 'codex'
       ? { arigami: gatewayEnabled() ? codexEntry('arigami') : { ...bunExec('host'), env } }

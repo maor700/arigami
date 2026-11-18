@@ -29,6 +29,7 @@ import { subscribe } from '../bus.js';
 import { ARIGAMI_DIR } from './instance.js';
 import * as state from '../state.js';
 import { auth } from '../auth.js';
+import { spawnEnvFor } from '../session-profile.js';
 import { sweepShm, shmHeadroom, reapShmOf, X11VNC_SHM_NEED } from './shm-sweep.js';
 
 export interface DesktopInfo {
@@ -250,7 +251,9 @@ async function spawnDesktop(sessionId: string): Promise<DesktopInfo> {
   // carries the session's host address and token, like the session's own engine process does.
   const sessionEnv: NodeJS.ProcessEnv = { ...process.env, ARIGAMI_SESSION_ID: sessionId, ARIGAMI_URL: cfg.hostBase || '', ARIGAMI_TOKEN: auth.tokenForSession(sessionId) };
   if (s?.cwd) sessionEnv.ARIGAMI_TERMINAL_CWD = s.cwd.replace(/^~(?=$|\/)/, os.homedir());
-  const extras = spawnShell(display, sessionId, { which, spawnFn: spawn, env: sessionEnv, configDir: DESKTOP_CONFIG_DIR, session: true });
+  // A restricted session's own desktop (terminal, browser launcher) gets the same allowlisted env as its engine.
+  const deskEnv = spawnEnvFor(s as any, sessionEnv) as NodeJS.ProcessEnv;
+  const extras = spawnShell(display, sessionId, { which, spawnFn: spawn, env: deskEnv, configDir: DESKTOP_CONFIG_DIR, session: true });
 
   const vncArgs = [
     '-display', display,

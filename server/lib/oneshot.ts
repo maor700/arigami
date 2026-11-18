@@ -24,6 +24,7 @@ import { tokenForSession, getActiveId, hasCredentials, codexAuthPathFor, claudeB
 import { claudeBin } from './claude-bin.js';
 import { cfg, defaultEngine } from './config.js';
 import { auth } from '../auth.js';
+import { restrictedEnv } from '../session-profile.js';
 
 const baseEnv = (): NodeJS.ProcessEnv => claudeBaseEnv();
 
@@ -76,8 +77,18 @@ export interface OneShotOptions {
   // verify a pasted token before it becomes an account — onboarding.ts).
   token?: string;
   apiKey?: string;
+  // A restricted session's run (runHeadless): the env is reduced to the profile allowlist (session-profile.ts).
+  restricted?: boolean;
   // Internal: set on the retry after a token refresh so we don't loop.
   _retried?: boolean;
+}
+
+/** Unchanged unless the run is a restricted session's — then only the allowlist (and never the host token). */
+function oneShotEnv(opts: OneShotOptions, env: Record<string, string | undefined>): Record<string, string | undefined> {
+  if (!opts.restricted) return env;
+  const out = restrictedEnv(env);
+  if (out.ARIGAMI_TOKEN && out.ARIGAMI_TOKEN === auth.hostToken) delete out.ARIGAMI_TOKEN;
+  return out;
 }
 
 const STDERR_CAP = 20_000; // generous — this is for full diagnostic logging, not a UI-facing string
@@ -120,7 +131,7 @@ function runOnce(prompt: string, opts: OneShotOptions): Promise<string> {
   return new Promise((resolve, reject) => {
     const child = spawn(bin, args, {
       cwd: opts.cwd || process.cwd(),
-      env: {
+      env: oneShotEnv(opts, {
         ...baseEnv(),
         ...accountEnv(opts),
         // C1: a one-shot has no session, so it gets the host-scoped internal
@@ -128,7 +139,7 @@ function runOnce(prompt: string, opts: OneShotOptions): Promise<string> {
         ARIGAMI_URL: cfg.hostBase,
         ARIGAMI_TOKEN: auth.hostToken,
         ...opts.env,
-      },
+      }),
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     supervise(child, opts.tag || 'oneshot');
@@ -218,7 +229,7 @@ async function runCodexOnce(prompt: string, opts: OneShotOptions): Promise<strin
     await new Promise<void>((resolve, reject) => {
       const child = spawn(process.env.ARIGAMI_CODEX_BIN || 'codex', args, {
         cwd,
-        env: { ...rest, CODEX_HOME: home, ARIGAMI_URL: cfg.hostBase, ARIGAMI_TOKEN: auth.hostToken, ...opts.env },
+        env: oneShotEnv(opts, { ...rest, CODEX_HOME: home, ARIGAMI_URL: cfg.hostBase, ARIGAMI_TOKEN: auth.hostToken, ...opts.env }),
         stdio: ['pipe', 'pipe', 'pipe'],
       });
       supervise(child, opts.tag || 'oneshot');

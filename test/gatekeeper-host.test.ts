@@ -127,6 +127,10 @@ setInterval(()=>{},1e6);
       ARIGAMI_DEFAULT_CWD: ws,
       ARIGAMI_BUNDLED_EXT_DIR: path.join(ROOT, 'extensions'),
       COMPOSIO_API_KEY: '',
+      // host-held service tokens a restricted session must not inherit (canaries; nothing calls these services)
+      SLACK_BOT_TOKEN: 'canary-host-slack',
+      LINEAR_API_KEY: 'canary-host-linear',
+      SENTRY_AUTH_TOKEN: 'canary-host-sentry',
       GH_TOKEN: '',
       GITHUB_TOKEN: '',
     },
@@ -192,6 +196,15 @@ test('off by default; on, a Full session spawns exactly as before and a restrict
   expect(JSON.stringify(cfg)).not.toContain('xoxb-');
   const env = (await spawnOf(restricted)).env;
   expect(JSON.stringify(env)).not.toContain('xoxb-');
+  // the env: a Full session inherits the host's as before; the restricted one carries none of its secrets
+  const fullEnv = (await spawnOf(fullAfter)).env;
+  expect(fullEnv.SLACK_BOT_TOKEN).toBe('canary-host-slack');
+  expect(fullEnv.LINEAR_API_KEY).toBe('canary-host-linear');
+  for (const k of ['SLACK_BOT_TOKEN', 'LINEAR_API_KEY', 'SENTRY_AUTH_TOKEN']) expect(env[k]).toBeUndefined();
+  expect(JSON.stringify(env)).not.toContain('canary-host-');
+  expect(env.ARIGAMI_SESSION_ID).toBe(restricted);
+  expect(env.ARIGAMI_PROFILE).toBe('fixer');
+  expect(env.PATH).toBeTruthy();
   tFull = (await spawnOf(fullAfter)).env.ARIGAMI_TOKEN;
   tR = env.ARIGAMI_TOKEN;
 });

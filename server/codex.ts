@@ -76,7 +76,7 @@ import { codexServersFor, codexCredentialsFile, codexMcpHome, GLOBAL } from './m
 import { looksLikeCodexLimit, setCodexCatalogSource, setCodexWindowSource } from './lib/codex-quota.js';
 import { codexRealHome, codexAuthPathFor, codexHomeOfAccount, getActiveId } from './accounts.js';
 import { isRestrictive, hookSettings, serverReachable } from './agent-policy.js';
-import { policyForSession } from './session-profile.js';
+import { policyForSession, spawnEnvFor } from './session-profile.js';
 import { bunExecShell } from './lib/bun-exec.js';
 import { hasMods } from './mods.js';
 import { expirePendingPermissions, expirePendingScreenRequests } from './api.js';
@@ -541,7 +541,8 @@ function codexBuildSpawn(s: Session, { resume, sessionId }: { resume: boolean; s
     ...(s.metadata?.port ? { PORT: String(s.metadata.port) } : {}),
     ...(screenHandle?.display ? { DISPLAY: String(screenHandle.display) } : {}),
   };
-  return { bin: codexBin(), args, env, cwd };
+  // Restricted run mode: an allowlisted env, none of the host's secrets. A Full session's env is this object, unchanged.
+  return { bin: codexBin(), args, env: spawnEnvFor(s, env as Record<string, string | undefined>) as NodeJS.ProcessEnv, cwd };
 }
 
 // ---- writeMessage() --------------------------------------------------------
