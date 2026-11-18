@@ -174,6 +174,12 @@ Slack listener on the session's own recorded thread (`metadata.origin` — host-
 recorded once by an extension holding the `session:origin` permission through the MCP gateway), on itself; cron and any
 other listener are refused with the reason. Listeners end with their session (archive or delete).
 
+**Engine-native scheduling.** Every restricted profile denies the engines' own scheduling / remote-execution tools —
+Claude Code's `RemoteTrigger` (cloud routines), `CronCreate`/`CronDelete`/`CronList` and `ScheduleWakeup` — whatever
+`triggers` says (`ENGINE_NATIVE_SCHEDULING`, an explicit list): hidden at spawn (`--disallowedTools`) and refused by the
+hook for both engines. Codex ships no such tool. Not covered here: a CLI run from Bash with the engine's own credential
+(e.g. `claude` / `codex cloud`) — that is the model-call proxy and isolation work.
+
 ## Reporting
 
 Open a private security advisory on the repository, or contact the maintainer
