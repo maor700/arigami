@@ -84,9 +84,11 @@ Credentials are not in `extensions.json` (whose secrets become a tool server's e
 files or tool results. The tool server that holds the code runs once, in the host's MCP gateway, never as a child of a
 session; it refuses to act when called any other way (`ARIGAMI_MCP_GATEWAY=0`).
 
-**Limit until isolation (phase 4):** a restricted session still runs as the host's OS user, so `Bash` could read
-`$ARIGAMI_DIR/gatekeeper/` like any other file of that user. Running restricted sessions in a container / as another
-user (or the gatekeeper as a sidecar with the store mounted only there) closes that; nothing in this extension changes.
+**Isolation:** without a sandbox a restricted session runs as the host's OS user, so `Bash` could read
+`$ARIGAMI_DIR/gatekeeper/` like any other file of that user. With `sandbox.mode: "docker"` (docs/SANDBOX.md) each
+restricted session runs in its own container where `$ARIGAMI_DIR` (this store included) is never mounted and the only
+way out is an egress proxy; on a control-plane tenant the gatekeeper runs as a sidecar with the store mounted only
+there. Nothing in this extension changes either way.
 
 ## Model calls without the Claude token (design, not built)
 

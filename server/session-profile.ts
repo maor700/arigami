@@ -13,6 +13,11 @@
 //   - maySpawn   whether it may create sessions (always its own children, always inheriting this profile);
 //   - triggers   whether it may create cron triggers and listeners;
 //   - hostRoutes the host route groups it may reach besides its own session (memory, setup, agents…);
+//   - egress     what its sandbox's egress proxy lets it reach besides the model API and its own host (package
+//                registries, named domains) — enforced only when the host runs restricted sessions in a sandbox
+//                (server/lib/sandbox.ts); absent = nothing more;
+//   - limits     host-side caps: sessions of this profile working at once, and the spend of one session tree
+//                (server/profile-limits.ts);
 //   - grants     actions an extension performs FOR the session (`<ext>:<action>`, e.g. a gatekeeper's
 //                `gatekeeper:github.push`). The host only stores and narrows them; the extension reads them from the
 //                caller facts the MCP gateway attaches to each call and enforces them in its own code.
@@ -65,6 +70,20 @@ export interface ProfileSpec {
   hostRoutes?: string[];
   /** Extension action grants (`<ext>:<action>`); absent = none. Narrowing intersects them. */
   grants?: string[];
+  /** Egress groups (`npm`, `pypi`, `github` …) or host patterns (`example.com`, `*.example.com`); absent = none. */
+  egress?: string[];
+  /** Host-side caps (server/profile-limits.ts); absent = none. Narrowing takes the lower of each. */
+  limits?: ProfileLimits;
+}
+
+/** Caps the host enforces on restricted sessions (S15). Every field is optional; a missing one is "no cap". */
+export interface ProfileLimits {
+  /** Sessions of this profile (by name) working at once, host-wide. A turn beyond it waits for a free slot. */
+  concurrent?: number;
+  /** Model spend of one session tree (the top restricted session and every descendant), in USD (claude). */
+  spendUsd?: number;
+  /** Model tokens of one session tree (engines that report no cost, e.g. codex). */
+  tokens?: number;
 }
 
 export interface ProfileLayer {
@@ -84,6 +103,10 @@ export interface SessionProfile {
   hostRoutes: string[];
   /** Extension action grants (see ProfileSpec.grants). Absent on profiles stored before grants existed = none. */
   grants?: string[];
+  /** Egress beyond the model API and the host (see ProfileSpec.egress). Absent = none. */
+  egress?: string[];
+  /** Host-side caps (see ProfileLimits). Absent = none. */
+  limits?: ProfileLimits;
   /** The host-recorded parent (set at creation, never changed by the session). */
   parent: string | null;
 }
@@ -91,6 +114,31 @@ export interface SessionProfile {
 /** `<ext>:<action>` — an extension name, then a dotted action (no wildcards: narrowing is a plain intersection). */
 export const GRANT_RE = /^[a-z0-9][a-z0-9-]*:[a-z0-9][a-z0-9._-]{0,63}$/;
 const grantsOf = (p: { grants?: string[] } | null | undefined): string[] => (Array.isArray(p?.grants) ? p!.grants! : []);
+/** A named egress group or a host pattern: `name`, `host.tld`, `*.host.tld` (lower case, no scheme, no port). */
+export const EGRESS_RE = /^(\*\.)?[a-z0-9]([a-z0-9-]{0,62})(\.[a-z0-9]([a-z0-9-]{0,62}))*$/;
+export const egressOf = (p: { egress?: string[] } | null | undefined): string[] => (Array.isArray(p?.egress) ? p!.egress! : []);
+const LIMIT_KEYS = ['concurrent', 'spendUsd', 'tokens'] as const;
+/** Positive numbers only; anything else is dropped (= no cap on that axis). */
+export function cleanLimits(l: unknown): ProfileLimits | undefined {
+  if (!l || typeof l !== 'object') return undefined;
+  const out: ProfileLimits = {};
+  for (const k of LIMIT_KEYS) {
+    const v = Number((l as Record<string, unknown>)[k]);
+    if (Number.isFinite(v) && v > 0) out[k] = k === 'concurrent' || k === 'tokens' ? Math.floor(v) : v;
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+/** The lower of each cap (a cap on one side only stays). Never wider than either side. */
+export function minLimits(a: ProfileLimits | undefined, b: ProfileLimits | undefined): ProfileLimits | undefined {
+  if (!a) return b ? { ...b } : undefined;
+  if (!b) return { ...a };
+  const out: ProfileLimits = {};
+  for (const k of LIMIT_KEYS) {
+    const x = a[k], y = b[k];
+    if (x !== undefined || y !== undefined) out[k] = x === undefined ? y : y === undefined ? x : Math.min(x, y);
+  }
+  return out;
+}
 
 /** The shipped profile: the narrowest useful one — read/write files and run commands, report up, nothing else. */
 export const BUILTIN_PROFILES: Record<string, ProfileSpec> = {
@@ -110,7 +158,7 @@ const list = (v: unknown): string[] | null =>
   Array.isArray(v) ? [...new Set(v.map((x) => String(x ?? '').trim()).filter(Boolean))] : null;
 
 /** A spec with every field filled: absent = the restrictive default (a top-level profile starts closed). */
-export function normalizeSpec(spec: ProfileSpec, fallbackName = 'restricted'): Required<Omit<ProfileSpec, 'hostTools'>> & { tools: string[] | null } {
+export function normalizeSpec(spec: ProfileSpec, fallbackName = 'restricted'): Required<Omit<ProfileSpec, 'hostTools' | 'limits'>> & { tools: string[] | null; limits?: ProfileLimits } {
   const tools = list(spec.tools);
   const host = list(spec.hostTools);
   const merged = tools || host ? [...(tools || []), ...(host || [])] : null;
@@ -119,6 +167,8 @@ export function normalizeSpec(spec: ProfileSpec, fallbackName = 'restricted'): R
   const hostRoutes = (list(spec.hostRoutes) || []).filter((g) => g in HOST_ROUTE_GROUPS);
   const domains = list(spec.domains);
   const grants = (list(spec.grants) || []).filter((g) => GRANT_RE.test(g));
+  const egress = (list(spec.egress) || []).map((e) => e.toLowerCase()).filter((e) => EGRESS_RE.test(e));
+  const limits = cleanLimits(spec.limits);
   return {
     name: String(spec.name || fallbackName).slice(0, 80),
     tools: merged,
@@ -129,6 +179,8 @@ export function normalizeSpec(spec: ProfileSpec, fallbackName = 'restricted'): R
     triggers: spec.triggers === true,
     hostRoutes,
     grants,
+    egress,
+    ...(limits ? { limits } : {}),
   };
 }
 
@@ -139,7 +191,7 @@ const layerOf = (n: { name: string; tools: string[] | null; domains: string[] | 
 export function fromSpec(spec: ProfileSpec, parent: string | null = null): SessionProfile {
   const n = normalizeSpec(spec);
   const layer = layerOf(n);
-  return { name: n.name, layers: layer ? [layer] : [], desktop: n.desktop, talkTo: n.talkTo, maySpawn: n.maySpawn, triggers: n.triggers, hostRoutes: n.hostRoutes, grants: n.grants, parent };
+  return { name: n.name, layers: layer ? [layer] : [], desktop: n.desktop, talkTo: n.talkTo, maySpawn: n.maySpawn, triggers: n.triggers, hostRoutes: n.hostRoutes, grants: n.grants, egress: n.egress, ...(n.limits ? { limits: n.limits } : {}), parent };
 }
 
 /**
@@ -160,6 +212,8 @@ export function narrow(base: SessionProfile | null, by: SessionProfile | Profile
     triggers: base.triggers && other.triggers,
     hostRoutes: base.hostRoutes.filter((g) => other.hostRoutes.includes(g)),
     grants: grantsOf(base).filter((g) => grantsOf(other).includes(g)),
+    egress: egressOf(base).filter((e) => egressOf(other).includes(e)),
+    ...(base.limits || other.limits ? { limits: minLimits(base.limits, other.limits) } : {}),
     parent,
   };
 }
@@ -176,8 +230,16 @@ export function isWithin(child: SessionProfile | null, parent: SessionProfile | 
     (!child.maySpawn || parent.maySpawn) &&
     (!child.triggers || parent.triggers) &&
     child.hostRoutes.every((g) => parent.hostRoutes.includes(g)) &&
-    grantsOf(child).every((g) => grantsOf(parent).includes(g))
+    grantsOf(child).every((g) => grantsOf(parent).includes(g)) &&
+    egressOf(child).every((e) => egressOf(parent).includes(e)) &&
+    withinLimits(child.limits, parent.limits)
   );
+}
+
+/** Every cap the parent sets is also set on the child, no higher. */
+function withinLimits(child: ProfileLimits | undefined, parent: ProfileLimits | undefined): boolean {
+  if (!parent) return true;
+  return LIMIT_KEYS.every((k) => parent[k] === undefined || (child?.[k] !== undefined && child[k]! <= parent[k]!));
 }
 
 // ---- the store: named profiles + where they are attached ------------------------------------------------------
@@ -218,7 +280,7 @@ export function writeStore(next: ProfileStore): ProfileStore {
   for (const [id, spec] of Object.entries(next.profiles || {})) {
     if (!ID_RE.test(id) || !spec || typeof spec !== 'object') throw Object.assign(new Error(`invalid profile id: ${id}`), { status: 400 });
     const n = normalizeSpec(spec, id);
-    clean.profiles[id] = { name: n.name, tools: n.tools, domains: n.domains, desktop: n.desktop, talkTo: n.talkTo, maySpawn: n.maySpawn, triggers: n.triggers, hostRoutes: n.hostRoutes, ...(n.grants.length ? { grants: n.grants } : {}) };
+    clean.profiles[id] = { name: n.name, tools: n.tools, domains: n.domains, desktop: n.desktop, talkTo: n.talkTo, maySpawn: n.maySpawn, triggers: n.triggers, hostRoutes: n.hostRoutes, ...(n.grants.length ? { grants: n.grants } : {}), ...(n.egress.length ? { egress: n.egress } : {}), ...(n.limits ? { limits: n.limits } : {}) };
   }
   for (const [key, v] of Object.entries(next.attach || {})) {
     if (!/^(folder|agent|trigger):[A-Za-z0-9_-]{1,80}$/.test(key)) throw Object.assign(new Error(`invalid attach key: ${key}`), { status: 400 });
@@ -498,7 +560,7 @@ export function sanitizeOwnPatch(body: Record<string, unknown>): Record<string, 
 
 /** The short, wire-safe description of a session's profile (cockpit badge, /policy). */
 export const describe = (p: SessionProfile | null | undefined) =>
-  p ? { name: p.name, desktop: p.desktop, talkTo: p.talkTo, maySpawn: p.maySpawn, triggers: p.triggers, hostRoutes: p.hostRoutes, grants: grantsOf(p), parent: p.parent, layers: p.layers.map((l) => l.name) } : null;
+  p ? { name: p.name, desktop: p.desktop, talkTo: p.talkTo, maySpawn: p.maySpawn, triggers: p.triggers, hostRoutes: p.hostRoutes, grants: grantsOf(p), egress: egressOf(p), ...(p.limits ? { limits: p.limits } : {}), parent: p.parent, layers: p.layers.map((l) => l.name) } : null;
 
 // ---- shared desktop by approval -----------------------------------------------------------------------------------
 
