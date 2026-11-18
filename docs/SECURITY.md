@@ -142,6 +142,8 @@ profile is stored on the session record by the host at creation and no PATCH can
 | `maySpawn` | may create sessions — always its own children, which inherit its profile |
 | `triggers` | may create cron triggers (only its own, delivering to itself or its family; their runs inherit its profile) and listeners |
 | `hostRoutes` | host route groups beyond its own session: `memory`, `skills`, `setup`, `agents`, `host-resources` |
+| `egress` | with the sandbox on: what its egress proxy lets through besides the model API and its own host — groups (`npm`, `pypi`, `github`, `crates`, `go`) or hosts (`example.com`, `*.example.com`); absent = nothing more |
+| `limits` | host-side caps: `concurrent` (sessions of the profile working at once — more wait in a queue), `spendUsd` / `tokens` (one session tree; over it the tree is stopped, turns are refused and the owner is alerted) — `server/profile-limits.ts` |
 
 **Inheritance only narrows.** A child's profile is its parent's narrowed by the folder's, the agent's, the trigger's
 and any explicit pick: tool allowlists stack as layers that must all allow, the desktop mode takes the lower one,
@@ -153,9 +155,10 @@ maps to; it never gets a WebSocket, the dev-server proxy or artifacts. Blocking 
 session. Its own PATCH is limited to cockpit fields and cannot touch the metadata the host reads as authority
 (`master`, `agent`, `screen`, cron pointers…). A restricted caller cannot pass `agent`, a foreign `master` or a folder.
 
-**Limits.** Enforcement is host-side and engine-agnostic, but the session still runs as the host's user: what it can
-do with Bash on the machine (files, network, sudo) is not limited here — that is the isolation step (own container /
-user, egress allowlist). With `auth.mode: off` a local caller without any token is the admin, so a restricted session's
+**Limits.** Enforcement is host-side and engine-agnostic, but without the sandbox the session still runs as the host's
+user: what it can do with Bash on the machine (files, network, sudo) is not limited by the profile. The sandbox
+(`sandbox.mode: "docker"`, [SANDBOX.md](SANDBOX.md)) closes that for standalone installs: each restricted session runs
+in its own container with no host secrets, no root and no network except an egress proxy with an allowlist. With `auth.mode: off` a local caller without any token is the admin, so a restricted session's
 host-route limits hold only with auth on (the host logs a warning when one is created with auth off). A profile binds at
 creation: moving a session into a folder later does not change it.
 
@@ -167,7 +170,19 @@ is that extension: it holds the bot identities (a GitHub App narrowed to one rep
 env or files, and performs only the granted actions in its configured scope. Merge, revert and alert-rule changes run
 only on an operator's word in the session's own thread, verified by the message author's Slack user id in its code, or
 — for a merge — under the auto-rule (CI green + an approving review on the head commit). Every decision is audit-logged
-(`$ARIGAMI_DIR/gatekeeper/audit.log`). Until the isolation step, the same-user limit above applies to its store too.
+(`$ARIGAMI_DIR/gatekeeper/audit.log`). Without the sandbox, the same-user limit above applies to its store too; in the
+sandbox the store is never mounted.
+
+**Wake-ups.** `triggers` is `false`, `"own-thread"` or `true` (narrowing takes the lower). `"own-thread"` allows only a
+Slack listener on the session's own recorded thread (`metadata.origin` — host-protected; set by the session's creator, or
+recorded once by an extension holding the `session:origin` permission through the MCP gateway), on itself; cron and any
+other listener are refused with the reason. Listeners end with their session (archive or delete).
+
+**Engine-native scheduling.** Every restricted profile denies the engines' own scheduling / remote-execution tools —
+Claude Code's `RemoteTrigger` (cloud routines), `CronCreate`/`CronDelete`/`CronList` and `ScheduleWakeup` — whatever
+`triggers` says (`ENGINE_NATIVE_SCHEDULING`, an explicit list): hidden at spawn (`--disallowedTools`) and refused by the
+hook for both engines. Codex ships no such tool. Not covered here: a CLI run from Bash with the engine's own credential
+(e.g. `claude` / `codex cloud`) — that is the model-call proxy and isolation work.
 
 ## Reporting
 

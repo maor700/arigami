@@ -11,8 +11,14 @@
 //                after a person allows it on a card);
 //   - talkTo     parent / children — whom it may message (send_message, task_session, report_to_master);
 //   - maySpawn   whether it may create sessions (always its own children, always inheriting this profile);
-//   - triggers   whether it may create cron triggers and listeners;
+//   - triggers   whether it may create cron triggers and listeners: false | 'own-thread' (one Slack listener kind,
+//                only on the session's own recorded thread — metadata.origin — waking only itself) | true;
 //   - hostRoutes the host route groups it may reach besides its own session (memory, setup, agents…);
+//   - egress     what its sandbox's egress proxy lets it reach besides the model API and its own host (package
+//                registries, named domains) — enforced only when the host runs restricted sessions in a sandbox
+//                (server/lib/sandbox.ts); absent = nothing more;
+//   - limits     host-side caps: sessions of this profile working at once, and the spend of one session tree
+//                (server/profile-limits.ts);
 //   - grants     actions an extension performs FOR the session (`<ext>:<action>`, e.g. a gatekeeper's
 //                `gatekeeper:github.push`). The host only stores and narrows them; the extension reads them from the
 //                caller facts the MCP gateway attaches to each call and enforces them in its own code.
@@ -34,6 +40,11 @@ import { ARIGAMI_DIR } from './lib/instance.js';
 import { FAMILIES, expandTools, policyFor, type Policy } from './agent-policy.js';
 
 export type DesktopMode = 'none' | 'own' | 'shared';
+/** false = none; 'own-thread' = a Slack listener on the session's own recorded thread only; true = cron + listeners. */
+export type Triggers = boolean | 'own-thread';
+const TRIGGERS_RANK = (t: Triggers | undefined): number => (t === true ? 2 : t === 'own-thread' ? 1 : 0);
+const TRIGGERS_OF = [false, 'own-thread', true] as const;
+export const triggersOf = (v: unknown): Triggers => (v === true ? true : v === 'own-thread' ? 'own-thread' : false);
 export type TalkTo = 'parent' | 'children';
 
 export const DESKTOP_MODES: readonly DesktopMode[] = ['none', 'own', 'shared'];
@@ -61,10 +72,24 @@ export interface ProfileSpec {
   desktop?: DesktopMode;
   talkTo?: TalkTo[];
   maySpawn?: boolean;
-  triggers?: boolean;
+  triggers?: Triggers;
   hostRoutes?: string[];
   /** Extension action grants (`<ext>:<action>`); absent = none. Narrowing intersects them. */
   grants?: string[];
+  /** Egress groups (`npm`, `pypi`, `github` …) or host patterns (`example.com`, `*.example.com`); absent = none. */
+  egress?: string[];
+  /** Host-side caps (server/profile-limits.ts); absent = none. Narrowing takes the lower of each. */
+  limits?: ProfileLimits;
+}
+
+/** Caps the host enforces on restricted sessions (S15). Every field is optional; a missing one is "no cap". */
+export interface ProfileLimits {
+  /** Sessions of this profile (by name) working at once, host-wide. A turn beyond it waits for a free slot. */
+  concurrent?: number;
+  /** Model spend of one session tree (the top restricted session and every descendant), in USD (claude). */
+  spendUsd?: number;
+  /** Model tokens of one session tree (engines that report no cost, e.g. codex). */
+  tokens?: number;
 }
 
 export interface ProfileLayer {
@@ -80,10 +105,14 @@ export interface SessionProfile {
   desktop: DesktopMode;
   talkTo: TalkTo[];
   maySpawn: boolean;
-  triggers: boolean;
+  triggers: Triggers;
   hostRoutes: string[];
   /** Extension action grants (see ProfileSpec.grants). Absent on profiles stored before grants existed = none. */
   grants?: string[];
+  /** Egress beyond the model API and the host (see ProfileSpec.egress). Absent = none. */
+  egress?: string[];
+  /** Host-side caps (see ProfileLimits). Absent = none. */
+  limits?: ProfileLimits;
   /** The host-recorded parent (set at creation, never changed by the session). */
   parent: string | null;
 }
@@ -91,6 +120,31 @@ export interface SessionProfile {
 /** `<ext>:<action>` — an extension name, then a dotted action (no wildcards: narrowing is a plain intersection). */
 export const GRANT_RE = /^[a-z0-9][a-z0-9-]*:[a-z0-9][a-z0-9._-]{0,63}$/;
 const grantsOf = (p: { grants?: string[] } | null | undefined): string[] => (Array.isArray(p?.grants) ? p!.grants! : []);
+/** A named egress group or a host pattern: `name`, `host.tld`, `*.host.tld` (lower case, no scheme, no port). */
+export const EGRESS_RE = /^(\*\.)?[a-z0-9]([a-z0-9-]{0,62})(\.[a-z0-9]([a-z0-9-]{0,62}))*$/;
+export const egressOf = (p: { egress?: string[] } | null | undefined): string[] => (Array.isArray(p?.egress) ? p!.egress! : []);
+const LIMIT_KEYS = ['concurrent', 'spendUsd', 'tokens'] as const;
+/** Positive numbers only; anything else is dropped (= no cap on that axis). */
+export function cleanLimits(l: unknown): ProfileLimits | undefined {
+  if (!l || typeof l !== 'object') return undefined;
+  const out: ProfileLimits = {};
+  for (const k of LIMIT_KEYS) {
+    const v = Number((l as Record<string, unknown>)[k]);
+    if (Number.isFinite(v) && v > 0) out[k] = k === 'concurrent' || k === 'tokens' ? Math.floor(v) : v;
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+/** The lower of each cap (a cap on one side only stays). Never wider than either side. */
+export function minLimits(a: ProfileLimits | undefined, b: ProfileLimits | undefined): ProfileLimits | undefined {
+  if (!a) return b ? { ...b } : undefined;
+  if (!b) return { ...a };
+  const out: ProfileLimits = {};
+  for (const k of LIMIT_KEYS) {
+    const x = a[k], y = b[k];
+    if (x !== undefined || y !== undefined) out[k] = x === undefined ? y : y === undefined ? x : Math.min(x, y);
+  }
+  return out;
+}
 
 /** The shipped profile: the narrowest useful one — read/write files and run commands, report up, nothing else. */
 export const BUILTIN_PROFILES: Record<string, ProfileSpec> = {
@@ -110,7 +164,7 @@ const list = (v: unknown): string[] | null =>
   Array.isArray(v) ? [...new Set(v.map((x) => String(x ?? '').trim()).filter(Boolean))] : null;
 
 /** A spec with every field filled: absent = the restrictive default (a top-level profile starts closed). */
-export function normalizeSpec(spec: ProfileSpec, fallbackName = 'restricted'): Required<Omit<ProfileSpec, 'hostTools'>> & { tools: string[] | null } {
+export function normalizeSpec(spec: ProfileSpec, fallbackName = 'restricted'): Required<Omit<ProfileSpec, 'hostTools' | 'limits'>> & { tools: string[] | null; limits?: ProfileLimits } {
   const tools = list(spec.tools);
   const host = list(spec.hostTools);
   const merged = tools || host ? [...(tools || []), ...(host || [])] : null;
@@ -119,6 +173,8 @@ export function normalizeSpec(spec: ProfileSpec, fallbackName = 'restricted'): R
   const hostRoutes = (list(spec.hostRoutes) || []).filter((g) => g in HOST_ROUTE_GROUPS);
   const domains = list(spec.domains);
   const grants = (list(spec.grants) || []).filter((g) => GRANT_RE.test(g));
+  const egress = (list(spec.egress) || []).map((e) => e.toLowerCase()).filter((e) => EGRESS_RE.test(e));
+  const limits = cleanLimits(spec.limits);
   return {
     name: String(spec.name || fallbackName).slice(0, 80),
     tools: merged,
@@ -126,9 +182,11 @@ export function normalizeSpec(spec: ProfileSpec, fallbackName = 'restricted'): R
     desktop,
     talkTo,
     maySpawn: spec.maySpawn === true,
-    triggers: spec.triggers === true,
+    triggers: triggersOf(spec.triggers),
     hostRoutes,
     grants,
+    egress,
+    ...(limits ? { limits } : {}),
   };
 }
 
@@ -139,7 +197,7 @@ const layerOf = (n: { name: string; tools: string[] | null; domains: string[] | 
 export function fromSpec(spec: ProfileSpec, parent: string | null = null): SessionProfile {
   const n = normalizeSpec(spec);
   const layer = layerOf(n);
-  return { name: n.name, layers: layer ? [layer] : [], desktop: n.desktop, talkTo: n.talkTo, maySpawn: n.maySpawn, triggers: n.triggers, hostRoutes: n.hostRoutes, grants: n.grants, parent };
+  return { name: n.name, layers: layer ? [layer] : [], desktop: n.desktop, talkTo: n.talkTo, maySpawn: n.maySpawn, triggers: n.triggers, hostRoutes: n.hostRoutes, grants: n.grants, egress: n.egress, ...(n.limits ? { limits: n.limits } : {}), parent };
 }
 
 /**
@@ -157,9 +215,11 @@ export function narrow(base: SessionProfile | null, by: SessionProfile | Profile
     desktop: DESKTOP_RANK[other.desktop] < DESKTOP_RANK[base.desktop] ? other.desktop : base.desktop,
     talkTo: base.talkTo.filter((t) => other.talkTo.includes(t)),
     maySpawn: base.maySpawn && other.maySpawn,
-    triggers: base.triggers && other.triggers,
+    triggers: TRIGGERS_OF[Math.min(TRIGGERS_RANK(base.triggers), TRIGGERS_RANK(other.triggers))],
     hostRoutes: base.hostRoutes.filter((g) => other.hostRoutes.includes(g)),
     grants: grantsOf(base).filter((g) => grantsOf(other).includes(g)),
+    egress: egressOf(base).filter((e) => egressOf(other).includes(e)),
+    ...(base.limits || other.limits ? { limits: minLimits(base.limits, other.limits) } : {}),
     parent,
   };
 }
@@ -174,10 +234,18 @@ export function isWithin(child: SessionProfile | null, parent: SessionProfile | 
     DESKTOP_RANK[child.desktop] <= DESKTOP_RANK[parent.desktop] &&
     child.talkTo.every((t) => parent.talkTo.includes(t)) &&
     (!child.maySpawn || parent.maySpawn) &&
-    (!child.triggers || parent.triggers) &&
+    TRIGGERS_RANK(child.triggers) <= TRIGGERS_RANK(parent.triggers) &&
     child.hostRoutes.every((g) => parent.hostRoutes.includes(g)) &&
-    grantsOf(child).every((g) => grantsOf(parent).includes(g))
+    grantsOf(child).every((g) => grantsOf(parent).includes(g)) &&
+    egressOf(child).every((e) => egressOf(parent).includes(e)) &&
+    withinLimits(child.limits, parent.limits)
   );
+}
+
+/** Every cap the parent sets is also set on the child, no higher. */
+function withinLimits(child: ProfileLimits | undefined, parent: ProfileLimits | undefined): boolean {
+  if (!parent) return true;
+  return LIMIT_KEYS.every((k) => parent[k] === undefined || (child?.[k] !== undefined && child[k]! <= parent[k]!));
 }
 
 // ---- the store: named profiles + where they are attached ------------------------------------------------------
@@ -218,7 +286,7 @@ export function writeStore(next: ProfileStore): ProfileStore {
   for (const [id, spec] of Object.entries(next.profiles || {})) {
     if (!ID_RE.test(id) || !spec || typeof spec !== 'object') throw Object.assign(new Error(`invalid profile id: ${id}`), { status: 400 });
     const n = normalizeSpec(spec, id);
-    clean.profiles[id] = { name: n.name, tools: n.tools, domains: n.domains, desktop: n.desktop, talkTo: n.talkTo, maySpawn: n.maySpawn, triggers: n.triggers, hostRoutes: n.hostRoutes, ...(n.grants.length ? { grants: n.grants } : {}) };
+    clean.profiles[id] = { name: n.name, tools: n.tools, domains: n.domains, desktop: n.desktop, talkTo: n.talkTo, maySpawn: n.maySpawn, triggers: n.triggers, hostRoutes: n.hostRoutes, ...(n.grants.length ? { grants: n.grants } : {}), ...(n.egress.length ? { egress: n.egress } : {}), ...(n.limits ? { limits: n.limits } : {}) };
   }
   for (const [key, v] of Object.entries(next.attach || {})) {
     if (!/^(folder|agent|trigger):[A-Za-z0-9_-]{1,80}$/.test(key)) throw Object.assign(new Error(`invalid attach key: ${key}`), { status: 400 });
@@ -310,13 +378,26 @@ export const SHARED_TOOLS = [
 /** Never for a restricted session: they change the host, an agent, or another session's standing. */
 export const NEVER_TOOLS = ['host_restart', 'create_agent', 'update_agent', 'permission_prompt_answer'];
 
+/**
+ * Engine-NATIVE scheduling and remote execution — tools the CLI itself ships that schedule work or run it somewhere the
+ * host does not see: Claude Code's cloud routines (RemoteTrigger), its session cron (CronCreate/Delete/List) and its
+ * self-paced wake-ups (ScheduleWakeup). Denied for EVERY restricted profile, whatever `triggers` says: a restricted
+ * session's only wake-ups are the host's own (cron triggers, listeners), which the profile governs and the host can see.
+ * Codex ships no such model tool (its built-ins are shell, apply_patch, update_plan, view_image, web_search), so there is
+ * no codex name to add; the same names are denied for a codex session by the shared PreToolUse hook all the same.
+ * An explicit list on purpose: a new engine tool of this kind must be added here, not guessed.
+ */
+export const ENGINE_NATIVE_SCHEDULING = ['RemoteTrigger', 'CronCreate', 'CronDelete', 'CronList', 'ScheduleWakeup'];
+
 /** The tools a profile's flags take away, whatever its allowlist says (they beat CORE_TOOLS too). */
 export function deniedByFlags(p: SessionProfile): string[] {
-  const out = new Set<string>(NEVER_TOOLS);
+  const out = new Set<string>([...NEVER_TOOLS, ...ENGINE_NATIVE_SCHEDULING]);
   if (p.desktop === 'none') for (const t of [...SCREEN_TOOLS, ...SHARED_TOOLS, ...FAMILIES.browser]) out.add(t);
   if (p.desktop === 'own') for (const t of SHARED_TOOLS) out.add(t);
   if (!p.maySpawn) out.add('create_session');
-  if (!p.triggers) for (const t of FAMILIES.triggers) if (t !== 'list_listeners' && t !== 'cancel_listener') out.add(t);
+  // 'own-thread' keeps register_listener (the host then allows only a Slack listener on the session's own thread);
+  // cron — the host's and the CLI's own — stays out.
+  if (p.triggers !== true) for (const t of FAMILIES.triggers) if (t !== 'list_listeners' && t !== 'cancel_listener' && !(p.triggers === 'own-thread' && t === 'register_listener')) out.add(t);
   for (const [g, tools] of Object.entries(HOST_ROUTE_GROUPS)) if (!p.hostRoutes.includes(g)) for (const t of tools) out.add(t);
   return [...out];
 }
@@ -463,6 +544,37 @@ export function scopeRefusal(callerId: string, method: string, pathname: string,
   return no(`${m} ${pathname} is not in its profile`);
 }
 
+/** A session's recorded thread: its own `metadata.origin`, else its nearest ancestor's (host-recorded parents). */
+export function originThreadOf(id: string, getSession: (id: string) => { profile?: SessionProfile | null; metadata?: Record<string, unknown> | null } | null): { channel: string; thread_ts: string } | null {
+  const seen = new Set<string>();
+  for (let cur: string | null = id; cur && !seen.has(cur) && seen.size < 32; ) {
+    seen.add(cur);
+    const s = getSession(cur);
+    const o = s?.metadata?.origin as { kind?: string; channel?: string; thread_ts?: string } | undefined;
+    if (o && (o.kind === undefined || o.kind === 'slack') && o.channel && o.thread_ts) return { channel: String(o.channel), thread_ts: String(o.thread_ts) };
+    cur = s?.profile?.parent ?? null;
+  }
+  return null;
+}
+
+/**
+ * triggers:'own-thread' — the only listener such a session may arm: a Slack listener on its OWN recorded thread
+ * (originThreadOf), on itself. Anything else is refused with the reason. (It dies with the session like every listener.)
+ * null = allowed.
+ */
+export function ownThreadListenerRefusal(p: SessionProfile, body: Record<string, unknown>, target: { channelId: string; threadTs?: string } | null, own: { channel: string; thread_ts: string } | null): string | null {
+  const no = (what: string) => `restricted session (profile "${p.name}", triggers: own-thread): ${what}`;
+  if (p.triggers === true) return null;
+  if (p.triggers !== 'own-thread') return no('no listeners or cron jobs');
+  const type = String(body.type || 'github-pr');
+  if (type !== 'slack') return no(`only a Slack listener on its own incident thread — not a "${type}" listener`);
+  if (!own) return no('this session has no recorded incident thread (its creator sets metadata.origin, or the gatekeeper records it when the thread is bound)');
+  if (!target) return no('name the thread: channel_id + thread_ts');
+  if (target.channelId !== own.channel || target.threadTs !== own.thread_ts)
+    return no(`only its own incident thread ${own.channel}/${own.thread_ts} — not ${target.channelId}/${target.threadTs || '(whole channel)'}`);
+  return null;
+}
+
 /** May restricted `from` deliver a message to `to`? (send_message / task_session / a cron 'existing:' target) */
 export function mayMessage(from: SessionLike, to: SessionLike): boolean {
   const p = from.profile;
@@ -482,7 +594,7 @@ export function inFamily(me: SessionLike, s: SessionLike): boolean {
  * A restricted session's PATCH of its own record: cockpit fields only, and none of the metadata keys the host reads
  * as identity or authority (agent → its A3 policy, master → whom it reports to, cron/role pointers …).
  */
-export const PROTECTED_METADATA = ['screen', 'agent', 'adoptedFrom', 'master', 'role', 'kind', 'subtask', 'agentHome', 'cronTriggerId', 'fromCronTrigger', 'cronDeliver', 'worktree', 'branch', 'base', 'repo', 'cleanup', 'review', 'prompts', 'profile'];
+export const PROTECTED_METADATA = ['screen', 'agent', 'adoptedFrom', 'master', 'role', 'kind', 'subtask', 'agentHome', 'cronTriggerId', 'fromCronTrigger', 'cronDeliver', 'worktree', 'branch', 'base', 'repo', 'cleanup', 'review', 'prompts', 'profile', 'origin'];
 const OWN_PATCHABLE = ['title', 'color', 'status', 'progress', 'metadata'];
 
 export function sanitizeOwnPatch(body: Record<string, unknown>): Record<string, unknown> {
@@ -498,7 +610,7 @@ export function sanitizeOwnPatch(body: Record<string, unknown>): Record<string, 
 
 /** The short, wire-safe description of a session's profile (cockpit badge, /policy). */
 export const describe = (p: SessionProfile | null | undefined) =>
-  p ? { name: p.name, desktop: p.desktop, talkTo: p.talkTo, maySpawn: p.maySpawn, triggers: p.triggers, hostRoutes: p.hostRoutes, grants: grantsOf(p), parent: p.parent, layers: p.layers.map((l) => l.name) } : null;
+  p ? { name: p.name, desktop: p.desktop, talkTo: p.talkTo, maySpawn: p.maySpawn, triggers: p.triggers, hostRoutes: p.hostRoutes, grants: grantsOf(p), egress: egressOf(p), ...(p.limits ? { limits: p.limits } : {}), parent: p.parent, layers: p.layers.map((l) => l.name) } : null;
 
 // ---- shared desktop by approval -----------------------------------------------------------------------------------
 

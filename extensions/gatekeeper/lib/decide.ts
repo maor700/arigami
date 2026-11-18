@@ -39,6 +39,12 @@ export interface Caller {
   profile: { name: string; grants?: string[]; parent?: string | null } | null;
   lineage: string[];
   cwd: string | null;
+  /** host-recorded creation time of the session (ISO) */
+  createdAt?: string | null;
+  /** where the session or its nearest ancestor was started from, as its creator recorded it (host-protected) */
+  origin?: { kind?: string; channel?: string; thread_ts?: string } | null;
+  /** Slack threads the session's family watches through host listeners (self-registered: a claim to verify) */
+  slackThreads?: { session: string; channel: string; thread_ts: string }[];
 }
 
 export type Verdict = { ok: true } | { ok: false; reason: string };
@@ -107,7 +113,38 @@ export function pathInside(child: string, root: string): boolean {
 
 // ---- Slack scope ---------------------------------------------------------------------------------------------------
 
+/**
+ * `by` says how trustworthy the choice of thread is:
+ *   admin / origin  — a person chose it (the Activity tab, or the session's creator recorded `metadata.origin`);
+ *   first-use / listener / named — the session itself pointed at it (slack_bind_thread, its own Slack listener, a
+ *     thread_ts it passed); allowed only for a thread an alert source or operator opened (checkBind), and an
+ *     operator approval read from it must be newer than the session (findOperatorApproval `notBeforeMs`).
+ */
 export interface Binding { channel: string; thread_ts: string; by: string; at: string }
+export const SELF_CHOSEN = new Set(['first-use', 'listener', 'named']);
+
+/** Candidate threads for an automatic binding, best first. Pure: the caller verifies the self-chosen ones (checkBind). */
+export function bindingCandidates(c: Caller, configuredChannel: string, named?: { channel?: unknown; thread_ts?: unknown } | null): { channel: string; thread_ts: string; by: 'origin' | 'listener' | 'named' }[] {
+  const out: { channel: string; thread_ts: string; by: 'origin' | 'listener' | 'named' }[] = [];
+  const o = c.origin;
+  if (o && (o.kind === undefined || o.kind === 'slack') && validTs(o.thread_ts) && String(o.channel || '') === configuredChannel)
+    out.push({ channel: configuredChannel, thread_ts: o.thread_ts!, by: 'origin' });
+  for (const t of c.slackThreads || []) if (t.channel === configuredChannel && validTs(t.thread_ts)) out.push({ channel: t.channel, thread_ts: t.thread_ts, by: 'listener' });
+  if (named && validTs(named.thread_ts) && (!named.channel || String(named.channel) === configuredChannel))
+    out.push({ channel: configuredChannel, thread_ts: String(named.thread_ts), by: 'named' });
+  return out;
+}
+
+/**
+ * Is this Slack message a bot's? Only when Slack itself marks it so: a `bot_id`, or subtype `bot_message`.
+ *
+ * Why a message with the operator's user id and no bot_id counts as the operator even when an app posted it: Slack
+ * sets `user` from the token that posted. A bot token always yields a `bot_id` (and its own bot user); `username` /
+ * icon overrides need a bot token too, so they also carry a `bot_id`. The ONLY way to get `user: <operator>` without
+ * a `bot_id` is a user token of that operator — i.e. the operator, or an app the operator personally authorised to
+ * write as them, which is the operator's own delegation. `app_id` on such a message only says which client sent it.
+ */
+export const isBotMessage = (m: { bot_id?: string; subtype?: string }): boolean => !!m.bot_id || m.subtype === 'bot_message';
 
 /** The session's incident thread: its own binding, else its nearest ancestor's (host-recorded lineage, parent first). */
 export function effectiveBinding(session: string, lineage: string[], bindings: Record<string, Binding>): (Binding & { from: string }) | null {
@@ -206,6 +243,8 @@ export interface ApprovalQuery {
   verbs?: Record<string, string[]>;
   /** the session points at the exact triggering message */
   approvalTs?: string | null;
+  /** for a thread the session chose itself: only messages newer than this (the session's creation) count */
+  notBeforeMs?: number | null;
 }
 
 export type ApprovalVerdict = { ok: true; approver: string; ts: string; channel: string; text: string } | { ok: false; reason: string };
@@ -221,11 +260,12 @@ export function findOperatorApproval(q: ApprovalQuery): ApprovalVerdict {
   const consider = (m: SlackMessage): ApprovalVerdict | null => {
     const tag = `message ${m.ts}`;
     if (m.thread_ts !== q.binding!.thread_ts && m.ts !== q.binding!.thread_ts) return { ok: false, reason: `${tag} is not in the session's thread` };
-    if (m.bot_id || m.app_id || (m.subtype && m.subtype !== 'thread_broadcast')) return { ok: false, reason: `${tag} is not a person's message` };
+    if (isBotMessage(m)) return { ok: false, reason: `${tag} is not a person's message` };
     if (!m.user || !q.operators.includes(m.user)) return { ok: false, reason: `${tag} is by ${m.user || 'nobody'}, not an operator` };
     const age = (q.nowMs - Number(m.ts) * 1000) / 60_000;
     if (!(age <= q.maxAgeMin)) return { ok: false, reason: `${tag} is older than ${q.maxAgeMin} min` };
     if (age < -5) return { ok: false, reason: `${tag} is from the future` };
+    if (q.notBeforeMs && Number(m.ts) * 1000 < q.notBeforeMs - 60_000) return { ok: false, reason: `${tag} is older than this session — in a thread the session picked itself, only a newer operator word counts` };
     const words = ownWords(m.text || '');
     if (!verbs.some((v) => words.includes(v))) return { ok: false, reason: `${tag} does not say ${verbs.join('/')}` };
     const nums = numbersIn(m.text || '');

@@ -192,8 +192,24 @@ export function policyOf(a: AgentView): Policy {
 export const isRestrictive = (p: Policy | null): p is Policy =>
   !!p && layersOf(p).some((l) => l.tools !== null || l.domains !== null || !!l.deny?.length);
 
-/** One pattern vs one (normalised) tool name. */
-function matchTool(pattern: string, name: string): boolean {
+/**
+ * One spelling for an MCP tool name, whatever the engine. Claude keeps a server's name as configured
+ * (`mcp__ext-gatekeeper__x`); codex sanitises it to [A-Za-z0-9_] (`mcp__ext_gatekeeper__x`). Matching compares the
+ * server segment with every other character folded to `_`, so an allowlist written either way holds on both engines.
+ * Non-MCP names are returned unchanged.
+ */
+export function mcpCanonical(name: string): string {
+  if (!name.startsWith('mcp__')) return name;
+  const rest = name.slice(5);
+  const i = rest.indexOf('__');
+  const server = i < 0 ? rest : rest.slice(0, i);
+  return 'mcp__' + server.replace(/[^A-Za-z0-9_*]/g, '_') + (i < 0 ? '' : rest.slice(i));
+}
+
+/** One pattern vs one (normalised) tool name — engine-agnostic for MCP names (mcpCanonical). */
+function matchTool(rawPattern: string, rawName: string): boolean {
+  const pattern = mcpCanonical(rawPattern);
+  const name = mcpCanonical(rawName);
   if (pattern === name) return true;
   if (pattern.includes('*')) return globToRe(pattern).test(name);
   // `mcp__server` = the whole server
@@ -230,7 +246,11 @@ function layerAllows(p: Policy, toolName: string): boolean {
 /** Does any allowlist entry reach into `server` (so it must NOT be denied wholesale)? */
 export function serverTouched(p: Policy, server: string): boolean {
   if (server === HOST_SERVER) return true;
-  return p.tools!.some((pat) => serverOf(pat) === server || (pat.startsWith('mcp__') && pat.includes('*') && globToRe(pat).test(`mcp__${server}__x`)));
+  const want = mcpCanonical(`mcp__${server}__x`);
+  return p.tools!.some((raw) => {
+    const pat = mcpCanonical(raw);
+    return serverOf(pat) === serverOf(want) || (pat.startsWith('mcp__') && pat.includes('*') && globToRe(pat).test(want));
+  });
 }
 
 /** May any tool of `server` pass every layer's allowlist? (no policy / no allowlist = yes) */
@@ -249,6 +269,9 @@ export function disallowedToolsFor(p: Policy | null, servers: string[] = []): st
   if (!p || !layersOf(p).some((l) => l.tools !== null || !!l.deny?.length)) return [];
   const out: string[] = [];
   for (const b of RESTRICTED_BUILTINS) if (!toolAllowed(p, b)) out.push(b);
+  // Built-ins a layer denies by name (a restricted profile's engine-native scheduling, session-profile.ts) — hidden at
+  // spawn too, not only refused at the hook. Only profiles carry `deny`; agent and Full spawns are unchanged.
+  for (const l of layersOf(p)) for (const d of l.deny || []) if (/^[A-Z]/.test(d) && !out.includes(d) && !toolAllowed(p, d)) out.push(d);
   for (const sv of new Set(servers)) if (sv && sv !== HOST_SERVER && !serverReachable(p, sv)) out.push(`mcp__${sv}`);
   return out;
 }

@@ -454,6 +454,21 @@ server.on('error', (e: NodeJS.ErrnoException) => {
   console.error('[host] server error:', e?.message || e);
 });
 
+// Restricted sessions in containers (lib/sandbox.ts, docs/SANDBOX.md) — only with sandbox.mode 'docker'; nothing of
+// it exists otherwise. Their way back to this host is a second listener that takes a sandboxed session's own token
+// and nothing else, then hands the request to the very same handler as the main server.
+if (cfg.sandbox?.mode === 'docker') {
+  void (async () => {
+    const sbx = await import('./lib/sandbox.js');
+    const st = await import('./state.js');
+    await sbx.startSandbox({
+      sessionOf: (req) => auth.sessionFromBearer(req),
+      getSession: (id) => st.getSession(id) as any,
+      handle: (req, res) => server.emit('request', req, res),
+    });
+  })().catch((e) => console.error('[sandbox] start failed:', (e as Error)?.message || e));
+}
+
 server.listen(cfg.port, cfg.bind, () => {
   console.log(
     `[host] arigami up on http://${cfg.bind}:${cfg.port} (pid ${process.pid}, auth: ${cfg.auth.mode}${cfg.publicUrl ? ', public: ' + cfg.publicUrl : ''})`

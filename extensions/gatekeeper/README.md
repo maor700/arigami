@@ -46,7 +46,9 @@ A refusal reaches the model as `denied by the gatekeeper: <reason>`.
 | `gatekeeper:sentry.resolve` | `sentry_set_status` (resolved / unresolved) | |
 | `gatekeeper:sentry.alerts` | `sentry_update_alert_rule` | operator |
 
-`gatekeeper_status` (no grant) tells a session what it may do and where. A profile that grants anything here also
+`gatekeeper_status` (no grant) tells a session what it may do and where. Tool names match on both engines: claude
+calls them `mcp__ext-gatekeeper__*`, codex `mcp__ext_gatekeeper__*`; the host's policy folds the server segment
+(`agent-policy.ts mcpCanonical`), so one profile entry covers both. A profile that grants anything here also
 needs `ext:gatekeeper` in its tools (the tab adds it).
 
 No tool name reads as "send / post / reply / comment": the host would turn those into owner Send cards. A restricted
@@ -55,10 +57,41 @@ autonomously inside those limits is the point.
 
 ### The incident thread
 
-A session writes and reads approvals only in its **bound** thread. An admin binds it (Activity), or the session binds
-itself **once** with `slack_bind_thread`, only to a thread in the incident channel whose root was posted by an allowed
-alert source or an operator (`threadOpeners`; switch self-binding off with `bindOnFirstUse:false`). A binding never
-changes; children inherit their parent's.
+A session writes and reads approvals only in its **bound** thread. A binding never changes; children inherit their
+parent's. It is made, in this order:
+
+1. **by an admin** (Activity tab), or **from the session's origin**: whoever creates the session records where it was
+   started — `POST /__api/sessions {metadata: {origin: {kind: "slack", channel, thread_ts}}}`. `origin` is a
+   host-protected key (a restricted session can neither set it for a child nor change its own), and a child inherits
+   its parent's. The first gatekeeper call binds it automatically.
+2. **from a Slack listener** the session or an ancestor armed on a thread of the incident channel (host-recorded, but
+   chosen by the session), or **from a `thread_ts` a Slack/approval tool names** (`slack_thread_say`,
+   `slack_read_thread`, `github_merge`…), or `slack_bind_thread`. These are the session's own claims, so they bind
+   only to a thread in the incident channel whose root an allowed alert source or an operator posted (`threadOpeners`;
+   off with `bindOnFirstUse:false`), and in such a thread an operator approval counts only if it is **newer than the
+   session** — a session cannot pick an old thread where an operator once said "merge" for something else.
+
+A session started by a listener event is an existing session woken up, so (2) covers it; a session born of a cron
+run or a dispatch has no Slack origin unless its creator records one.
+
+### Waking up on the thread (`triggers: "own-thread"`)
+
+A profile's `triggers` is `false`, `"own-thread"` or `true`. `"own-thread"` lets a session arm exactly one kind of
+listener: a Slack listener on **its own recorded thread** (`metadata.origin`, its own or its nearest ancestor's), on
+itself — it wakes only that session and, like every listener, ends when the session is archived or deleted. Cron (the
+host's and the CLI's own), other threads, whole channels and every other listener type are refused with the reason.
+The host is the judge (`server/session-profile.ts ownThreadListenerRefusal`); the gatekeeper hands it the thread: when
+it binds a session that has no origin yet, its tool result carries `_meta.arigami/origin`, and the MCP gateway — for an
+extension with the `session:origin` permission — records it once as `metadata.origin` (never changed afterwards, never
+shown to the model).
+
+### Who is a person in Slack
+
+A message is a bot's only when Slack marks it so: a `bot_id`, or subtype `bot_message`. A message whose `user` is an
+operator and that carries no `bot_id` is the operator, even when an app sent it (`app_id`): Slack sets `user` from the
+token that posted; a bot token always adds a `bot_id`, and display-name/icon overrides need a bot token too. The only
+way to post with `user: <operator>` and no `bot_id` is a user token of that operator — the operator, or an app the
+operator personally authorised to write as them (their own delegation).
 
 ### Pushing without a token
 
@@ -84,8 +117,11 @@ Credentials are not in `extensions.json` (whose secrets become a tool server's e
 files or tool results. The tool server that holds the code runs once, in the host's MCP gateway, never as a child of a
 session; it refuses to act when called any other way (`ARIGAMI_MCP_GATEWAY=0`).
 
-**Same OS user:** on a standalone host a restricted session still runs as the host's OS user, so `Bash` could read
-`$ARIGAMI_DIR/gatekeeper/` like any other file of that user. On Kubernetes the tenant chart closes that (below).
+**Isolation:** without a sandbox a restricted session runs as the host's OS user, so `Bash` could read
+`$ARIGAMI_DIR/gatekeeper/` like any other file of that user. With `sandbox.mode: "docker"` (docs/SANDBOX.md) each
+restricted session runs in its own container where `$ARIGAMI_DIR` (this store included) is never mounted and the only
+way out is an egress proxy; on a control-plane tenant the gatekeeper runs as a sidecar with the store mounted only
+there. Nothing in this extension changes either way.
 
 ## As a sidecar (Kubernetes, `isolation.gatekeeper`)
 
@@ -127,7 +163,7 @@ because OAuth subscription tokens need care with the provider's terms; it is a f
 
 ```json
 { "tools": ["git", "ext:gatekeeper"], "hostTools": ["task_session", "send_message", "list_sessions", "delete_session", "restart_session"],
-  "desktop": "none", "talkTo": ["parent", "children"], "maySpawn": true, "triggers": false, "hostRoutes": [],
+  "desktop": "none", "talkTo": ["parent", "children"], "maySpawn": true, "triggers": "own-thread", "hostRoutes": [],
   "grants": ["gatekeeper:slack.read", "gatekeeper:slack.post", "gatekeeper:github.read", "gatekeeper:github.push",
              "gatekeeper:github.pr", "gatekeeper:github.review", "gatekeeper:github.merge", "gatekeeper:linear.read",
              "gatekeeper:linear.write", "gatekeeper:sentry.read", "gatekeeper:sentry.note", "gatekeeper:sentry.resolve",

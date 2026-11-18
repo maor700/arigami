@@ -27,6 +27,8 @@ import { getMemoryBootstrap } from './memory.js';
 import { personaBlock, getAgent } from './agents.js';
 import { isRestrictive, disallowedToolsFor, hookSettings, strictMcpFor, serverReachable } from './agent-policy.js';
 import { policyForSession, spawnEnvFor } from './session-profile.js';
+import * as sandbox from './lib/sandbox.js';
+import * as limits from './profile-limits.js';
 import { appendActivity, budgetState, localDay, budgetRefusal, turnBlocked } from './agent-ledger.js';
 import { auth } from './auth.js';
 import { ensureUserPlugin, USER_SKILLS_DIR } from './skills.js';
@@ -734,7 +736,10 @@ function spawnProc(s, resume) {
     setClaude(s.id, { state: 'dead' });
     return;
   }
-  const child = spawn(built.bin, built.args, { cwd: built.cwd, env: built.env, stdio: ['pipe', 'pipe', 'pipe'] });
+  // Restricted run mode + sandbox (lib/sandbox.ts): the same argv in the session's own container. A Full session (or
+  // the sandbox off) gets `built` itself back — its spawn is exactly what it always was.
+  const run = sandbox.wrapSpawn(s, built, engine.id);
+  const child = spawn(run.bin, run.args, { cwd: run.cwd, env: run.env, stdio: ['pipe', 'pipe', 'pipe'] });
   // A session's claude spawns its own tree (MCP servers, tool shells). Put it
   // under supervision so that tree dies with the host instead of outliving it
   // holding the inherited listen socket.
@@ -1025,7 +1030,8 @@ export function updateUsage(id, u, catalog = null) {
 // the `result` event closes the turn: one 'turn' line in the agent's
 // activity.jsonl (tokens + cost delta), then the budget check — exceeded → one
 // final warning into the session (once per local day) and a 'budget' line.
-export function noteTurnUsage(id, u) {
+export function noteTurnUsage(id, u, messageId = null) {
+  limits.noteUsage(id, u, messageId); // restricted sessions' spend caps (profile-limits.ts) — a no-op for every other session
   const p = record(id);
   if (!p?.agent || !u) return;
   p.turn.input += u.input_tokens || 0;
@@ -1035,6 +1041,7 @@ export function noteTurnUsage(id, u) {
 }
 
 export function recordTurn(id, j) {
+  limits.noteResult(id, j?.total_cost_usd); // restricted sessions' spend caps — a no-op for every other session
   const p = record(id);
   if (!p?.agent) return;
   const b = p.turn;
@@ -1793,7 +1800,7 @@ function handleEvent(id, j) {
     }
     case 'assistant':
       updateUsage(id, j.message?.usage);
-      noteTurnUsage(id, j.message?.usage);
+      noteTurnUsage(id, j.message?.usage, j.message?.id);
       for (const block of j.message?.content || []) {
         if (block.type === 'text' && block.text) {
           if (NOT_LOGGED_RE.test(block.text) && block.text.length < 160 && !isCodexSession(id)) continue; // the Connect card covers it
@@ -2323,10 +2330,20 @@ export function budgetRefusalFor(id) {
   return err;
 }
 
-export function sendMessage(id, text, attachments = [], { system = false } = {}) {
+export function sendMessage(id, text, attachments = [], { system = false, admitted = false } = {}) {
   if (!system) {
     const refusal = budgetRefusalFor(id);
     if (refusal) throw refusal;
+  }
+  // Restricted sessions only (profile-limits.ts): a tree over its spend cap gets no further turn, and a turn beyond
+  // its profile's concurrency cap waits in the host queue. Every other session passes straight through.
+  if (!admitted) {
+    const gate = limits.admit(id);
+    if (!gate.ok) {
+      if (!gate.queued) throw gate.error;
+      limits.enqueue(id, text, attachments, { system }, gate.note);
+      return true;
+    }
   }
   const p = ensureRunning(id); // respawns with --resume after an exit
   const saved = saveAttachments(id, attachments);
@@ -2981,3 +2998,15 @@ const claudeDriver = {
   effortLevels: () => EFFORT_LEVELS,
 };
 registerEngine(claudeDriver);
+
+// S15 — restricted sessions' concurrency + spend caps (profile-limits.ts). Wired here so that module imports nothing
+// of the engine side; every hook returns at once for a session without a profile.
+limits.wire({
+  getSession,
+  listSessions: () => listSessions({ archived: true }),
+  send: (id, text, attachments, opts) => { sendMessage(id, text, attachments, opts); },
+  interrupt: (id) => { interrupt(id); },
+  kill: (id) => { kill(id); },
+  appendChat: (id, ev) => { appendChat(id, ev); },
+  notify: (p) => { import('./notify.js').then((n) => n.notify(p)).catch(() => {}); },
+});

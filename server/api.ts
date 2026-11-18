@@ -38,6 +38,8 @@ import * as vp from './voice-providers.js';
 import * as agents from './agents.js';
 import * as policy from './agent-policy.js';
 import * as profiles from './session-profile.js';
+import * as sandbox from './lib/sandbox.js';
+import * as limits from './profile-limits.js';
 import * as ledger from './agent-ledger.js';
 import * as mcpCat from './mcp-catalog.js';
 import * as mcpConn from './mcp-connections.js';
@@ -4524,6 +4526,11 @@ export async function handle(
       }
       return notFound(res);
     }
+    // Restricted sessions' sandbox (lib/sandbox.ts): is it on and ready, where its relay listens, the names it owns
+    // (a docker gate's config needs the instance tag and prefix). Read-only; no secrets in it.
+    if (p === '/__api/sandbox' && m === 'GET') {
+      return json(res, { ...sandbox.sandboxStatus(), tag: sandbox.instanceTag(), proxyLog: sandbox.proxyLog(), networks: (({ internal, outside, egress }) => ({ internal, outside, egress }))(sandbox.infraSpec()) });
+    }
     if (p === '/__api/agents' || p.startsWith('/__api/agents/')) {
       return await handleAgents(req, res, u, p, m || 'GET');
     }
@@ -7192,7 +7199,7 @@ export async function handle(
         autoApprove: pol?.autoApprove ?? [],
         hidden: names.filter((n) => !policy.toolAllowed(pol, n)),
         // Restricted run mode: only present for a restricted session (a Full one's answer is unchanged).
-        ...(s.profile ? { profile: profiles.describe(s.profile) } : {}),
+        ...(s.profile ? { profile: profiles.describe(s.profile), sandbox: sandbox.sessionSandbox(s as any), limits: limits.usageOf(s.id) } : {}),
       });
     }
     // A3: the PreToolUse hook (mcp/policy-hook.js) asks before every tool call.
@@ -7254,9 +7261,22 @@ export async function handle(
     if (sub === 'listeners' && m === 'POST') {
       const body = (await readBody(req)) as any;
       // Restricted run mode: a listener only ever wakes its own session; it does not move it into a folder.
-      if (restrictedCaller(req)) {
+      const rmeL = restrictedCaller(req);
+      if (rmeL) {
         delete body.folderId;
         delete body.folderName;
+        // triggers:'own-thread' — only a Slack listener on the session's own recorded thread (session-profile.ts).
+        const prof = (state.getSession(rmeL.id) as any)?.profile;
+        if (prof && prof.triggers !== true) {
+          let target: { channelId: string; threadTs?: string } | null = null;
+          try {
+            target = (await import('./listeners.js')).parseSlackTarget(body);
+          } catch {
+            target = null;
+          }
+          const why = profiles.ownThreadListenerRefusal(prof, body, target, profiles.originThreadOf(rmeL.id, (x) => state.getSession(x) as any));
+          if (why) return json(res, { error: why }, 403);
+        }
       }
       const type = body.type || 'github-pr';
       const core = type === 'github-pr' || type === 'linear-issue' || type === 'slack' || type === 'whatsapp' || type === 'sms' || type === 'host-load';
