@@ -75,7 +75,8 @@ import { hostMcpServers } from './lib/mcp-servers.js';
 import { codexServersFor, codexCredentialsFile, codexMcpHome, GLOBAL } from './mcp-connections.js';
 import { looksLikeCodexLimit, setCodexCatalogSource, setCodexWindowSource } from './lib/codex-quota.js';
 import { codexRealHome, codexAuthPathFor, codexHomeOfAccount, getActiveId } from './accounts.js';
-import { policyFor, isRestrictive, hookSettings, serverTouched } from './agent-policy.js';
+import { isRestrictive, hookSettings, serverReachable } from './agent-policy.js';
+import { policyForSession } from './session-profile.js';
 import { bunExecShell } from './lib/bun-exec.js';
 import { hasMods } from './mods.js';
 import { expirePendingPermissions, expirePendingScreenRequests } from './api.js';
@@ -311,10 +312,9 @@ function mcpTables(s: Session, st: CodexSessionState): string[] {
     /* unreadable mcp-servers.json — the session still starts */
   }
   // A3: a server the allowlist never touches is not loaded at all (claude's `--disallowedTools mcp__<server>`).
-  const policy = policyFor(slug);
-  if (isRestrictive(policy) && policy.tools !== null) {
-    for (const name of Object.keys(servers)) if (!serverTouched(policy, name)) delete servers[name];
-  }
+  // A3 + restricted run mode: the agent's allowlist and the session profile's layers (null for a Full session).
+  const policy = policyForSession(s);
+  for (const name of Object.keys(servers)) if (!serverReachable(policy, name)) delete servers[name];
   // P2-4: remote grants load only when Codex holds its own (`codex mcp login`, mcp-connections codexServersFor); Claude-only ones get a one-time note.
   let remote: { granted: Record<string, { url: string }>; claudeOnly: string[] } = { granted: {}, claudeOnly: [] };
   try {
@@ -323,7 +323,7 @@ function mcpTables(s: Session, st: CodexSessionState): string[] {
     /* no connections.json */
   }
   for (const [name, sv] of Object.entries(remote.granted)) {
-    if (!servers[name] && (!isRestrictive(policy) || policy.tools === null || serverTouched(policy, name))) servers[name] = sv;
+    if (!servers[name] && serverReachable(policy, name)) servers[name] = sv;
   }
   if (remote.claudeOnly.length && !st.warnedRemote) {
     st.warnedRemote = true;
@@ -346,6 +346,7 @@ function mcpTables(s: Session, st: CodexSessionState): string[] {
     ARIGAMI_TOKEN: auth.tokenForSession(s.id),
     ARIGAMI_ENGINE: 'codex',
     ...(cfg.publicUrl ? { ARIGAMI_PUBLIC_URL: cfg.publicUrl } : {}),
+    ...(s.profile ? { ARIGAMI_PROFILE: String(s.profile.name || 'restricted') } : {}),
   };
 
   // What this codex really loads (lib/session-mcp.ts reads it for the /mcp panel).
@@ -395,8 +396,8 @@ function mcpTables(s: Session, st: CodexSessionState): string[] {
  */
 /** A3: does the session's agent carry an allowlist? */
 function restrictedAgentOf(s: Session): boolean {
-  const slug = typeof s.metadata?.agent === 'string' && s.metadata.agent ? s.metadata.agent : null;
-  return !!slug && isRestrictive(policyFor(slug));
+  // A3 agent allowlist, or a restricted session profile (session-profile.ts) — both need the PreToolUse hook.
+  return isRestrictive(policyForSession(s));
 }
 
 /** P2-4: `.credentials.json` → the host-wide codex MCP grant file; a real file codex left behind (a token refresh) is copied back first if newer. */
@@ -533,6 +534,7 @@ function codexBuildSpawn(s: Session, { resume, sessionId }: { resume: boolean; s
     ...(cfg.publicUrl ? { ARIGAMI_PUBLIC_URL: cfg.publicUrl } : {}),
     ARIGAMI_TOKEN: auth.tokenForSession(s.id),
     ...(typeof s.metadata?.agent === 'string' && s.metadata.agent ? { ARIGAMI_AGENT: s.metadata.agent } : {}),
+    ...(s.profile ? { ARIGAMI_PROFILE: String(s.profile.name || 'restricted') } : {}),
     ARIGAMI_SKILLS: SKILLS_DIR,
     ARIGAMI_DOCS: docsDir(), // host docs, absolute (server/lib/resource-root.ts)
     ARIGAMI_USER_SKILLS: USER_SKILLS_DIR,

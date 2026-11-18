@@ -25,7 +25,8 @@ import { tokenForSession, quarantine, nextAvailable, getActiveId, getAccount, se
 import { refreshOne } from './oauth-login.js';
 import { getMemoryBootstrap } from './memory.js';
 import { personaBlock, getAgent } from './agents.js';
-import { policyFor, isRestrictive, disallowedToolsFor, hookSettings, strictMcpFor, serverTouched } from './agent-policy.js';
+import { isRestrictive, disallowedToolsFor, hookSettings, strictMcpFor, serverReachable } from './agent-policy.js';
+import { policyForSession } from './session-profile.js';
 import { appendActivity, budgetState, localDay, budgetRefusal, turnBlocked } from './agent-ledger.js';
 import { auth } from './auth.js';
 import { ensureUserPlugin, USER_SKILLS_DIR } from './skills.js';
@@ -129,21 +130,21 @@ const viaGateway = (servers) => {
 };
 // Composio over the gateway (lib/composio-mcp.ts), once the host holds a key —
 // unless the agent's allowlist never reaches into it.
-const composioServer = (slug) => {
+const composioServer = (s) => {
   if (!gatewayEnabled() || !composioKey()) return {};
-  const policy = policyFor(slug);
-  if (isRestrictive(policy) && policy.tools !== null && !serverTouched(policy, COMPOSIO_SERVER)) return {};
+  // A3 + restricted run mode: the session's agent allowlist and profile layers (policyForSession; null for Full).
+  if (!serverReachable(policyForSession(s), COMPOSIO_SERVER)) return {};
   return { [COMPOSIO_SERVER]: claudeEntry(COMPOSIO_SERVER) };
 };
 // Remote grants the HOST holds (lib/mcp-grants.ts) for this owner — through the
 // gateway under the grant's own name, which replaces a CLI-configured server of
 // the same name. An allowlist that never reaches a server does not get it.
-const hostGrantServers = (slug) => {
+const hostGrantServers = (slug, s) => {
   if (!gatewayEnabled()) return {};
-  const policy = policyFor(slug);
+  const policy = policyForSession(s);
   const out = {};
   for (const g of hostGrants.grantsFor(slug ? `agent:${slug}` : 'global')) {
-    if (isRestrictive(policy) && policy.tools !== null && !serverTouched(policy, g.name)) continue;
+    if (!serverReachable(policy, g.name)) continue;
     out[g.name] = claudeEntry(g.name);
   }
   return out;
@@ -183,7 +184,7 @@ export function mcpConfigFor(s) {
       own = {}; // a missing/foreign connections.json must never stop a session
     }
   }
-  return JSON.stringify({ mcpServers: { ...hostServers(), ...viaGateway(ext), ...composioServer(slug), ...own, ...hostGrantServers(slug) } });
+  return JSON.stringify({ mcpServers: { ...hostServers(), ...viaGateway(ext), ...composioServer(s), ...own, ...hostGrantServers(slug, s) } });
 }
 
 // engine-driver.ts's EngineDriver members for claude, pulled out of spawnProc()'s old inline argv (same flags/order).
@@ -605,7 +606,7 @@ export function ensureRunning(id) {
 // allowlist that does not name them denies them by name below, as before.
 function policyArgs(s) {
   const slug = typeof s.metadata?.agent === 'string' && s.metadata.agent ? s.metadata.agent : null;
-  const policy = policyFor(slug);
+  const policy = policyForSession(s);
   if (!isRestrictive(policy)) return [];
   const servers = new Set(Object.keys(mcpServersOf(s.id)));
   for (const sv of s.claude?.capabilities?.mcpServers || []) if (sv && typeof sv === 'object' && sv.name) servers.add(String(sv.name));
@@ -683,6 +684,8 @@ function buildClaudeSpawn(s, { resume, sessionId }) {
     // A1: the agent this session was born from — host-mcp.js defaults
     // memory_write/memory_search to its namespace.
     ...(typeof s.metadata?.agent === 'string' && s.metadata.agent ? { ARIGAMI_AGENT: s.metadata.agent } : {}),
+    // Restricted run mode (session-profile.ts): only on a restricted session — a Full spawn's env is unchanged.
+    ...(s.profile ? { ARIGAMI_PROFILE: String(s.profile.name || 'restricted') } : {}),
     ARIGAMI_SKILLS: path.join(ROOT, 'skills'), // host skill pack for the session
     ARIGAMI_DOCS: docsDir(), // host docs, absolute — skills say $ARIGAMI_DOCS/LOGIN.md, never a cwd-relative docs/…
     ARIGAMI_USER_SKILLS: USER_SKILLS_DIR, // user/bundle skills (override shipped by name)

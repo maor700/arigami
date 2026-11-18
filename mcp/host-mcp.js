@@ -1491,7 +1491,7 @@ export async function createArigamiServer(env = process.env) {
   }
   async function refreshHidden() {
     const id = env.ARIGAMI_SESSION_ID;
-    if (!env.ARIGAMI_AGENT || !id) return (hiddenTools = null);
+    if ((!env.ARIGAMI_AGENT && !env.ARIGAMI_PROFILE) || !id) return (hiddenTools = null);
     try {
       const r = await api('GET', `/__api/sessions/${id}/policy?names=${encodeURIComponent(TOOLS.map((t) => t.name).join(','))}`);
       hiddenTools = Array.isArray(r.hidden) && r.hidden.length ? new Set(r.hidden) : null;
@@ -1515,7 +1515,7 @@ export async function createArigamiServer(env = process.env) {
     if (LOGIN_INTERNAL.has(tool.name))
       return { content: [{ type: 'text', text: `error: "${tool.name}" is internal to sign_in now — call sign_in({site, reason}) and follow its answer` }], isError: true };
     if (hiddenTools?.has(tool.name))
-      return { content: [{ type: 'text', text: `error: tool "${tool.name}" is not in this agent's allowlist (ask the human with request_action)` }], isError: true };
+      return { content: [{ type: 'text', text: `error: tool "${tool.name}" is not in this ${env.ARIGAMI_PROFILE && !env.ARIGAMI_AGENT ? "session's profile" : "agent's allowlist"} (ask the human with request_action)` }], isError: true };
     try {
       const result = await tool.run(req.params.arguments || {});
       return { content: toMcpContent(result) };

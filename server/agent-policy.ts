@@ -37,7 +37,14 @@ export interface Policy {
   /** null = unrestricted */
   domains: string[] | null;
   autoApprove: string[];
+  /** Session profiles (session-profile.ts): tools this layer takes away even from CORE_TOOLS. */
+  deny?: string[];
+  /** Session profiles: more layers that must ALSO allow (a child's profile = its parent's layers + its own). */
+  and?: Policy[];
 }
+
+/** This policy and every layer it carries. */
+const layersOf = (p: Policy): Policy[] => [p, ...(p.and || []).flatMap(layersOf)];
 
 export const HOST_SERVER = 'arigami';
 
@@ -182,7 +189,8 @@ export function policyOf(a: AgentView): Policy {
 }
 
 /** Is this policy actually restricting anything? (no → skip the hook/flags) */
-export const isRestrictive = (p: Policy | null): p is Policy => !!p && (p.tools !== null || p.domains !== null);
+export const isRestrictive = (p: Policy | null): p is Policy =>
+  !!p && layersOf(p).some((l) => l.tools !== null || l.domains !== null || !!l.deny?.length);
 
 /** One pattern vs one (normalised) tool name. */
 function matchTool(pattern: string, name: string): boolean {
@@ -195,7 +203,23 @@ function matchTool(pattern: string, name: string): boolean {
 
 /** Tool allowed under the policy? Host tools may be given long or short; built-ins by name. */
 export function toolAllowed(p: Policy | null, toolName: string): boolean {
-  if (!p || p.tools === null) return true;
+  if (!p) return true;
+  if (p.and?.length || p.deny?.length) return layersOf(p).every((l) => layerAllows(l, toolName));
+  return layerAllows(p, toolName);
+}
+
+/** The deciding layer for a denial (its slug names who said no), or null when every layer allows. */
+export function denyingLayer(p: Policy | null, toolName: string): Policy | null {
+  if (!p) return null;
+  return layersOf(p).find((l) => !layerAllows(l, toolName)) || null;
+}
+
+function layerAllows(p: Policy, toolName: string): boolean {
+  if (p.deny?.length) {
+    const n = canonicalToolName(shortHostName(String(toolName || '')));
+    if (p.deny.includes(n)) return false;
+  }
+  if (p.tools === null) return true;
   const name = canonicalToolName(shortHostName(String(toolName || '')));
   if (!name) return true;
   if (CORE_TOOLS.includes(name)) return true;
@@ -209,6 +233,12 @@ export function serverTouched(p: Policy, server: string): boolean {
   return p.tools!.some((pat) => serverOf(pat) === server || (pat.startsWith('mcp__') && pat.includes('*') && globToRe(pat).test(`mcp__${server}__x`)));
 }
 
+/** May any tool of `server` pass every layer's allowlist? (no policy / no allowlist = yes) */
+export function serverReachable(p: Policy | null, server: string): boolean {
+  if (!p) return true;
+  return layersOf(p).every((l) => l.tools === null || serverTouched(l, server));
+}
+
 /**
  * The `--disallowedTools` list for a spawn: restricted built-ins the agent may not
  * use, plus whole external MCP servers (`mcp__<server>`) no allowlist entry touches.
@@ -216,10 +246,10 @@ export function serverTouched(p: Policy, server: string): boolean {
  * `claude mcp list`); unknown servers are caught by the hook instead.
  */
 export function disallowedToolsFor(p: Policy | null, servers: string[] = []): string[] {
-  if (!p || p.tools === null) return [];
+  if (!p || !layersOf(p).some((l) => l.tools !== null || !!l.deny?.length)) return [];
   const out: string[] = [];
   for (const b of RESTRICTED_BUILTINS) if (!toolAllowed(p, b)) out.push(b);
-  for (const sv of new Set(servers)) if (sv && sv !== HOST_SERVER && !serverTouched(p, sv)) out.push(`mcp__${sv}`);
+  for (const sv of new Set(servers)) if (sv && sv !== HOST_SERVER && !serverReachable(p, sv)) out.push(`mcp__${sv}`);
   return out;
 }
 
@@ -231,8 +261,8 @@ export function disallowedToolsFor(p: Policy | null, servers: string[] = []): st
  * map + tokens burned on tools that can never run).
  */
 export function strictMcpFor(p: Policy | null): boolean {
-  if (!p || p.tools === null) return false;
-  return !p.tools.some((pat) => pat.startsWith('mcp__') && serverOf(pat) !== HOST_SERVER);
+  if (!p) return false;
+  return layersOf(p).some((l) => l.tools !== null && !l.tools.some((pat) => pat.startsWith('mcp__') && serverOf(pat) !== HOST_SERVER));
 }
 
 // ---- capabilities vs the allowlist (CONN1) ----------------------------------
@@ -257,7 +287,7 @@ export function capabilityToolProbe(capId: string): string | null {
 
 /** Is every tool this capability would give the session outside the agent's allowlist? */
 export function capabilityDenied(p: Policy | null, capId: string): boolean {
-  if (!p || p.tools === null) return false;
+  if (!p || !isRestrictive(p)) return false;
   const probe = capabilityToolProbe(capId);
   return !!probe && !toolAllowed(p, probe);
 }
@@ -291,7 +321,9 @@ export const URL_TOOLS = new Set(['WebFetch', 'open_tab', 'browser_open', 'brows
 
 /** Relative paths and loopback (dev servers, the cockpit's own routes) are always allowed. */
 export function domainAllowed(p: Policy | null, url: string): boolean {
-  if (!p || p.domains === null) return true;
+  if (!p) return true;
+  if (p.and?.length) return layersOf(p).every((l) => domainAllowed({ ...l, and: undefined }, url));
+  if (p.domains === null) return true;
   const host = hostOf(url);
   if (!host || LOCAL_HOSTS.has(host)) return true;
   return p.domains.some((d) => domainMatches(d, host));
@@ -332,12 +364,16 @@ export function checkToolCall(p: Policy | null, toolName: string, input: unknown
   const name = shortHostName(String(toolName || ''));
   let reason: string | undefined;
   if (!toolAllowed(p, toolName)) {
-    reason = `tool "${name}" is not in agent ${p.slug}'s allowlist (${(p.tools || []).join(', ')}) — ask the human (request_action) instead of working around it${denialHint(p.slug, name)}`;
+    const d = denyingLayer(p, toolName) || p;
+    reason = d.slug.startsWith('profile:')
+      ? `tool "${name}" is not allowed by this session's ${d.slug.slice(8)} profile — the host enforces it and the session cannot change it; ask the human (request_action) instead of working around it`
+      : `tool "${name}" is not in agent ${p.slug}'s allowlist (${(p.tools || []).join(', ')}) — ask the human (request_action) instead of working around it${denialHint(p.slug, name)}`;
   } else if (URL_TOOLS.has(name) && !domainAllowed(p, urlOf(input))) {
-    reason = `domain "${hostOf(urlOf(input))}" is not in agent ${p.slug}'s allowed domains (${(p.domains || []).join(', ')})`;
+    const d = layersOf(p).find((l) => !domainAllowed({ ...l, and: undefined }, urlOf(input))) || p;
+    reason = `domain "${hostOf(urlOf(input))}" is not in ${d.slug.startsWith('profile:') ? `the ${d.slug.slice(8)} profile` : `agent ${d.slug}`}'s allowed domains (${(d.domains || []).join(', ')})`;
   }
   if (!reason) return { allow: true };
-  if (sessionId) appendActivity(p.slug, { kind: 'policy', sessionId, detail: `denied ${name}`, reason });
+  if (sessionId && !p.slug.startsWith('profile:')) appendActivity(p.slug, { kind: 'policy', sessionId, detail: `denied ${name}`, reason });
   return { allow: false, reason };
 }
 

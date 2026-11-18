@@ -188,6 +188,19 @@ export function createAuth(opts: AuthOptions) {
   // EXT3: same contract, for the extension-tab asset tokens.
   let extGate: ShareGate | null = null;
   const setExtGate = (fn: ShareGate | null) => { extGate = fn; };
+  // Restricted run mode (session-profile.ts): why a request from session <id> must be refused, or null. Wired by
+  // api.ts; returns null for every Full session, so their requests pass exactly as before.
+  type SessionScope = (sessionId: string, method: string, pathname: string, upgrade: boolean) => string | null;
+  let sessionScope: SessionScope | null = null;
+  const setSessionScope = (fn: SessionScope | null) => { sessionScope = fn; };
+  /** The session a request speaks for: its session principal, or (auth off) the session its bearer belongs to. */
+  const callerSession = (req: IncomingMessage, p: Principal | null): string | null =>
+    p?.kind === 'session' ? p.sessionId : p?.kind === 'off' ? sessionFromBearer(req) : null;
+  const scopeRefusal = (req: IncomingMessage, p: Principal | null, pathname: string, upgrade: boolean): string | null => {
+    if (!sessionScope) return null;
+    const sid = callerSession(req, p);
+    return sid ? sessionScope(sid, String(req.method || 'GET'), pathname, upgrade) : null;
+  };
   const mode = () => opts.auth.mode;
 
   // ---- persistence ----------------------------------------------------------
@@ -497,7 +510,7 @@ export function createAuth(opts: AuthOptions) {
     const pathname = rp.path;
     const p = principal(req);
     (req as any).auth = p;
-    const refused = orgAccess.refusal(req, p, pathname, { publicUrl: opts.publicUrl });
+    const refused = orgAccess.refusal(req, p, pathname, { publicUrl: opts.publicUrl }) || scopeRefusal(req, p, pathname, false);
     if (refused) {
       res.writeHead(403, { 'content-type': 'application/json', 'cache-control': 'no-store' });
       res.end(JSON.stringify({ error: refused }));
@@ -547,7 +560,7 @@ export function createAuth(opts: AuthOptions) {
     }
     const p = principal(req);
     (req as any).auth = p;
-    const refused = orgAccess.refusal(req, p, rp.path, { publicUrl: opts.publicUrl, upgrade: true });
+    const refused = orgAccess.refusal(req, p, rp.path, { publicUrl: opts.publicUrl, upgrade: true }) || scopeRefusal(req, p, rp.path, true);
     if (p && !refused) return false;
     try {
       socket.write(refused ? 'HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n' : 'HTTP/1.1 401 Unauthorized\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
@@ -648,7 +661,7 @@ export function createAuth(opts: AuthOptions) {
     // pairing
     announcePairing, issuePairingCode, readPairingCode, pair, pairingFile,
     // internal tokens
-    hostToken, tokenForSession, revokeSessionToken, sessionFromBearer, setSessionExists, setShareGate, setExtGate,
+    hostToken, tokenForSession, revokeSessionToken, sessionFromBearer, setSessionExists, setShareGate, setExtGate, setSessionScope, callerSession,
     // api tokens
     createApiToken, deleteApiToken, listApiTokens,
     // gate

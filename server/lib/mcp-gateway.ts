@@ -172,6 +172,8 @@ async function arigamiServer(session: any, token: string) {
     ARIGAMI_SESSION_ID: session.id,
     ...(typeof md.agent === 'string' && md.agent ? { ARIGAMI_AGENT: md.agent } : {}),
     ...(session.engine === 'codex' ? { ARIGAMI_ENGINE: 'codex' } : {}),
+    // Restricted run mode: the host server asks /policy for its hidden tools (as it does for an agent).
+    ...(session.profile ? { ARIGAMI_PROFILE: String(session.profile.name || 'restricted') } : {}),
   });
 }
 
@@ -189,6 +191,13 @@ export async function handle(req: IncomingMessage, res: ServerResponse, name: st
   if (!sessionId) return deny(res, 403, 'the MCP gateway serves sessions only — call it with a session token');
   const session = getSession(sessionId);
   if (!session) return deny(res, 404, 'no such session');
+  // Restricted run mode: a server no layer of the session's profile reaches is not served at all (the spawn did not
+  // list it either; this holds for a caller that names it anyway). Full sessions never get here.
+  if (session.profile && name !== 'arigami') {
+    const { policyForSession } = await import('../session-profile.js');
+    const { serverReachable } = await import('../agent-policy.js');
+    if (!serverReachable(policyForSession(session as any), name)) return deny(res, 403, `restricted session: MCP server ${name} is not in its profile`);
+  }
   const token = auth.tokenForSession(session.id);
   let server: any;
   try {

@@ -37,6 +37,7 @@ import * as caps from './capabilities.js';
 import * as vp from './voice-providers.js';
 import * as agents from './agents.js';
 import * as policy from './agent-policy.js';
+import * as profiles from './session-profile.js';
 import * as ledger from './agent-ledger.js';
 import * as mcpCat from './mcp-catalog.js';
 import * as mcpConn from './mcp-connections.js';
@@ -584,6 +585,14 @@ function readBody(
   req: IncomingMessage,
   maxBytes: number = 5e6
 ): Promise<Record<string, unknown>> {
+  // Read once per request: the restricted-session desktop gate peeks at a body its route reads again afterwards.
+  const memo = (req as any).__arigamiBody as Promise<Record<string, unknown>> | undefined;
+  if (memo) return memo;
+  const read = readBodyOnce(req, maxBytes);
+  (req as any).__arigamiBody = read;
+  return read;
+}
+function readBodyOnce(req: IncomingMessage, maxBytes: number): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
     let data = '';
     req.on('data', (c: Buffer) => {
@@ -3270,6 +3279,7 @@ export async function destroySession(id: string): Promise<reap.ReapReport | null
   if (!s) return null;
   claude.kill(id);
   expirePendingSetupRequests(id, 'session deleted');
+  profiles.revokeShared(id);
   chrome.closeChrome(id, 'session deleted');
   // Fold this session's logins back into chrome-base on every close
   // (T8 §4) — independent of whether the profile copy itself survives.
@@ -4207,6 +4217,82 @@ try {
 // Session tokens (ARIGAMI_TOKEN) are only honoured while their session exists.
 auth.setSessionExists((id) => !!state.getSession(id));
 
+// ---- Restricted run mode (session-profile.ts) ----------------------------------------------------------------------
+// Every create path ends in state.createSession, which asks this resolver; a session no source applies to stays Full
+// (no `profile` field at all). The gate asks scopeRefusal for every request a session token makes; Full → null.
+state.setProfileResolver((i) => {
+  const parent = i.parentId ? state.getSession(i.parentId) : null;
+  const prof = profiles.resolveForNewSession({ parent, folderId: i.folderId, agent: i.agent, triggerId: i.triggerId, explicit: i.explicit as any });
+  if (prof && auth.mode() === 'off')
+    console.warn('[profiles] a restricted session was created with auth OFF — its host-route limits only hold for calls that carry its token; turn auth on (docs/SECURITY.md)');
+  return prof;
+});
+auth.setSessionScope((sid, method, pathname, upgrade) =>
+  profiles.scopeRefusal(sid, method, pathname, {
+    getSession: (id) => state.getSession(id) as any,
+    toolAllowed: (me, tool) => policy.toolAllowed(profiles.policyForSession(me as any), tool),
+    upgrade,
+  })
+);
+/** The restricted session a request speaks for, or null (a person, the host, a Full session). */
+function restrictedCaller(req: IncomingMessage): NonNullable<ReturnType<typeof state.getSession>> | null {
+  const sid = auth.callerSession(req, (req as any).auth ?? null);
+  const s = sid ? state.getSession(sid) : null;
+  return s?.profile ? s : null;
+}
+const SHARED_GRANT_KIND = 'restricted-shared-desktop';
+// Routes that put a session on a screen: its own display, or (sign-in ladder, lease, shared:true) the owner's.
+const DESKTOP_SUB = /^(screenshot|screen\/allocate|screens|desktop\/.+|shared-desktop\/.+|sign-in|vault\/.+|logins|login-request|login-save|credentials\/request|sso-request|sso\/.+|browser\/.+)$/;
+const SHARED_SUB = /^(shared-desktop\/|sign-in$|vault\/|logins$|login-|credentials\/|sso)/;
+/**
+ * Restricted run mode — the desktop rule, for a restricted session on its own routes. 'own': its own display only;
+ * the host never falls back to the shared one. 'shared': the owner's desktop too, but only while a person's "Allow"
+ * on a card is live (30 min). Answers and returns true when the request must stop here.
+ */
+async function restrictedDesktopGate(req: IncomingMessage, res: ServerResponse, s: any, sub: string): Promise<boolean> {
+  const prof = s.profile as profiles.SessionProfile;
+  if (prof.desktop === 'none') return json(res, { error: `restricted session (profile "${prof.name}"): no desktop` }, 403), true;
+  const body = (req.method === 'POST' ? await readBody(req).catch(() => ({})) : {}) as any;
+  const shared = SHARED_SUB.test(sub) || body?.shared === true;
+  if (shared) {
+    if (sub === 'shared-desktop/release') return false;
+    if (prof.desktop !== 'shared') return json(res, { error: `restricted session (profile "${prof.name}"): its own desktop only — never the owner's` }, 403), true;
+    if (profiles.hasSharedGrant(s.id)) return false;
+    if ((s.action as any)?.kind !== SHARED_GRANT_KIND) {
+      const action = {
+        id: 'act_' + nano(),
+        at: new Date().toISOString(),
+        kind: SHARED_GRANT_KIND,
+        prompt: `Restricted session "${s.title}" asks to use your shared desktop (your own Chrome)${body?.site ? ` for ${String(body.site).slice(0, 120)}` : ''}${body?.reason ? `: ${String(body.reason).slice(0, 200)}` : ''}. Allow it for 30 minutes?`,
+        buttons: [{ label: 'Allow 30 min', value: 'allow', style: 'primary' }, { label: 'Deny', value: 'deny' }],
+      };
+      state.patchSession(s.id, { action });
+      claude.appendChat(s.id, { kind: 'action-request', actionId: action.id, prompt: action.prompt, actionKind: SHARED_GRANT_KIND });
+      pushIntervention(s.id, 'action', action.prompt, 'waiting for your answer');
+    }
+    return json(res, { ok: false, pending: true, approval: 'requested', note: 'The owner has to allow this on a card first. Stop here; a [host] line tells you the answer, then call the tool again.' }, 202), true;
+  }
+  if (profiles.hasSharedGrant(s.id)) return false;
+  if (!(s.metadata?.screen as any)?.vncPort) {
+    try {
+      await pickDriver().ensure(s.id);
+    } catch {
+      /* answered below */
+    }
+  }
+  if (!((state.getSession(s.id)?.metadata as any)?.screen as any)?.vncPort)
+    return json(res, { error: 'restricted session: this host gives it no display of its own, and it never falls back to the shared desktop' }, 409), true;
+  return false;
+}
+
+/** A blocking /__mcp/* call from a restricted session must be about itself. Answers 403 and returns false if not. */
+function bindsCaller(req: IncomingMessage, res: ServerResponse, body: Record<string, unknown>): boolean {
+  const me = restrictedCaller(req);
+  if (!me || String(body?.session_id || '') === me.id) return true;
+  json(res, { error: 'restricted session: this call must name its own session' }, 403);
+  return false;
+}
+
 const publicUser = (u: any) => (u ? { id: u.id, email: u.email, role: u.role, createdAt: u.createdAt, oidc: !!u.oidcSub } : null);
 
 // /__api/auth/* — the only API surface reachable without a credential (plus the
@@ -4386,7 +4472,9 @@ export async function handle(
       return;
     }
     if (p === '/__mcp/permission' && m === 'POST') {
-      return await handlePermissionRequest(res, await readBody(req));
+      const body = (await readBody(req)) as any;
+      if (!bindsCaller(req, res, body)) return;
+      return await handlePermissionRequest(res, body);
     }
     // CHAT1: re-attach to a blocking call whose previous HTTP leg ended with
     // {pending:true} (or died) — see respondBlocking / mcp/blocking-call.js.
@@ -4400,18 +4488,42 @@ export async function handle(
     if (p === '/__mcp/screen-request' && m === 'POST') {
       // S1: no desktop → the tool asks instead of failing.
       if (!cfg.screen?.enabled) return json(res, caps.needsSetup('desktop', 'drive a browser / hand you the screen'));
-      return await handleScreenRequest(res, await readBody(req));
+      const body = (await readBody(req)) as any;
+      if (!bindsCaller(req, res, body)) return;
+      return await handleScreenRequest(res, body);
     }
     if (p === '/__mcp/setup-request' && m === 'POST') {
-      return await handleSetupRequest(res, await readBody(req));
+      const body = (await readBody(req)) as any;
+      if (!bindsCaller(req, res, body)) return;
+      return await handleSetupRequest(res, body);
     }
     if (p === '/__mcp/setup-report' && m === 'POST') {
-      return await handleSetupReport(res, await readBody(req));
+      const body = (await readBody(req)) as any;
+      if (!bindsCaller(req, res, body)) return;
+      return await handleSetupReport(res, body);
     }
     if (p === '/__mcp/agent-card' && m === 'POST') {
       return handleAgentCard(res, await readBody(req));
     }
     // ---- A1 agents (the Team section) REST (server/agents.ts) ----
+    // Restricted run mode: the named profiles and where they are attached (folder / agent / trigger).
+    // A person's surface — reading needs a signed-in principal, writing an admin; a restricted session never gets here
+    // (the gate), and a Full session may read but not change it.
+    if (p === '/__api/session-profiles') {
+      const me = (req as any).auth as import('./auth.js').Principal | null;
+      if (m === 'GET') return json(res, { builtin: profiles.BUILTIN_PROFILES, ...profiles.readStore(), hostRouteGroups: Object.keys(profiles.HOST_ROUTE_GROUPS) });
+      if (m === 'PUT') {
+        if (!auth.isAdmin(me) || me?.kind === 'host') return json(res, { error: 'admin only' }, 403);
+        const body = (await readBody(req)) as any;
+        try {
+          return json(res, profiles.writeStore({ profiles: body?.profiles || {}, attach: body?.attach || {} }));
+        } catch (e) {
+          const err = e as Error & { status?: number };
+          return json(res, { error: err.message }, err.status || 500);
+        }
+      }
+      return notFound(res);
+    }
     if (p === '/__api/agents' || p.startsWith('/__api/agents/')) {
       return await handleAgents(req, res, u, p, m || 'GET');
     }
@@ -4438,7 +4550,7 @@ export async function handle(
         // tools must not hear "connected" — the hook would block the very next call
         // and request_setup cannot fix an allowlist. Say so, with the way out.
         if (me?.kind === 'session') {
-          const pol = policy.policyFor(sessionAgent(state.getSession(me.sessionId)));
+          const pol = profiles.policyForSession(state.getSession(me.sessionId) as any);
           if (policy.capabilityDenied(pol, id))
             return json(res, {
               ok: false,
@@ -5585,16 +5697,38 @@ export async function handle(
     }
 
     // ---- Triggers + the Pending-tasks queue (see docs/TRIGGERS.md) ----
+    // Restricted run mode: a restricted session (whose profile allows triggers — the gate checked) sees and touches
+    // only the cron triggers it created itself; each one runs under a snapshot of its profile with it as the parent.
+    const rmeTrig = p === '/__api/triggers' || p.startsWith('/__api/triggers/') ? restrictedCaller(req) : null;
     if (p === '/__api/triggers' && m === 'GET') {
       const t = await import('./triggers.js');
       return json(
         res,
-        t.withNextRun(t.listTriggers())
+        t.withNextRun(rmeTrig ? t.listTriggers().filter((x: any) => x.createdBySessionId === rmeTrig.id) : t.listTriggers())
       );
     }
     if (p === '/__api/triggers' && m === 'POST') {
       const t = await import('./triggers.js');
       const body = (await readBody(req)) as any;
+      if (rmeTrig) {
+        if (body.type !== 'cron') return json(res, { error: 'restricted session: only cron triggers' }, 403);
+        if (body.agent) return json(res, { error: 'restricted session: a trigger may not run as an agent' }, 403);
+        const sm = String(body.sessionMode || 'isolated');
+        const target = sm.startsWith('existing:') ? state.getSession(sm.slice('existing:'.length)) : null;
+        if (sm.startsWith('existing:') && (!target || !profiles.mayMessage(rmeTrig as any, target as any)))
+          return json(res, { error: 'restricted session: a trigger may only deliver to itself, its parent or its children' }, 403);
+        body.createdBySessionId = rmeTrig.id;
+        body.agent = '';
+        delete body.folderId;
+        delete body.folderName;
+        try {
+          const trigger = await t.createCronTrigger({ name: body.name, prompt: body.prompt, schedule: body.schedule, sessionMode: body.sessionMode, delivery: body.delivery, deliver: body.deliver, autonomous: body.autonomous, agent: '', engine: body.engine, createdBySessionId: rmeTrig.id });
+          profiles.setAttachment(`trigger:${trigger.id}`, { ...rmeTrig.profile!, parent: rmeTrig.id });
+          return json(res, trigger, 201);
+        } catch (e) {
+          return badRequest(res, (e as Error).message);
+        }
+      }
       try {
         if (body.type === 'cron') {
           const trigger = await t.createCronTrigger({
@@ -5634,6 +5768,8 @@ export async function handle(
       const rest = p.slice('/__api/triggers/'.length).split('/');
       const tid = rest[0];
       const t = await import('./triggers.js');
+      if (rmeTrig && (t.listTriggers().find((x: any) => x.id === tid) as any)?.createdBySessionId !== rmeTrig.id)
+        return json(res, { error: 'restricted session: not a trigger it created' }, 403);
       // POST /__api/triggers/:id/run — fire a cron trigger now (UI "run now" / cronjob action:'run').
       if (rest[1] === 'run' && m === 'POST') {
         const r = await t.runCronNow(tid);
@@ -5648,6 +5784,16 @@ export async function handle(
       }
       if (m === 'PATCH') {
         const body = (await readBody(req)) as any;
+        if (rmeTrig) {
+          delete body.agent;
+          delete body.folderId;
+          delete body.folderName;
+          delete body.createdBySessionId;
+          const sm = typeof body.sessionMode === 'string' ? body.sessionMode : '';
+          const target = sm.startsWith('existing:') ? state.getSession(sm.slice('existing:'.length)) : null;
+          if (sm.startsWith('existing:') && (!target || !profiles.mayMessage(rmeTrig as any, target as any)))
+            return json(res, { error: 'restricted session: a trigger may only deliver to itself, its parent or its children' }, 403);
+        }
         try {
           const updated = t.patchTrigger(tid, body);
           return updated ? json(res, updated) : notFound(res, `no such trigger: ${tid}`);
@@ -5655,7 +5801,11 @@ export async function handle(
           return badRequest(res, (e as Error).message);
         }
       }
-      if (m === 'DELETE') return json(res, { ok: t.deleteTrigger(tid) });
+      if (m === 'DELETE') {
+        const ok = t.deleteTrigger(tid);
+        if (ok && profiles.readStore().attach[`trigger:${tid}`]) profiles.setAttachment(`trigger:${tid}`, null);
+        return json(res, { ok });
+      }
       return notFound(res);
     }
     if (p === '/__api/pending' && m === 'GET') {
@@ -6726,6 +6876,12 @@ export async function handle(
       // renders (wire-resume.ts slimHeavy); the open session's come on demand.
       const archived = u.searchParams.get('archived') === 'true';
       const full = u.searchParams.get('full') === '1' && canReadFullList((req as any).auth ?? null);
+      // Restricted run mode: a restricted caller sees its own family only (itself, its parent, its children).
+      const rme = restrictedCaller(req);
+      if (rme) {
+        const fam = (full ? state.listSessions({ archived }) : state.listSessionsForWire({ archived })).filter((x: any) => profiles.inFamily(rme as any, x));
+        return json(res, fam);
+      }
       if (full) return json(res, state.listSessions({ archived }));
       const list = state.listSessionsForWire({ archived });
       return json(res, Number(u.searchParams.get('wire')) >= WIRE_V2 ? list.map(slimHeavy) : list);
@@ -6740,6 +6896,34 @@ export async function handle(
     }
     if (p === '/__api/sessions' && m === 'POST') {
       const body = (await readBody(req)) as any;
+      // Restricted run mode: a restricted caller (the gate already checked it may spawn) only ever makes its OWN
+      // child — never under another master, never as an agent (an agent brings its own identity and logins), never
+      // in a folder of its choosing, with none of the metadata keys the host reads as authority. The child inherits
+      // the caller's profile in state.createSession; `profile` here can only narrow it further.
+      const rme = restrictedCaller(req);
+      if (rme) {
+        if (body.master && String(body.master) !== rme.id) return json(res, { error: 'restricted session: a child is always your own (master must be you)' }, 403);
+        if (body.agent) return json(res, { error: 'restricted session: may not start a session as an agent' }, 403);
+        const md = { ...(body.metadata && typeof body.metadata === 'object' ? body.metadata : {}) };
+        for (const k of profiles.PROTECTED_METADATA) delete md[k];
+        body.metadata = body.kind ? md : { ...md, master: rme.id };
+        delete body.folderId;
+        delete body.folderName;
+      }
+      if (body.profile !== undefined && body.profile !== null) {
+        // A spec (or a profile id) only: an effective profile with `layers` is the host's own shape, never a caller's.
+        if (typeof body.profile === 'string' ? !profiles.knownProfile(body.profile) : typeof body.profile !== 'object' || Array.isArray(body.profile) || 'layers' in body.profile)
+          return badRequest(res, `unknown profile: ${typeof body.profile === 'string' ? body.profile : typeof body.profile}`);
+      }
+      const callerSid = (req as any).auth?.kind === 'session' ? String((req as any).auth.sessionId) : null;
+      // A dispatch child joins its master's project folder only AFTER it is created (below), so a profile bound to
+      // that folder is folded in here, as part of the explicit pick (it can only narrow).
+      if (body.master && (body.kind === 'mutating' || body.kind === 'readonly' || body.kind === 'full')) {
+        const mf = state.getSession(String(body.master))?.folderId;
+        const fp = mf ? profiles.attachedProfile(`folder:${mf}`) : null;
+        if (fp) body.profile = profiles.narrow(fp, profiles.asProfile(body.profile));
+      }
+      const profileParent: string | undefined = rme ? rme.id : body.master ? String(body.master) : body.profile && callerSid ? callerSid : undefined;
       // A1: born from an agent — inherit its model (unless overridden), its
       // rail color, stamp metadata.agent; the persona + agent memory go into the
       // first turn in claude.js. An unknown agent is refused, never ignored.
@@ -6834,6 +7018,9 @@ export async function handle(
         // in that master's project folder.
         folderId: body.folderId,
         folderName: body.master && kind ? undefined : body.folderName,
+        // Restricted run mode: only passed when the caller asked for (or is under) one — undefined keeps Full as is.
+        ...(body.profile !== undefined && body.profile !== null ? { profile: body.profile } : {}),
+        ...(profileParent ? { parentId: profileParent } : {}),
       });
       // The provisioning result is the session's first chat event (before the spawn).
       if (provisioned) claude.appendChat(s.id, { kind: 'system', text: ticketProvision.provisionReport(provisioned), provision: provisioned });
@@ -6896,6 +7083,8 @@ export async function handle(
     const s = state.getSession(id);
     if (!s) return notFound(res, `no such session: ${id}`);
     const sub = parts.slice(3).join('/');
+    // Restricted run mode: the desktop rule (the gate already limited a restricted caller to its own routes here).
+    if (s.profile && DESKTOP_SUB.test(sub) && restrictedCaller(req)?.id === id && (await restrictedDesktopGate(req, res, s, sub))) return;
 
     if (!sub) {
       // RESUME: ?fields=changesExplanations,claude.capabilities — just the heavy
@@ -6904,7 +7093,9 @@ export async function handle(
       if (m === 'GET' && u.searchParams.get('fields')) return json(res, pickFields(s, u.searchParams.get('fields')!));
       if (m === 'GET') return json(res, s);
       if (m === 'PATCH') {
-        const body = (await readBody(req)) as any;
+        let body = (await readBody(req)) as any;
+        // Restricted run mode: its own cockpit fields only — never archive/folder/action, never an authority key.
+        if (restrictedCaller(req)?.id === id) body = profiles.sanitizeOwnPatch(body || {});
         const wasArchived = (s as any).archived;
         // G5: `set_metadata({patch:{needs_server:true}})` from a MAIN session —
         // allocate a pool port into metadata.port (same pool as workers). Idempotent.
@@ -6981,7 +7172,7 @@ export async function handle(
     // A3: the agent policy of this session (mcp/host-mcp.js hides the tools it
     // lists as hidden; `?names=a,b` = the names to classify).
     if (sub === 'policy' && m === 'GET') {
-      const pol = policy.policyFor(sessionAgent(s));
+      const pol = profiles.policyForSession(s as any);
       const names = String(u.searchParams.get('names') || '').split(',').map((x) => x.trim()).filter(Boolean);
       return json(res, {
         agent: sessionAgent(s),
@@ -6990,12 +7181,14 @@ export async function handle(
         domains: pol?.domains ?? null,
         autoApprove: pol?.autoApprove ?? [],
         hidden: names.filter((n) => !policy.toolAllowed(pol, n)),
+        // Restricted run mode: only present for a restricted session (a Full one's answer is unchanged).
+        ...(s.profile ? { profile: profiles.describe(s.profile) } : {}),
       });
     }
     // A3: the PreToolUse hook (mcp/policy-hook.js) asks before every tool call.
     if (sub === 'policy/check' && m === 'POST') {
       const body = (await readBody(req)) as any;
-      const v = policy.checkToolCall(policy.policyFor(sessionAgent(s)), String(body?.tool_name || ''), body?.input ?? {}, id);
+      const v = policy.checkToolCall(profiles.policyForSession(s as any), String(body?.tool_name || ''), body?.input ?? {}, id);
       if (!v.allow) return json(res, v);
       // MODS: the same hook carries the mods' tool.call chain for engines without native mods (codex).
       if (!body?.mods) return json(res, v);
@@ -7008,7 +7201,7 @@ export async function handle(
       const body = (await readBody(req)) as any;
       // A3: a url tab from a session born from an agent must stay inside its domain allowlist.
       if (body?.type === 'url') {
-        const v = policy.checkToolCall(policy.policyFor(sessionAgent(s)), 'open_tab', { url: body.url }, id);
+        const v = policy.checkToolCall(profiles.policyForSession(s as any), 'open_tab', { url: body.url }, id);
         if (!v.allow) return json(res, { error: v.reason }, 403);
       }
       try {
@@ -7050,6 +7243,11 @@ export async function handle(
     }
     if (sub === 'listeners' && m === 'POST') {
       const body = (await readBody(req)) as any;
+      // Restricted run mode: a listener only ever wakes its own session; it does not move it into a folder.
+      if (restrictedCaller(req)) {
+        delete body.folderId;
+        delete body.folderName;
+      }
       const type = body.type || 'github-pr';
       const core = type === 'github-pr' || type === 'linear-issue' || type === 'slack' || type === 'whatsapp' || type === 'sms' || type === 'host-load';
       // EXT: any type an extension registered is as valid as a core one.
@@ -7119,6 +7317,9 @@ export async function handle(
       const from = typeof body.from === 'string' ? body.from : '';
       if (!text) return badRequest(res, 'text required');
       if (!from) return badRequest(res, 'from (your session id) required');
+      // Restricted run mode: `from` is the caller, never a name it picks (the gate already limited the target).
+      const rmeT = restrictedCaller(req);
+      if (rmeT && (from !== rmeT.id || !profiles.mayMessage(rmeT as any, s as any))) return json(res, { error: 'restricted session: it may only task its own children, as itself' }, 403);
       const folder = s.folderId ? state.getFolder(s.folderId as string) : null;
       if (!folder || folder.controllerSessionId !== from)
         return json(
@@ -7172,6 +7373,8 @@ export async function handle(
       const from = typeof body.from === 'string' ? body.from : '';
       if (!text) return badRequest(res, 'text required');
       if (!from) return badRequest(res, 'from (your session id) required');
+      const rmeS = restrictedCaller(req);
+      if (rmeS && (from !== rmeS.id || !profiles.mayMessage(rmeS as any, s as any))) return json(res, { error: 'restricted session: it may only message its parent and its own children, as itself' }, 403);
       if (s.archived) return json(res, { error: `session ${id} is archived` }, 409);
       const fromLabel = state.getSession(from)?.title || from;
       const wrapped = `[Message from ${fromLabel} (peer session)]\n\n${text}`;
@@ -7540,7 +7743,7 @@ export async function handle(
     // ---- VAULT2: the owner's named details (lib/credentials.ts) — names the agent may know, a secure form, a field fill
     if (sub === 'vault/fields' && m === 'GET') {
       // the agent's allowlist (A3) is checked here too, not only in the MCP tool list and the PreToolUse hook
-      if (!policy.toolAllowed(policy.policyFor(sessionAgent(s)), 'vault_fields')) return json(res, { error: "vault_fields is not in this agent's allowlist" }, 403);
+      if (!policy.toolAllowed(profiles.policyForSession(s as any), 'vault_fields')) return json(res, { error: "vault_fields is not in this agent's allowlist" }, 403);
       const site = String(u.searchParams.get('site') || '').trim();
       if (!site) return badRequest(res, 'site required');
       const cr = await import('./lib/credentials.js');
@@ -7692,6 +7895,15 @@ export async function handle(
         return json(res, { error: 'This request has expired. Use the current action card.' }, 409);
       if (!cur.buttons?.some((b: any) => b.value === value)) return badRequest(res, 'value is not a current action option');
       const cardKind = cur.kind;
+      // Restricted run mode: the shared-desktop grant is a person's to give, never a session's or the host's.
+      if (cardKind === SHARED_GRANT_KIND) {
+        if ((req as any).auth?.kind !== 'user' && (req as any).auth?.kind !== 'off') return json(res, { error: 'only a person can answer this card' }, 403);
+        state.patchSession(id, { action: null });
+        if (value === 'allow') profiles.grantShared(id);
+        claude.appendChat(id, { kind: 'system', text: value === 'allow' ? 'Shared desktop allowed for 30 minutes.' : 'Shared desktop declined.' });
+        deliverToSession(id, value === 'allow' ? '[host] The owner allowed you onto the shared desktop for 30 minutes — call the tool again.' : '[host] The owner declined the shared desktop. Do not try another way; report that you are blocked.');
+        return json(res, { ok: true });
+      }
       if (([LOGIN_KIND, LOGIN_SAVE_KIND, SHARE_KIND, OUTBOUND_KIND, CALL_QUESTION_KIND, 'review'].includes(cardKind) && (req as any).auth?.kind === 'session') ||
         (cardKind === SSO_KIND && ['session', 'host'].includes((req as any).auth?.kind)))
         return json(res, { error: 'only a person can answer this card' }, 403);
@@ -8009,7 +8221,7 @@ export async function handle(
       const body = (await readBody(req).catch(() => ({}))) as any;
       const url = body?.url ? String(body.url) : undefined;
       if (url) {
-        const v = policy.checkToolCall(policy.policyFor(sessionAgent(s)), 'browser_open', { url }, id);
+        const v = policy.checkToolCall(profiles.policyForSession(s as any), 'browser_open', { url }, id);
         if (!v.allow) return json(res, { error: v.reason }, 403);
       }
       try {
@@ -8041,7 +8253,7 @@ export async function handle(
     // Domain allowlist (A3) is enforced here, same as `tabs` does for open_tab.
     if (sub === 'browser/navigate' && m === 'POST') {
       const body = (await readBody(req)) as any;
-      const v = policy.checkToolCall(policy.policyFor(sessionAgent(s)), 'browser_navigate', { url: body?.url }, id);
+      const v = policy.checkToolCall(profiles.policyForSession(s as any), 'browser_navigate', { url: body?.url }, id);
       if (!v.allow) return json(res, { error: v.reason }, 403);
       try {
         return json(res, await browserActions.navigate(id, String(body?.url || '')));
@@ -8449,7 +8661,13 @@ export async function handle(
       // missing pointer). An override back-fills metadata.master so the tree links
       // up and later reports resolve on their own.
       const recorded = (s.metadata?.master as string) || null;
-      const master = recorded || (body.master ? String(body.master) : null);
+      let master = recorded || (body.master ? String(body.master) : null);
+      // Restricted run mode: the parent is the host-recorded one — no override, no back-fill — and it is woken only
+      // when the profile may talk to it.
+      if (s.profile) {
+        master = s.profile.parent && s.profile.talkTo.includes('parent') ? s.profile.parent : null;
+        delete body.master;
+      }
       const result = capResult(body);
       const metaPatch: Record<string, unknown> = { result };
       if (!recorded && body.master) metaPatch.master = String(body.master);

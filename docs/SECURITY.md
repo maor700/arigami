@@ -104,10 +104,9 @@ the funnel and expects its 401. Off by default.
 
 - **`/__api/sms/inbound`** — the pre-C3 phone webhook was unauthenticated; it is now an ordinary gated route (no
   credential → 401). Point the phone at the signed `/__api/webhooks/sms` URL (Settings → Webhooks).
-- **Authorization is coarse.** A session token can call any `/__api` route, not
-  only its own session's; API tokens inherit their owner's role; the only
-  admin-only surface is `/__api/auth/*` administration. Per-session scoping is
-  a follow-up.
+- **Authorization is coarse for Full sessions.** A Full (default) session's token can call any `/__api` route, not
+  only its own session's; API tokens inherit their owner's role; the only admin-only surface is `/__api/auth/*`
+  administration. A *restricted* session's token is scoped (below).
 - **Pairing = admin.** The code lives on the host's disk (`run/pairing-code`,
   mode 0600); whoever can read it can become admin. That is equivalent to
   local user access, which already owns everything.
@@ -127,6 +126,38 @@ the funnel and expects its 401. Off by default.
   `ARIGAMI_BIND=0.0.0.0` the headers are ignored unless `ARIGAMI_TRUST_PROXY=1`
   — and even then only for loopback peers, so a remote client can never forge
   an https origin (server/lib/proxy-headers.ts).
+
+## Restricted sessions (opt-in)
+
+A session with no profile is **Full** and behaves exactly as described above. A session can instead run under a
+**profile** (`server/session-profile.ts`), chosen per session (`POST /__api/sessions {profile}`), per project folder, per
+agent or per cron trigger (`$ARIGAMI_DIR/session-profiles.json`, admin-only `PUT /__api/session-profiles`). The effective
+profile is stored on the session record by the host at creation and no PATCH can change it. It carries:
+
+| field | effect |
+|---|---|
+| `tools` / `hostTools` | an A3-style allowlist, enforced by the same layers as an agent's (`--disallowedTools`, the PreToolUse hook, the host MCP's hidden set, the MCP gateway) for claude and codex alike |
+| `desktop` | `none`; `own` — its own display and Chrome, never the shared desktop (no fallback); `shared` — the owner's desktop too, but only for 30 minutes after a person presses *Allow* on a card |
+| `talkTo` | `parent` / `children`: the only sessions `send_message`, `task_session` and `report_to_master` reach; `from` is always the caller |
+| `maySpawn` | may create sessions — always its own children, which inherit its profile |
+| `triggers` | may create cron triggers (only its own, delivering to itself or its family; their runs inherit its profile) and listeners |
+| `hostRoutes` | host route groups beyond its own session: `memory`, `skills`, `setup`, `agents`, `host-resources` |
+
+**Inheritance only narrows.** A child's profile is its parent's narrowed by the folder's, the agent's, the trigger's
+and any explicit pick: tool allowlists stack as layers that must all allow, the desktop mode takes the lower one,
+`talkTo` / `hostRoutes` intersect, flags AND. Every create path goes through `state.createSession`, which applies it.
+
+**Per-session API scope.** The auth gate refuses (403) any request a restricted session's token makes outside its own
+session's routes, its parent's `send`, its children's lifecycle and `task`/`send`, and the host routes its profile
+maps to; it never gets a WebSocket, the dev-server proxy or artifacts. Blocking `/__mcp/*` calls must name its own
+session. Its own PATCH is limited to cockpit fields and cannot touch the metadata the host reads as authority
+(`master`, `agent`, `screen`, cron pointers…). A restricted caller cannot pass `agent`, a foreign `master` or a folder.
+
+**Limits.** Enforcement is host-side and engine-agnostic, but the session still runs as the host's user: what it can
+do with Bash on the machine (files, network, sudo) is not limited here — that is the isolation step (own container /
+user, egress allowlist). With `auth.mode: off` a local caller without any token is the admin, so a restricted session's
+host-route limits hold only with auth on (the host logs a warning when one is created with auth off). A profile binds at
+creation: moving a session into a folder later does not change it.
 
 ## Reporting
 
