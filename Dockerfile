@@ -112,7 +112,7 @@ RUN npm install -g playwright @playwright/mcp \
 #     installed globally so the first bridge start needs no network. The
 #     checkout's auth_info/ is symlinked onto /data by the entrypoint (upstream
 #     hardcodes it next to src/); the message DB goes to ARIGAMI_WA_DATA_DIR. ---
-COPY scripts/install-whatsapp.sh scripts/prepare-whatsapp.mjs scripts/whatsapp-status.ts scripts/whatsapp-media.ts /opt/arigami-whatsapp-setup/
+COPY scripts/install-whatsapp.sh scripts/prepare-whatsapp.mjs scripts/whatsapp-status.ts scripts/whatsapp-media.ts scripts/whatsapp-transcribe.ts /opt/arigami-whatsapp-setup/
 RUN ARIGAMI_WA_MCP_DIR=/opt/whatsapp-mcp bash /opt/arigami-whatsapp-setup/install-whatsapp.sh \
     && chown -R node:node /opt/whatsapp-mcp
 
