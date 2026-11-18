@@ -257,3 +257,31 @@ test('writes land only in the bound thread; anything else is refused and audited
   expect(lines.some((l) => l.tool === 'github_merge' && l.decision === 'refused')).toBe(true);
   expect(fs.readFileSync(path.join(dir, 'gatekeeper', 'audit.log'), 'utf8')).not.toContain('xoxb-');
 });
+
+test('the host hook allows a granted gatekeeper tool under both engine spellings (claude hyphen, codex underscore)', async () => {
+  for (const name of ['mcp__ext-gatekeeper__gatekeeper_status', 'mcp__ext_gatekeeper__gatekeeper_status']) {
+    const v = await call(tR, 'POST', `/__api/sessions/${restricted}/policy/check`, { tool_name: name, input: {} });
+    expect(v.json).toMatchObject({ allow: true });
+  }
+  const no = await call(tR, 'POST', `/__api/sessions/${restricted}/policy/check`, { tool_name: 'mcp__ext_other__x', input: {} });
+  expect(no.json.allow).toBe(false);
+});
+
+test('a session started from a Slack thread (metadata.origin, set by its creator) is bound automatically; it cannot change its origin', async () => {
+  const r = await call(admin, 'POST', '/__api/sessions', { title: 'from thread', profile: 'fixer', metadata: { origin: { kind: 'slack', channel: 'CINCIDENT1', thread_ts: THREAD } } });
+  expect(r.status).toBe(201);
+  const sid = r.json.id;
+  const tok = (await spawnOf(sid)).env.ARIGAMI_TOKEN;
+  // its own PATCH cannot move the origin
+  await call(tok, 'PATCH', `/__api/sessions/${sid}`, { metadata: { origin: { kind: 'slack', channel: 'COTHER0001', thread_ts: '1700000000.000001' } } });
+  expect((await call(admin, 'GET', `/__api/sessions/${sid}`)).json.metadata.origin.channel).toBe('CINCIDENT1');
+  const c = await mcp('ext-gatekeeper', tok);
+  try {
+    const st = text(await c.callTool({ name: 'gatekeeper_status', arguments: {} }));
+    expect(st.incidentThread).toMatchObject({ channel: 'CINCIDENT1', thread_ts: THREAD, boundBy: 'origin' });
+    const say = text(await c.callTool({ name: 'slack_thread_say', arguments: { text: 'bound by origin' } }));
+    expect(say).toMatchObject({ ok: true, thread_ts: THREAD });
+  } finally {
+    await c.close();
+  }
+});

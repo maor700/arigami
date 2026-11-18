@@ -46,7 +46,9 @@ A refusal reaches the model as `denied by the gatekeeper: <reason>`.
 | `gatekeeper:sentry.resolve` | `sentry_set_status` (resolved / unresolved) | |
 | `gatekeeper:sentry.alerts` | `sentry_update_alert_rule` | operator |
 
-`gatekeeper_status` (no grant) tells a session what it may do and where. A profile that grants anything here also
+`gatekeeper_status` (no grant) tells a session what it may do and where. Tool names match on both engines: claude
+calls them `mcp__ext-gatekeeper__*`, codex `mcp__ext_gatekeeper__*`; the host's policy folds the server segment
+(`agent-policy.ts mcpCanonical`), so one profile entry covers both. A profile that grants anything here also
 needs `ext:gatekeeper` in its tools (the tab adds it).
 
 No tool name reads as "send / post / reply / comment": the host would turn those into owner Send cards. A restricted
@@ -55,10 +57,30 @@ autonomously inside those limits is the point.
 
 ### The incident thread
 
-A session writes and reads approvals only in its **bound** thread. An admin binds it (Activity), or the session binds
-itself **once** with `slack_bind_thread`, only to a thread in the incident channel whose root was posted by an allowed
-alert source or an operator (`threadOpeners`; switch self-binding off with `bindOnFirstUse:false`). A binding never
-changes; children inherit their parent's.
+A session writes and reads approvals only in its **bound** thread. A binding never changes; children inherit their
+parent's. It is made, in this order:
+
+1. **by an admin** (Activity tab), or **from the session's origin**: whoever creates the session records where it was
+   started — `POST /__api/sessions {metadata: {origin: {kind: "slack", channel, thread_ts}}}`. `origin` is a
+   host-protected key (a restricted session can neither set it for a child nor change its own), and a child inherits
+   its parent's. The first gatekeeper call binds it automatically.
+2. **from a Slack listener** the session or an ancestor armed on a thread of the incident channel (host-recorded, but
+   chosen by the session), or **from a `thread_ts` a Slack/approval tool names** (`slack_thread_say`,
+   `slack_read_thread`, `github_merge`…), or `slack_bind_thread`. These are the session's own claims, so they bind
+   only to a thread in the incident channel whose root an allowed alert source or an operator posted (`threadOpeners`;
+   off with `bindOnFirstUse:false`), and in such a thread an operator approval counts only if it is **newer than the
+   session** — a session cannot pick an old thread where an operator once said "merge" for something else.
+
+A session started by a listener event is an existing session woken up, so (2) covers it; a session born of a cron
+run or a dispatch has no Slack origin unless its creator records one.
+
+### Who is a person in Slack
+
+A message is a bot's only when Slack marks it so: a `bot_id`, or subtype `bot_message`. A message whose `user` is an
+operator and that carries no `bot_id` is the operator, even when an app sent it (`app_id`): Slack sets `user` from the
+token that posted; a bot token always adds a `bot_id`, and display-name/icon overrides need a bot token too. The only
+way to post with `user: <operator>` and no `bot_id` is a user token of that operator — the operator, or an app the
+operator personally authorised to write as them (their own delegation).
 
 ### Pushing without a token
 

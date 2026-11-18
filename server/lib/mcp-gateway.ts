@@ -147,7 +147,34 @@ async function callerFacts(session: any): Promise<Record<string, unknown>> {
     seen.add(p);
     p = (getSession(p) as any)?.profile?.parent ?? null;
   }
-  return { 'arigami/profile': describe(session.profile), 'arigami/lineage': lineage, 'arigami/cwd': String(session.cwd || '') };
+  // Where the session (or its nearest ancestor) was started from, as its creator recorded it: `metadata.origin` is a
+  // host-protected key (a restricted session can neither set nor change it). And the Slack threads its family watches
+  // through host listeners — self-registered, so an extension treats them as a claim to verify, not as authority.
+  const family = [session.id, ...lineage];
+  let origin: unknown = null;
+  for (const id of family) {
+    const o = (getSession(id) as any)?.metadata?.origin;
+    if (o && typeof o === 'object') { origin = o; break; }
+  }
+  let slackThreads: { session: string; channel: string; thread_ts: string }[] = [];
+  try {
+    const { listListeners } = await import('../state.js');
+    slackThreads = family.flatMap((id) =>
+      listListeners({ sessionId: id })
+        .filter((l: any) => l.type === 'slack' && l.status !== 'stopped' && l.params?.channelId && l.params?.threadTs)
+        .map((l: any) => ({ session: id, channel: String(l.params.channelId), thread_ts: String(l.params.threadTs) }))
+    );
+  } catch {
+    /* no listeners module in this process */
+  }
+  return {
+    'arigami/profile': describe(session.profile),
+    'arigami/lineage': lineage,
+    'arigami/cwd': String(session.cwd || ''),
+    'arigami/createdAt': String(session.createdAt || ''),
+    'arigami/origin': origin,
+    'arigami/slackThreads': slackThreads,
+  };
 }
 
 /** A host-held remote grant, for a session whose owner may use it. */

@@ -482,7 +482,7 @@ export function inFamily(me: SessionLike, s: SessionLike): boolean {
  * A restricted session's PATCH of its own record: cockpit fields only, and none of the metadata keys the host reads
  * as identity or authority (agent → its A3 policy, master → whom it reports to, cron/role pointers …).
  */
-export const PROTECTED_METADATA = ['screen', 'agent', 'adoptedFrom', 'master', 'role', 'kind', 'subtask', 'agentHome', 'cronTriggerId', 'fromCronTrigger', 'cronDeliver', 'worktree', 'branch', 'base', 'repo', 'cleanup', 'review', 'prompts', 'profile'];
+export const PROTECTED_METADATA = ['screen', 'agent', 'adoptedFrom', 'master', 'role', 'kind', 'subtask', 'agentHome', 'cronTriggerId', 'fromCronTrigger', 'cronDeliver', 'worktree', 'branch', 'base', 'repo', 'cleanup', 'review', 'prompts', 'profile', 'origin'];
 const OWN_PATCHABLE = ['title', 'color', 'status', 'progress', 'metadata'];
 
 export function sanitizeOwnPatch(body: Record<string, unknown>): Record<string, unknown> {

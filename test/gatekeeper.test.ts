@@ -130,10 +130,27 @@ describe('operator approval: the author user id, nothing else', () => {
     expect(q([root, m(OP, '> merge\nwhat do you think?')]).ok).toBe(false);
     expect(q([root, m(OP, 'did anyone say `merge`?')]).ok).toBe(false);
   });
-  test('a bot or app message never counts, even with an operator id on it', () => {
+  test('a bot message never counts, even with an operator id on it: bot_id or subtype bot_message', () => {
     expect(q([root, m(OP, 'merge', 2, { bot_id: 'BX' })]).ok).toBe(false);
     expect(q([root, m(OP, 'merge', 2, { subtype: 'bot_message' })]).ok).toBe(false);
-    expect(q([root, m(OP, 'merge', 2, { app_id: 'AX' })]).ok).toBe(false);
+    expect(q([root, m(OP, 'merge', 2, { bot_id: 'BX', app_id: 'AX' })]).ok).toBe(false);
+  });
+  test('the operator posting with their own user token through an app (app_id, no bot_id) is the operator', () => {
+    expect(q([root, m(OP, 'merge', 2, { app_id: 'AX' })])).toMatchObject({ ok: true, approver: OP });
+    // …and the same app path for a stranger is still a stranger
+    expect(q([root, m(STRANGER, 'merge', 2, { app_id: 'AX' })]).ok).toBe(false);
+    expect(D.isBotMessage({ app_id: 'AX' } as any)).toBe(false);
+    expect(D.isBotMessage({ bot_id: 'B1' })).toBe(true);
+    expect(D.isBotMessage({ subtype: 'bot_message' })).toBe(true);
+    expect(D.isBotMessage({ subtype: 'thread_broadcast' })).toBe(false);
+  });
+  test('in a thread the session picked itself, only an operator word newer than the session counts', () => {
+    const self = { ...B, by: 'named' };
+    const createdMs = Date.parse('2026-01-01T00:00:00Z');
+    void createdMs;
+    expect(q([root, m(OP, 'merge', 30)], { binding: self, notBeforeMs: NOW - 10 * 60_000 }).ok).toBe(false);
+    expect(q([root, m(OP, 'merge', 5)], { binding: self, notBeforeMs: NOW - 10 * 60_000 }).ok).toBe(true);
+    expect(q([root, m(OP, 'merge', 30)], { binding: B, notBeforeMs: null }).ok).toBe(true);
   });
   test('only in the session\'s own thread, only fresh, only once, only for the PR it names', () => {
     expect(q([root, m(OP, 'merge', 2, { thread_ts: tsAt(500) })]).ok).toBe(false);
@@ -339,6 +356,27 @@ describe('gatekeeper tools', () => {
     expect(r2.error).toContain('not one the gatekeeper manages');
   });
 
+  test('unbound: a named thread_ts binds automatically only when an alert source or operator opened that thread', async () => {
+    const unbound = () => fs.writeFileSync(path.join(dir, 'state.json'), JSON.stringify({ bindings: {}, consumed: {} }));
+    unbound();
+    thread = [{ ts: THREAD, user: STRANGER, text: 'look at this' }];
+    const bad = await run('slack_thread_say', { text: 'hi', thread_ts: THREAD }, caller(['slack.post']));
+    expect(bad.ok).toBe(false);
+    expect(bad.error).toContain('no incident thread');
+    thread = [{ ts: THREAD, bot_id: 'BSENTRY01', text: 'alert' }];
+    const good = await run('slack_thread_say', { text: 'hi', thread_ts: THREAD }, caller(['slack.post']));
+    expect(good).toMatchObject({ ok: true, thread_ts: THREAD });
+    expect(JSON.parse(fs.readFileSync(path.join(dir, 'state.json'), 'utf8')).bindings.s1).toMatchObject({ thread_ts: THREAD, by: 'named' });
+    // bound now: another thread is refused
+    const other = await run('slack_thread_say', { text: 'hi', thread_ts: nowTs(1) }, caller(['slack.post']));
+    expect(other.ok).toBe(false);
+    // and the operator's word must be newer than the session for this self-chosen thread
+    thread = [{ ts: THREAD, bot_id: 'BSENTRY01' }, { ts: nowTs(30), user: OP, text: 'merge', thread_ts: THREAD }];
+    const stale = await run('github_merge', { pr: 7 }, caller(['github.merge'], { createdAt: new Date(Date.now() - 10 * 60_000).toISOString() }));
+    expect(stale.ok).toBe(false);
+    expect(stale.error).toContain('older than this session');
+  });
+
   test('admin tools refuse a session caller; secrets never appear in a status view', async () => {
     const st = mod._test.adminTools.find((t: any) => t.name === 'gk_admin_state');
     const r = await st.run({}, { caller: caller([]) });
@@ -393,5 +431,17 @@ describe('bundled + restricted-audience extensions (core)', () => {
     expect(o.fam['ext:gatekeeper']).toBeDefined();
     expect(o.admin).toBe(true);
     expect(o.notAdmin).toBe(false);
+  });
+});
+
+describe('automatic binding candidates', () => {
+  const base = caller(['slack.post']);
+  test('origin first (only in the incident channel), then the family\'s Slack listeners, then a named thread', () => {
+    const c = { ...base, origin: { kind: 'slack', channel: 'CINCIDENT1', thread_ts: THREAD }, slackThreads: [{ session: 'p1', channel: 'CINCIDENT1', thread_ts: tsAt(50) }] };
+    expect(D.bindingCandidates(c, 'CINCIDENT1', { thread_ts: tsAt(40) }).map((x) => x.by)).toEqual(['origin', 'listener', 'named']);
+    expect(D.bindingCandidates({ ...c, origin: { kind: 'slack', channel: 'COTHER0001', thread_ts: THREAD } }, 'CINCIDENT1').map((x) => x.by)).toEqual(['listener']);
+    expect(D.bindingCandidates({ ...base, slackThreads: [{ session: 's1', channel: 'COTHER0001', thread_ts: THREAD }] }, 'CINCIDENT1')).toEqual([]);
+    expect(D.bindingCandidates(base, 'CINCIDENT1', { channel: 'COTHER0001', thread_ts: THREAD })).toEqual([]);
+    expect(D.bindingCandidates(base, 'CINCIDENT1', { thread_ts: 'not-a-ts' })).toEqual([]);
   });
 });

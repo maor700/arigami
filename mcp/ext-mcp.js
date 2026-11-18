@@ -146,6 +146,9 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
     profile: SHARED && meta['arigami/profile'] && typeof meta['arigami/profile'] === 'object' ? meta['arigami/profile'] : null,
     lineage: SHARED && Array.isArray(meta['arigami/lineage']) ? meta['arigami/lineage'].map(String) : [],
     cwd: SHARED && typeof meta['arigami/cwd'] === 'string' ? meta['arigami/cwd'] : null,
+    createdAt: SHARED && typeof meta['arigami/createdAt'] === 'string' ? meta['arigami/createdAt'] : null,
+    origin: SHARED && meta['arigami/origin'] && typeof meta['arigami/origin'] === 'object' ? meta['arigami/origin'] : null,
+    slackThreads: SHARED && Array.isArray(meta['arigami/slackThreads']) ? meta['arigami/slackThreads'] : [],
   };
   const missing = missingArgs(tool, req.params.arguments || {});
   if (missing.length)
