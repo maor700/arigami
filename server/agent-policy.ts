@@ -234,6 +234,8 @@ function layerAllows(p: Policy, toolName: string): boolean {
   if (p.deny?.length) {
     const n = canonicalToolName(shortHostName(String(toolName || '')));
     if (p.deny.includes(n)) return false;
+    // a profile may deny a whole MCP server by pattern (e.g. `mcp__playwright__*` for desktop "none")
+    if (p.deny.some((d) => d.includes('*') && (matchTool(d, n) || matchTool(d, toolName)))) return false;
   }
   if (p.tools === null) return true;
   const name = canonicalToolName(shortHostName(String(toolName || '')));

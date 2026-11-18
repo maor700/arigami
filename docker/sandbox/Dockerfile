@@ -23,6 +23,14 @@ RUN npm install -g @anthropic-ai/claude-code @openai/codex \
     && npm cache clean --force && rm -rf /root/.npm \
     && claude --version && codex --version
 
+# The session's OWN browser (profile desktop "own"): a headless Chromium driven by the Playwright MCP the host injects
+# for that session only. It runs here, behind the same egress proxy — never the owner's Chrome, never the host's
+# display (docs/SANDBOX.md § Its own browser).
+RUN apt-get update && apt-get install -y --no-install-recommends chromium fonts-liberation \
+    && rm -rf /var/lib/apt/lists/* \
+    && npm install -g @playwright/mcp && npm cache clean --force && rm -rf /root/.npm \
+    && chromium --version && (command -v playwright-mcp || command -v mcp-server-playwright)
+
 # Any uid runs here (the host passes its own, so files on the mounted tree keep their owner); HOME is a per-session
 # dir the host mounts. /home/sandbox only exists so a stray `cd ~` before HOME is set lands somewhere harmless.
 RUN mkdir -p /home/sandbox && chmod 1777 /home/sandbox

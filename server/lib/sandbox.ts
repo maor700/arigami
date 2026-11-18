@@ -352,7 +352,7 @@ function egressKey(): string {
 }
 
 /** The allowlist file the egress proxy reads for this session. */
-export function writePolicy(sessionId: string, profile: { name?: string; egress?: string[] } | null | undefined): string[] {
+export function writePolicy(sessionId: string, profile: SProfile | null | undefined): string[] {
   const groups = { ...EGRESS_GROUPS, ...(cfg.sandbox?.egressGroups || {}) };
   const allow = [...new Set([...(cfg.sandbox?.egressBase || MODEL_HOSTS), ...expandEgress(profile?.egress || [], groups)])];
   const dir = path.join(egressDir(), 'policies');
@@ -382,6 +382,54 @@ function seedGitIdentity(home: string): void {
 const LAUNCHER = () => path.join(resourceRoot(), 'server', 'lib', 'sandbox-launch.ts');
 
 type Built = { bin: string; args: string[]; env: Record<string, string | undefined>; cwd: string };
+type SProfile = { name?: string; egress?: string[]; desktop?: string };
+
+// ---- its own browser (desktop "own") -------------------------------------------------------------------------------
+
+/** The MCP server name the own browser goes by (session-profile.ts OWN_BROWSER_MCP allows `mcp__playwright__*`). */
+export const OWN_BROWSER_SERVER = 'playwright';
+const CHROMIUM = '/usr/bin/chromium';
+
+/**
+ * The Playwright MCP config of one sandboxed session: a headless Chromium inside its container, its profile in memory,
+ * every request through the egress proxy with the session's own credentials (so its allowlist and deny log apply),
+ * only its own loopback (its dev server) direct. Never a user-data-dir, a CDP endpoint or an extension bridge — so
+ * never the owner's Chrome.
+ */
+export function ownBrowserConfig(proxy: { server: string; username: string; password: string }, outputDir: string) {
+  return {
+    browser: {
+      browserName: 'chromium',
+      isolated: true,
+      launchOptions: { executablePath: CHROMIUM, headless: true, chromiumSandbox: false, proxy: { ...proxy, bypass: 'localhost,127.0.0.1' } },
+    },
+    outputDir,
+  };
+}
+
+/** Add the own browser to the engine's MCP servers: claude's --mcp-config JSON, codex's per-session config.toml. */
+export function withOwnBrowser(engineId: string, args: string[], env: Record<string, string>, configFile: string): string[] {
+  // Chromium puts unix sockets under TMPDIR: the session's scratch path is too long for one, so the browser uses the
+  // container's own /tmp (a tmpfs of this container only).
+  const server = { command: 'playwright-mcp', args: ['--config', configFile], env: { TMPDIR: '/tmp' } };
+  if (engineId === 'claude') {
+    const i = args.indexOf('--mcp-config');
+    const out = [...args];
+    let cfg: { mcpServers?: Record<string, unknown> } = { mcpServers: {} };
+    if (i >= 0) try { cfg = JSON.parse(args[i + 1]); } catch {}
+    cfg.mcpServers = { ...(cfg.mcpServers || {}), [OWN_BROWSER_SERVER]: { type: 'stdio', ...server } };
+    if (i >= 0) out[i + 1] = JSON.stringify(cfg);
+    else out.push('--mcp-config', JSON.stringify(cfg));
+    return out;
+  }
+  if (engineId === 'codex' && env.CODEX_HOME) {
+    // the host rewrites config.toml before every spawn (codex.ts): appending here is per spawn too
+    const f = path.join(env.CODEX_HOME, 'config.toml');
+    const toml = `\n# the session's own browser, inside its sandbox (lib/sandbox.ts)\n[mcp_servers.${OWN_BROWSER_SERVER}]\ncommand = ${JSON.stringify(server.command)}\nargs = ${JSON.stringify(server.args)}\nenv = { TMPDIR = "/tmp" }\n`;
+    try { if (!fs.readFileSync(f, 'utf8').includes(`[mcp_servers.${OWN_BROWSER_SERVER}]`)) fs.appendFileSync(f, toml); } catch {}
+  }
+  return args;
+}
 
 /**
  * The spawn that actually runs: `built` itself for a Full session (or with the sandbox off), else the launcher that
@@ -390,7 +438,7 @@ type Built = { bin: string; args: string[]; env: Record<string, string | undefin
  */
 export function wrapSpawn<T extends Built>(s: { id: string; profile?: { name?: string; egress?: string[] } | null } | null | undefined, built: T, engineId: string): T | Built {
   if (!s || !isSandboxed(s)) return built;
-  const spec = launchSpec(s as { id: string; profile: { name?: string; egress?: string[] } }, built, engineId);
+  const spec = launchSpec(s as { id: string; profile: SProfile }, built, engineId);
   const dir = path.join(SANDBOX_DIR(), 'run');
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   const f = path.join(dir, `${s.id}.${crypto.randomBytes(4).toString('hex')}.json`);
@@ -401,7 +449,7 @@ export function wrapSpawn<T extends Built>(s: { id: string; profile?: { name?: s
   return { bin: process.execPath, args: [LAUNCHER(), f], env, cwd: SANDBOX_DIR() };
 }
 
-export function launchSpec(s: { id: string; profile: { name?: string; egress?: string[] } }, built: Built, engineId: string): LaunchSpec {
+export function launchSpec(s: { id: string; profile: SProfile }, built: Built, engineId: string): LaunchSpec {
   const sb = cfg.sandbox || ({ mode: 'docker' } as const);
   const root = resourceRoot();
   const base: Omit<LaunchSpec, 'argv' | 'env' | 'mounts'> = {
@@ -437,7 +485,8 @@ export function launchSpec(s: { id: string; profile: { name?: string; egress?: s
   fs.mkdirSync(home, { recursive: true, mode: 0o700 });
   seedGitIdentity(home);
   writePolicy(s.id, s.profile);
-  const cred = `${encodeURIComponent(s.id)}:${secretOf(egressKey(), s.id)}`;
+  const secret = secretOf(egressKey(), s.id);
+  const cred = `${encodeURIComponent(s.id)}:${secret}`;
   const proxy = `http://${cred}@${infra.PROXY_ALIAS}:${infra.PROXY_PORT}`;
   Object.assign(env, {
     HOME: home,
@@ -451,9 +500,17 @@ export function launchSpec(s: { id: string; profile: { name?: string; egress?: s
     CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
   });
   const engine = sb.engines?.[engineId] || engineId;
+  let args = built.args;
+  if (s.profile.desktop === 'own' || s.profile.desktop === 'shared') {
+    // its own browser, inside this container (a sandbox has no other: the host's browser/screen tools are denied)
+    const conf = path.join(home, '.arigami-browser.json');
+    const out = env.TMPDIR ? path.join(env.TMPDIR, 'browser') : path.join(home, 'browser');
+    fs.writeFileSync(conf, JSON.stringify(ownBrowserConfig({ server: `http://${infra.PROXY_ALIAS}:${infra.PROXY_PORT}`, username: s.id, password: secret }, out)), { mode: 0o600 });
+    args = withOwnBrowser(engineId, args, env, conf);
+  }
   return {
     ...base,
-    argv: [engine, ...built.args],
+    argv: [engine, ...args],
     env,
     mounts: [...plan.mounts, ...extraMounts].map((m) => ({ source: daemonPath(m.host), target: m.target, ro: m.ro })),
     ...(ephemeral.length ? { ephemeral } : {}),

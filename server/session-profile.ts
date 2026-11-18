@@ -389,9 +389,27 @@ export const NEVER_TOOLS = ['host_restart', 'create_agent', 'update_agent', 'per
  */
 export const ENGINE_NATIVE_SCHEDULING = ['RemoteTrigger', 'CronCreate', 'CronDelete', 'CronList', 'ScheduleWakeup'];
 
+/**
+ * The session's OWN browser: the Playwright MCP the sandbox runs inside the session's container (lib/sandbox.ts) —
+ * a headless Chromium behind the same egress proxy, never the owner's Chrome. Allowed with desktop "own" (and
+ * "shared"), denied with "none".
+ */
+export const OWN_BROWSER_MCP = ['mcp__playwright__*'];
+/**
+ * In a sandbox the host's own browser / screen tools would act OUTSIDE the container (a Chrome and a desktop terminal
+ * on the host, with the host's network): a sandboxed session gets its browser inside its container instead.
+ */
+export const HOST_SIDE_DESKTOP_TOOLS = [...SCREEN_TOOLS, ...FAMILIES.browser];
+
+/** Whether the host runs this session in a sandbox — wired by the host (claude.js → lib/sandbox.ts isSandboxed). */
+let sandboxedCheck: ((s: { profile?: unknown }) => boolean) | null = null;
+export const setSandboxedCheck = (fn: ((s: { profile?: unknown }) => boolean) | null) => { sandboxedCheck = fn; };
+
 /** The tools a profile's flags take away, whatever its allowlist says (they beat CORE_TOOLS too). */
-export function deniedByFlags(p: SessionProfile): string[] {
+export function deniedByFlags(p: SessionProfile, opts: { sandboxed?: boolean } = {}): string[] {
   const out = new Set<string>([...NEVER_TOOLS, ...ENGINE_NATIVE_SCHEDULING]);
+  if (p.desktop === 'none') for (const t of OWN_BROWSER_MCP) out.add(t);
+  if (opts.sandboxed) for (const t of HOST_SIDE_DESKTOP_TOOLS) out.add(t);
   if (p.desktop === 'none') for (const t of [...SCREEN_TOOLS, ...SHARED_TOOLS, ...FAMILIES.browser]) out.add(t);
   if (p.desktop === 'own') for (const t of SHARED_TOOLS) out.add(t);
   if (!p.maySpawn) out.add('create_session');
@@ -410,9 +428,11 @@ export function deniedByFlags(p: SessionProfile): string[] {
 export const FLAG_TOOLS = [...new Set([...SCREEN_TOOLS, ...SHARED_TOOLS, ...FAMILIES.browser, 'create_session', ...FAMILIES.triggers, ...Object.values(HOST_ROUTE_GROUPS).flat()])];
 
 /** The profile as A3 policy layers (every one must allow). */
-export function profilePolicies(p: SessionProfile): Policy[] {
-  const flags: Policy = { slug: `profile:${p.name}`, tools: null, domains: null, autoApprove: [], deny: deniedByFlags(p) };
-  return [flags, ...p.layers.map((l) => ({ slug: `profile:${l.name}`, tools: l.tools ? [...l.tools, ...FLAG_TOOLS] : null, domains: l.domains, autoApprove: [] }))];
+export function profilePolicies(p: SessionProfile, opts: { sandboxed?: boolean } = {}): Policy[] {
+  const flags: Policy = { slug: `profile:${p.name}`, tools: null, domains: null, autoApprove: [], deny: deniedByFlags(p, opts) };
+  // the flags layer decides the own browser too: an allowlist layer does not have to name it
+  const flagTools = p.desktop === 'none' ? FLAG_TOOLS : [...FLAG_TOOLS, ...OWN_BROWSER_MCP];
+  return [flags, ...p.layers.map((l) => ({ slug: `profile:${l.name}`, tools: l.tools ? [...l.tools, ...flagTools] : null, domains: l.domains, autoApprove: [] }))];
 }
 
 /**
@@ -423,7 +443,7 @@ export function policyForSession(s: { metadata?: Record<string, unknown> | null;
   const slug = typeof s?.metadata?.agent === 'string' && s.metadata.agent ? (s.metadata.agent as string) : null;
   const agentPolicy = policyFor(slug);
   if (!s?.profile) return agentPolicy;
-  const layers = profilePolicies(s.profile);
+  const layers = profilePolicies(s.profile, { sandboxed: !!sandboxedCheck?.(s) });
   if (!agentPolicy) {
     const [head, ...rest] = layers;
     return { ...head, and: rest };
