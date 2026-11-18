@@ -19,7 +19,7 @@ import path from 'node:path';
 import { ARIGAMI_DIR } from './lib/instance.js';
 import type { ProfileLimits, SessionProfile } from './session-profile.js';
 
-type S = { id: string; engine?: string; archived?: boolean; title?: string; profile?: SessionProfile | null; claude?: { state?: string; model?: string | null; modelChoice?: string | null } | null };
+type S = { id: string; engine?: string; archived?: boolean; title?: string; metadata?: Record<string, unknown> | null; profile?: SessionProfile | null; claude?: { state?: string; model?: string | null; modelChoice?: string | null } | null };
 
 export interface LimitsDeps {
   getSession(id: string): S | null;
@@ -166,6 +166,13 @@ function trip(root: string, why: string, sessions: number): void {
   try { fs.appendFileSync(path.join(ARIGAMI_DIR, 'profile-limits.jsonl'), JSON.stringify(alert) + '\n'); } catch {}
   console.warn(`[limits] spend cap tripped: tree ${root} (profile ${profile}, ${sessions} session(s)): ${why}`);
   try { d.notify({ title: 'Restricted sessions stopped: spend cap', body: `${rootS?.title || root} (profile ${profile}): ${why}. ${sessions} session(s) stopped.`, tag: `spend-cap-${root}`, sessionId: root }); } catch {}
+  // The session that started the tree, when it is not restricted itself (a person's / a controller's Full session),
+  // gets the alert in its own chat too — as a line, not a turn.
+  const starter = (rootS?.profile?.parent as string | null) || (typeof rootS?.metadata?.master === 'string' ? (rootS.metadata.master as string) : null);
+  const st = starter ? d.getSession(starter) : null;
+  if (st && !st.profile) {
+    try { d.appendChat(st.id, { kind: 'error', text: `[host] alert: the restricted session tree "${rootS?.title || root}" (profile ${profile}) hit its spend cap — ${why}. ${sessions} session(s) stopped.`, isError: true, budget: true, alert: 'spend-cap', root }); } catch {}
+  }
 }
 
 

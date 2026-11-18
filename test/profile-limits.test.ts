@@ -91,6 +91,15 @@ describe('concurrency queue and spend trip', () => {
     expect(a.ok === false && a.queued === false && a.error.status).toBe(429);
     expect(lim.admit('other')).toEqual({ ok: true });
   });
+  test('the Full session that started a tripped tree gets the alert line too; a restricted one does not get it twice', () => {
+    sessions.set('owner', { id: 'owner', claude: { state: 'idle' } });
+    add('r', null, { spendUsd: 1 });
+    sessions.get('r')!.metadata = { master: 'owner' };
+    lim.noteResult('r', 2);
+    expect(chat.owner?.[0]?.budget).toBe(true);
+    expect(chat.owner[0].text).toMatch(/hit its spend cap/);
+    expect(notes.length).toBe(1);
+  });
   test("a message's repeated usage (one event per content block) counts once; the engine's figure replaces the estimate", () => {
     add('r', null, { spendUsd: 100 });
     for (let i = 0; i < 5; i++) lim.noteUsage('r', { output_tokens: 1000 }, 'msg-1');
