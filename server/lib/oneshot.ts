@@ -24,7 +24,7 @@ import { tokenForSession, getActiveId, hasCredentials, codexAuthPathFor, claudeB
 import { claudeBin } from './claude-bin.js';
 import { cfg, defaultEngine } from './config.js';
 import { auth } from '../auth.js';
-import { restrictedEnv } from '../session-profile.js';
+import { restrictedEnv } from './session-env.js';
 
 const baseEnv = (): NodeJS.ProcessEnv => claudeBaseEnv();
 

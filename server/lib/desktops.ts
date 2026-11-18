@@ -29,7 +29,7 @@ import { subscribe } from '../bus.js';
 import { ARIGAMI_DIR } from './instance.js';
 import * as state from '../state.js';
 import { auth } from '../auth.js';
-import { spawnEnvFor } from '../session-profile.js';
+import { spawnEnvFor } from './session-env.js';
 import { sweepShm, shmHeadroom, reapShmOf, X11VNC_SHM_NEED } from './shm-sweep.js';
 
 export interface DesktopInfo {
