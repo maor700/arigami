@@ -13,7 +13,10 @@ import { spawn } from 'node:child_process';
 import * as infra from './sandbox-infra.js';
 import type { LaunchSpec } from './sandbox.js';
 
+let ephemeral: string[] = [];
+const dropEphemeral = () => { for (const f of ephemeral) try { fs.rmSync(f, { force: true }); } catch {} };
 const fail = (msg: string): never => {
+  dropEphemeral();
   process.stderr.write(`sandbox: ${msg}\n`);
   process.exit(1);
 };
@@ -27,6 +30,7 @@ try {
   fail(`unreadable launch spec: ${(e as Error).message}`);
 }
 try { fs.rmSync(specFile, { force: true }); } catch {}
+ephemeral = spec!.ephemeral || [];
 if (spec!.error) fail(spec!.error);
 const S = spec!;
 const D = S.infra.docker;
@@ -75,6 +79,7 @@ const cleanup = () => {
   const id = readCid();
   for (const f of [envFile, cidFile]) try { fs.rmSync(f, { force: true }); } catch {}
   if (id) infra.docker(D, ['rm', '-f', id], 20_000);
+  dropEphemeral(); // the staged credential of THIS run (unique name: a restart's new copy is untouched)
 };
 
 // A previous run of the same session that did not go away.

@@ -152,7 +152,14 @@ export function pathTokens(s: string): string[] {
  * code / user skills the argv names. Nothing else of the host — and never an ancestor of $HOME, $ARIGAMI_DIR or the
  * checkout.
  */
-export function planMounts(i: PlanInput, fsx: PlanFs): { mounts: Mount[]; refused?: string } {
+export interface CredentialLink {
+  /** The account's login file the link resolves to (host side — read once to stage a copy, never mounted). */
+  source: string;
+  /** Where the engine looks for it inside the container (the link's own target path). */
+  target: string;
+}
+
+export function planMounts(i: PlanInput, fsx: PlanFs): { mounts: Mount[]; codexAuth?: CredentialLink; refused?: string } {
   const mounts = new Map<string, Mount>();
   const add = (host: string, target: string, ro: boolean) => {
     const prev = mounts.get(target);
@@ -182,13 +189,15 @@ export function planMounts(i: PlanInput, fsx: PlanFs): { mounts: Mount[]; refuse
   const scratch = own(i.env.TMPDIR, 'scratch');
   if (scratch) add(scratch, scratch, false);
   const codexHome = own(i.env.CODEX_HOME, 'codex');
+  let codexAuth: CredentialLink | undefined;
   if (codexHome) {
     add(codexHome, codexHome, false);
-    // its auth.json is a link to the account's login file: that one file, so the engine can refresh it
+    // Its auth.json links to the account's login file (often under the owner's home). That file is NEVER mounted:
+    // the caller stages a minimal read-only copy under $ARIGAMI_DIR and mounts it at the link's target.
     for (const [link, target] of fsx.links(codexHome)) {
       if (path.basename(link) !== 'auth.json') continue;
       const real = fsx.realpath(link);
-      if (real) add(real, target, false); // the model credential the engine holds anyway (until the model proxy)
+      if (real) codexAuth = { source: real, target };
     }
   }
   // 3. read-only code / skills the argv and env name
@@ -234,7 +243,7 @@ export function planMounts(i: PlanInput, fsx: PlanFs): { mounts: Mount[]; refuse
   // 4. its own HOME
   const h = path.join(i.arigamiDir, 'sandbox', 'sessions', i.sessionId, 'home');
   add(h, h, false);
-  return { mounts: [...mounts.values()].sort((a, b) => a.target.length - b.target.length) };
+  return { mounts: [...mounts.values()].sort((a, b) => a.target.length - b.target.length), ...(codexAuth ? { codexAuth } : {}) };
 }
 
 const realFs: PlanFs = {
@@ -282,7 +291,50 @@ export interface LaunchSpec {
   mounts: { source: string; target: string; ro: boolean }[];
   forwardPort: number;
   limits: { memory: string; cpus: string; pids: number };
+  /** Host files that exist only for this run (the staged credential) — the launcher removes them when it ends. */
+  ephemeral?: string[];
   error?: string;
+}
+
+/** The engine credentials in the env each engine may keep; the other engine's never enter its container. */
+export const ENGINE_ENV_CREDENTIALS: Record<string, string[]> = {
+  claude: ['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY'],
+  codex: ['OPENAI_API_KEY'],
+};
+const ALL_ENV_CREDENTIALS = [...new Set(Object.values(ENGINE_ENV_CREDENTIALS).flat())];
+
+/**
+ * A codex login (auth.json) reduced to what a turn needs: the API key or the access/id token and account id. The
+ * refresh token — the long-lived half — never enters a sandbox: the host keeps the login fresh and every spawn
+ * stages a new copy. null = not a codex login.
+ */
+export function minimalCodexAuth(raw: unknown): Record<string, unknown> | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const a = raw as Record<string, any>;
+  const out: Record<string, unknown> = {};
+  if (typeof a.auth_mode === 'string') out.auth_mode = a.auth_mode;
+  if ('OPENAI_API_KEY' in a) out.OPENAI_API_KEY = typeof a.OPENAI_API_KEY === 'string' ? a.OPENAI_API_KEY : null;
+  if (a.tokens && typeof a.tokens === 'object') {
+    const t: Record<string, unknown> = {};
+    for (const k of ['id_token', 'access_token', 'account_id']) if (typeof a.tokens[k] === 'string') t[k] = a.tokens[k];
+    // codex's login schema requires the field: it stays, EMPTY — the refresh token itself never leaves the host
+    if (Object.keys(t).length) out.tokens = { ...t, refresh_token: '' };
+  }
+  if (typeof a.last_refresh === 'string') out.last_refresh = a.last_refresh;
+  return out.tokens || typeof out.OPENAI_API_KEY === 'string' ? out : null;
+}
+
+/** Stage the minimal copy under the session's own sandbox dir (unique per launch, 0400). Returns its path or null. */
+function stageCodexAuth(sessionId: string, source: string): string | null {
+  let raw: unknown;
+  try { raw = JSON.parse(fs.readFileSync(source, 'utf8')); } catch { return null; }
+  const min = minimalCodexAuth(raw);
+  if (!min) return null;
+  const dir = path.join(SANDBOX_DIR(), 'sessions', sessionId, 'cred');
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const f = path.join(dir, `codex-auth.${crypto.randomBytes(4).toString('hex')}.json`);
+  fs.writeFileSync(f, JSON.stringify(min), { mode: 0o400 });
+  return f;
 }
 
 const secretOf = (key: string, sessionId: string) => crypto.createHmac('sha256', key).update(sessionId).digest('base64url').slice(0, 32);
@@ -370,6 +422,17 @@ export function launchSpec(s: { id: string; profile: { name?: string; egress?: s
   const workAreas = [cfg.reposDir, path.join(ARIGAMI_DIR, 'workspace'), path.join(ARIGAMI_DIR, 'repos'), path.join(ARIGAMI_DIR, 'worktrees')].filter(Boolean).map((p) => path.resolve(p));
   const plan = planMounts({ sessionId: s.id, cwd: built.cwd, args: built.args, env, root, arigamiDir: ARIGAMI_DIR, home: HOME, workAreas }, realFs);
   if (plan.refused) return { ...base, argv: [], env: {}, mounts: [], error: plan.refused };
+  // Only this engine's own credential: the other engine's env key never enters the container.
+  const keepCred = ENGINE_ENV_CREDENTIALS[engineId] || [];
+  for (const k of ALL_ENV_CREDENTIALS) if (!keepCred.includes(k)) delete env[k];
+  const ephemeral: string[] = [];
+  const extraMounts: Mount[] = [];
+  if (engineId === 'codex' && plan.codexAuth) {
+    const staged = stageCodexAuth(s.id, plan.codexAuth.source);
+    if (!staged) return { ...base, argv: [], env: {}, mounts: [], error: `the codex login (${plan.codexAuth.source}) is unreadable or has no token — sign codex in again` };
+    ephemeral.push(staged);
+    extraMounts.push({ host: staged, target: plan.codexAuth.target, ro: true });
+  }
   const home = sessionHome(s.id);
   fs.mkdirSync(home, { recursive: true, mode: 0o700 });
   seedGitIdentity(home);
@@ -392,7 +455,8 @@ export function launchSpec(s: { id: string; profile: { name?: string; egress?: s
     ...base,
     argv: [engine, ...built.args],
     env,
-    mounts: plan.mounts.map((m) => ({ source: daemonPath(m.host), target: m.target, ro: m.ro })),
+    mounts: [...plan.mounts, ...extraMounts].map((m) => ({ source: daemonPath(m.host), target: m.target, ro: m.ro })),
+    ...(ephemeral.length ? { ephemeral } : {}),
   };
 }
 
@@ -458,6 +522,9 @@ export async function startSandbox(deps: ListenerDeps, log: (m: string) => void 
     // launch specs / env files a launcher that died early left behind (they hold a session's env)
     const run = path.join(SANDBOX_DIR(), 'run');
     for (const f of fs.existsSync(run) ? fs.readdirSync(run) : []) try { fs.rmSync(path.join(run, f), { force: true }); } catch {}
+    // credentials staged for containers the previous run left (all of them are removed just below)
+    const sessDir = path.join(SANDBOX_DIR(), 'sessions');
+    for (const sid of fs.existsSync(sessDir) ? fs.readdirSync(sessDir) : []) try { fs.rmSync(path.join(sessDir, sid, 'cred'), { recursive: true, force: true }); } catch {}
     const gone = infra.removeContainers(spec.docker, infra.sessionContainers(spec));
     if (gone) log(`[sandbox] removed ${gone} session container(s) left from the previous run`);
     infra.withLock(egressDir(), () => infra.ensureNetworks(spec));

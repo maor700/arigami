@@ -84,7 +84,8 @@ destinations, and allowed ones with the session that used them.
 |---|---|---|
 | the session's repo top level (its cwd) and the repo's git common dir | rw | the work; commits in a worktree |
 | `$ARIGAMI_DIR/scratch/<id>` (`TMPDIR`) | rw | its scratch |
-| `$ARIGAMI_DIR/codex/<id>` + the file its `auth.json` links to | rw | codex home; the engine refreshes its login |
+| `$ARIGAMI_DIR/codex/<id>` | rw | codex home (config, rollouts) |
+| `$ARIGAMI_DIR/sandbox/sessions/<id>/cred/codex-auth.<run>.json` → the path `auth.json` links to | ro | codex sessions only: the staged login, see below |
 | `$ARIGAMI_DIR/sandbox/sessions/<id>/home` (`HOME`, same path inside) | rw | engine state, its transcript; git author name/email only |
 | `<checkout>/{.claude-plugin,skills,docs,mcp,mods,…}`, `$ARIGAMI_DIR/{user-plugin,skills,ext-plugin}` | ro | what the argv/env name: plugin dirs, skills, the policy hook |
 | `<checkout>/docker/sandbox` → `/opt/arigami-sandbox` | ro | the in-container init |
@@ -94,8 +95,33 @@ outside `repos`/`workspace`/`worktrees`/`reposDir`. In those cases the session a
 repo's `.git/config` is in the work tree: credentials embedded in a remote URL there would be visible. Keep remotes
 token-free; restricted sessions push through the gatekeeper.
 
-The engine credential (`CLAUDE_CODE_OAUTH_TOKEN`, or the codex `auth.json`) is the one secret still inside. Removing it
-is the model-call proxy (`extensions/gatekeeper/README.md` § Model calls).
+## The engine credential: the one secret inside
+
+A sandboxed engine still calls its model API itself, so it holds that engine's credential. It holds nothing else, and
+nothing of the other engine. This is the one secret left inside a sandbox. Removing it is the model-call proxy
+(`extensions/gatekeeper/README.md` § Model calls), not built yet.
+
+- **claude**
+  - `CLAUDE_CODE_OAUTH_TOKEN` (an OAuth access token from the accounts pool) or `ANTHROPIC_API_KEY`, in the
+    container's env.
+  - It reaches docker through a 0600 env file that is removed as soon as the container exists. It never appears on a
+    command line, and the launcher process does not carry it.
+  - The refresh side of an OAuth login stays in the host's accounts store, which is never mounted.
+- **codex**
+  - The account's `auth.json` usually lives in the owner's home, and it is **never mounted**.
+  - At every launch the host stages a minimal copy at `$ARIGAMI_DIR/sandbox/sessions/<id>/cred/codex-auth.<run>.json`
+    (0400). The copy holds the API key, or the id/access token and account id, with `refresh_token` present but
+    **empty**.
+  - The copy is mounted **read-only** where the session's `auth.json` link points.
+  - The long-lived refresh token stays with the host, which keeps the login fresh. A respawn stages a new copy.
+  - The launcher deletes the copy when its container ends, and a host start sweeps leftovers.
+  - Because every source is under `$ARIGAMI_DIR`, a docker gate needs no prefix in the owner's home.
+- **Neither engine gets the other's credential.** Every engine credential the other engine uses
+  (`OPENAI_API_KEY` vs `CLAUDE_CODE_OAUTH_TOKEN` / `ANTHROPIC_API_KEY`) is removed from its env, and only a codex
+  session gets the staged login.
+
+The consequence for codex: it cannot refresh its own login inside the sandbox. If the access token expires during a
+long run, the turn fails with 401. The next spawn picks up the host's refreshed login.
 
 ## Concurrency and spend caps (S15)
 

@@ -60,9 +60,13 @@ describe('planMounts: only what the session needs', () => {
       expect(t.startsWith(`${ADIR}/gatekeeper`) || t === `${ADIR}/accounts.json`).toBe(false);
     }
   });
-  test("codex home's auth.json link: that one file, read-write (the engine refreshes it)", () => {
-    expect(m[`${HOMEDIR}/.codex/auth.json`]).toBe('rw');
-    expect(Object.keys(m).some((t) => t === `${HOMEDIR}/.codex`)).toBe(false);
+  test("codex home's auth.json link: the account file is NOT mounted — it is reported for staging, at the link's target", () => {
+    expect(m[`${HOMEDIR}/.codex/auth.json`]).toBeUndefined();
+    expect(plan.mounts.some((x) => x.host.startsWith(`${HOMEDIR}/`) && !x.host.startsWith(`${ADIR}/`))).toBe(false);
+    expect(plan.codexAuth).toEqual({ source: `${HOMEDIR}/.codex/auth.json`, target: `${HOMEDIR}/.codex/auth.json` });
+  });
+  test('every mount source of a session lives under $ARIGAMI_DIR or the checkout (a gate with those prefixes admits it)', () => {
+    for (const x of plan.mounts) expect(x.host.startsWith(`${ADIR}/`) || x.host.startsWith(`${ROOT}/`)).toBe(true);
   });
   test('an extension mod passed as a plugin dir is mounted read-only; a plugin dir that would expose the state dir is not', () => {
     files.add(`${ROOT}/extensions/gk/mods/m1`);
@@ -145,5 +149,27 @@ describe('names and paths', () => {
     expect(sbx.pathTokens(`bun "${ROOT}/mcp/policy-hook.js"`)).toEqual([`${ROOT}/mcp/policy-hook.js`]);
     expect(sbx.pathTokens('--model')).toEqual([]);
     expect(path.isAbsolute(sbx.pathTokens('http://127.0.0.1:1/__mcp/s/arigami')[0] || '/')).toBe(true);
+  });
+});
+
+describe('engine credentials in the sandbox', () => {
+  const login = {
+    auth_mode: 'chatgpt', OPENAI_API_KEY: null, last_refresh: '2026-11-18T00:00:00Z',
+    tokens: { id_token: 'ID', access_token: 'AT', refresh_token: 'RT-LONG-LIVED', account_id: 'acct' }, extra: { anything: 1 },
+  };
+  test('a codex login is staged minimal: no refresh token, nothing unknown', () => {
+    const m = sbx.minimalCodexAuth(login)!;
+    expect(m).toEqual({ auth_mode: 'chatgpt', OPENAI_API_KEY: null, last_refresh: '2026-11-18T00:00:00Z', tokens: { id_token: 'ID', access_token: 'AT', account_id: 'acct', refresh_token: '' } });
+    expect(JSON.stringify(m)).not.toContain('RT-LONG-LIVED');
+  });
+  test('an API-key login keeps the key; something with neither token nor key stages nothing', () => {
+    expect(sbx.minimalCodexAuth({ OPENAI_API_KEY: 'sk-x' })).toEqual({ OPENAI_API_KEY: 'sk-x' });
+    expect(sbx.minimalCodexAuth({ auth_mode: 'chatgpt' })).toBe(null);
+    expect(sbx.minimalCodexAuth('nope')).toBe(null);
+  });
+  test("each engine keeps only its own env credential", () => {
+    expect(sbx.ENGINE_ENV_CREDENTIALS.claude).not.toContain('OPENAI_API_KEY');
+    expect(sbx.ENGINE_ENV_CREDENTIALS.codex).not.toContain('CLAUDE_CODE_OAUTH_TOKEN');
+    expect(sbx.ENGINE_ENV_CREDENTIALS.codex).not.toContain('ANTHROPIC_API_KEY');
   });
 });
