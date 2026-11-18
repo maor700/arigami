@@ -169,6 +169,11 @@ only on an operator's word in the session's own thread, verified by the message 
 — for a merge — under the auto-rule (CI green + an approving review on the head commit). Every decision is audit-logged
 (`$ARIGAMI_DIR/gatekeeper/audit.log`). Until the isolation step, the same-user limit above applies to its store too.
 
+**Wake-ups.** `triggers` is `false`, `"own-thread"` or `true` (narrowing takes the lower). `"own-thread"` allows only a
+Slack listener on the session's own recorded thread (`metadata.origin` — host-protected; set by the session's creator, or
+recorded once by an extension holding the `session:origin` permission through the MCP gateway), on itself; cron and any
+other listener are refused with the reason. Listeners end with their session (archive or delete).
+
 ## Reporting
 
 Open a private security advisory on the repository, or contact the maintainer

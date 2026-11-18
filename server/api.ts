@@ -7254,9 +7254,22 @@ export async function handle(
     if (sub === 'listeners' && m === 'POST') {
       const body = (await readBody(req)) as any;
       // Restricted run mode: a listener only ever wakes its own session; it does not move it into a folder.
-      if (restrictedCaller(req)) {
+      const rmeL = restrictedCaller(req);
+      if (rmeL) {
         delete body.folderId;
         delete body.folderName;
+        // triggers:'own-thread' — only a Slack listener on the session's own recorded thread (session-profile.ts).
+        const prof = (state.getSession(rmeL.id) as any)?.profile;
+        if (prof && prof.triggers !== true) {
+          let target: { channelId: string; threadTs?: string } | null = null;
+          try {
+            target = (await import('./listeners.js')).parseSlackTarget(body);
+          } catch {
+            target = null;
+          }
+          const why = profiles.ownThreadListenerRefusal(prof, body, target, profiles.originThreadOf(rmeL.id, (x) => state.getSession(x) as any));
+          if (why) return json(res, { error: why }, 403);
+        }
       }
       const type = body.type || 'github-pr';
       const core = type === 'github-pr' || type === 'linear-issue' || type === 'slack' || type === 'whatsapp' || type === 'sms' || type === 'host-load';

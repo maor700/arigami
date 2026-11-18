@@ -74,6 +74,17 @@ parent's. It is made, in this order:
 A session started by a listener event is an existing session woken up, so (2) covers it; a session born of a cron
 run or a dispatch has no Slack origin unless its creator records one.
 
+### Waking up on the thread (`triggers: "own-thread"`)
+
+A profile's `triggers` is `false`, `"own-thread"` or `true`. `"own-thread"` lets a session arm exactly one kind of
+listener: a Slack listener on **its own recorded thread** (`metadata.origin`, its own or its nearest ancestor's), on
+itself — it wakes only that session and, like every listener, ends when the session is archived or deleted. Cron (the
+host's and the CLI's own), other threads, whole channels and every other listener type are refused with the reason.
+The host is the judge (`server/session-profile.ts ownThreadListenerRefusal`); the gatekeeper hands it the thread: when
+it binds a session that has no origin yet, its tool result carries `_meta.arigami/origin`, and the MCP gateway — for an
+extension with the `session:origin` permission — records it once as `metadata.origin` (never changed afterwards, never
+shown to the model).
+
 ### Who is a person in Slack
 
 A message is a bot's only when Slack marks it so: a `bot_id`, or subtype `bot_message`. A message whose `user` is an
@@ -134,7 +145,7 @@ because OAuth subscription tokens need care with the provider's terms; it is a f
 
 ```json
 { "tools": ["git", "ext:gatekeeper"], "hostTools": ["task_session", "send_message", "list_sessions", "delete_session", "restart_session"],
-  "desktop": "none", "talkTo": ["parent", "children"], "maySpawn": true, "triggers": false, "hostRoutes": [],
+  "desktop": "none", "talkTo": ["parent", "children"], "maySpawn": true, "triggers": "own-thread", "hostRoutes": [],
   "grants": ["gatekeeper:slack.read", "gatekeeper:slack.post", "gatekeeper:github.read", "gatekeeper:github.push",
              "gatekeeper:github.pr", "gatekeeper:github.review", "gatekeeper:github.merge", "gatekeeper:linear.read",
              "gatekeeper:linear.write", "gatekeeper:sentry.read", "gatekeeper:sentry.note", "gatekeeper:sentry.resolve",

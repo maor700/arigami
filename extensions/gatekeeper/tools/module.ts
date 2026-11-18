@@ -58,6 +58,10 @@ async function gated(tool: string, action: string | null, ctx: Ctx, target: stri
   try {
     const out = await body({ caller, cfg: S.readConfig() }, deny, (a) => (approval = a));
     S.audit({ ...base, decision: 'allowed', ...(approval ? { approval } : {}), result: summary(out) });
+    // The session's thread is bound here but the host has no record of it yet: hand it over once (manifest permission
+    // session:origin; the gateway records metadata.origin, which the host uses for a triggers:'own-thread' listener).
+    const b = bindingFor(caller);
+    if (b && !caller.origin && out && typeof out === 'object' && !Array.isArray(out)) return { ...(out as object), _meta: { 'arigami/origin': { channel: b.channel, thread_ts: b.thread_ts } } };
     return out;
   } catch (e) {
     if (e instanceof Deny) {

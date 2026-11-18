@@ -167,10 +167,17 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
     }
   }
   try {
-    const result = await tool.run(req.params.arguments || {}, callCtx);
+    let result = await tool.run(req.params.arguments || {}, callCtx);
+    // A tool may hand the HOST something besides its answer: `{ ..., _meta: {...} }` leaves the text and rides as the
+    // MCP result's _meta, which only the host's gateway reads (e.g. `arigami/origin`, see server/lib/mcp-gateway.ts).
+    let meta;
+    if (SHARED && result && typeof result === 'object' && !Array.isArray(result) && result._meta && typeof result._meta === 'object') {
+      ({ _meta: meta, ...result } = result);
+    }
     return {
       content: [{ type: 'text', text: typeof result === 'string' ? result : JSON.stringify(result ?? { ok: true }) }],
       ...(reportsError(result) ? { isError: true } : {}),
+      ...(meta ? { _meta: meta } : {}),
     };
   } catch (e) {
     return { content: [{ type: 'text', text: `error: ${e?.message || e}` }], isError: true };

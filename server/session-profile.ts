@@ -11,7 +11,8 @@
 //                after a person allows it on a card);
 //   - talkTo     parent / children — whom it may message (send_message, task_session, report_to_master);
 //   - maySpawn   whether it may create sessions (always its own children, always inheriting this profile);
-//   - triggers   whether it may create cron triggers and listeners;
+//   - triggers   whether it may create cron triggers and listeners: false | 'own-thread' (one Slack listener kind,
+//                only on the session's own recorded thread — metadata.origin — waking only itself) | true;
 //   - hostRoutes the host route groups it may reach besides its own session (memory, setup, agents…);
 //   - grants     actions an extension performs FOR the session (`<ext>:<action>`, e.g. a gatekeeper's
 //                `gatekeeper:github.push`). The host only stores and narrows them; the extension reads them from the
@@ -34,6 +35,11 @@ import { ARIGAMI_DIR } from './lib/instance.js';
 import { FAMILIES, expandTools, policyFor, type Policy } from './agent-policy.js';
 
 export type DesktopMode = 'none' | 'own' | 'shared';
+/** false = none; 'own-thread' = a Slack listener on the session's own recorded thread only; true = cron + listeners. */
+export type Triggers = boolean | 'own-thread';
+const TRIGGERS_RANK = (t: Triggers | undefined): number => (t === true ? 2 : t === 'own-thread' ? 1 : 0);
+const TRIGGERS_OF = [false, 'own-thread', true] as const;
+export const triggersOf = (v: unknown): Triggers => (v === true ? true : v === 'own-thread' ? 'own-thread' : false);
 export type TalkTo = 'parent' | 'children';
 
 export const DESKTOP_MODES: readonly DesktopMode[] = ['none', 'own', 'shared'];
@@ -61,7 +67,7 @@ export interface ProfileSpec {
   desktop?: DesktopMode;
   talkTo?: TalkTo[];
   maySpawn?: boolean;
-  triggers?: boolean;
+  triggers?: Triggers;
   hostRoutes?: string[];
   /** Extension action grants (`<ext>:<action>`); absent = none. Narrowing intersects them. */
   grants?: string[];
@@ -80,7 +86,7 @@ export interface SessionProfile {
   desktop: DesktopMode;
   talkTo: TalkTo[];
   maySpawn: boolean;
-  triggers: boolean;
+  triggers: Triggers;
   hostRoutes: string[];
   /** Extension action grants (see ProfileSpec.grants). Absent on profiles stored before grants existed = none. */
   grants?: string[];
@@ -126,7 +132,7 @@ export function normalizeSpec(spec: ProfileSpec, fallbackName = 'restricted'): R
     desktop,
     talkTo,
     maySpawn: spec.maySpawn === true,
-    triggers: spec.triggers === true,
+    triggers: triggersOf(spec.triggers),
     hostRoutes,
     grants,
   };
@@ -157,7 +163,7 @@ export function narrow(base: SessionProfile | null, by: SessionProfile | Profile
     desktop: DESKTOP_RANK[other.desktop] < DESKTOP_RANK[base.desktop] ? other.desktop : base.desktop,
     talkTo: base.talkTo.filter((t) => other.talkTo.includes(t)),
     maySpawn: base.maySpawn && other.maySpawn,
-    triggers: base.triggers && other.triggers,
+    triggers: TRIGGERS_OF[Math.min(TRIGGERS_RANK(base.triggers), TRIGGERS_RANK(other.triggers))],
     hostRoutes: base.hostRoutes.filter((g) => other.hostRoutes.includes(g)),
     grants: grantsOf(base).filter((g) => grantsOf(other).includes(g)),
     parent,
@@ -174,7 +180,7 @@ export function isWithin(child: SessionProfile | null, parent: SessionProfile | 
     DESKTOP_RANK[child.desktop] <= DESKTOP_RANK[parent.desktop] &&
     child.talkTo.every((t) => parent.talkTo.includes(t)) &&
     (!child.maySpawn || parent.maySpawn) &&
-    (!child.triggers || parent.triggers) &&
+    TRIGGERS_RANK(child.triggers) <= TRIGGERS_RANK(parent.triggers) &&
     child.hostRoutes.every((g) => parent.hostRoutes.includes(g)) &&
     grantsOf(child).every((g) => grantsOf(parent).includes(g))
   );
@@ -316,7 +322,9 @@ export function deniedByFlags(p: SessionProfile): string[] {
   if (p.desktop === 'none') for (const t of [...SCREEN_TOOLS, ...SHARED_TOOLS, ...FAMILIES.browser]) out.add(t);
   if (p.desktop === 'own') for (const t of SHARED_TOOLS) out.add(t);
   if (!p.maySpawn) out.add('create_session');
-  if (!p.triggers) for (const t of FAMILIES.triggers) if (t !== 'list_listeners' && t !== 'cancel_listener') out.add(t);
+  // 'own-thread' keeps register_listener (the host then allows only a Slack listener on the session's own thread);
+  // cron — the host's and the CLI's own — stays out.
+  if (p.triggers !== true) for (const t of FAMILIES.triggers) if (t !== 'list_listeners' && t !== 'cancel_listener' && !(p.triggers === 'own-thread' && t === 'register_listener')) out.add(t);
   for (const [g, tools] of Object.entries(HOST_ROUTE_GROUPS)) if (!p.hostRoutes.includes(g)) for (const t of tools) out.add(t);
   return [...out];
 }
@@ -461,6 +469,37 @@ export function scopeRefusal(callerId: string, method: string, pathname: string,
   const t = hostRouteTool(m, pathname);
   if (t && allowed(t)) return null;
   return no(`${m} ${pathname} is not in its profile`);
+}
+
+/** A session's recorded thread: its own `metadata.origin`, else its nearest ancestor's (host-recorded parents). */
+export function originThreadOf(id: string, getSession: (id: string) => { profile?: SessionProfile | null; metadata?: Record<string, unknown> | null } | null): { channel: string; thread_ts: string } | null {
+  const seen = new Set<string>();
+  for (let cur: string | null = id; cur && !seen.has(cur) && seen.size < 32; ) {
+    seen.add(cur);
+    const s = getSession(cur);
+    const o = s?.metadata?.origin as { kind?: string; channel?: string; thread_ts?: string } | undefined;
+    if (o && (o.kind === undefined || o.kind === 'slack') && o.channel && o.thread_ts) return { channel: String(o.channel), thread_ts: String(o.thread_ts) };
+    cur = s?.profile?.parent ?? null;
+  }
+  return null;
+}
+
+/**
+ * triggers:'own-thread' — the only listener such a session may arm: a Slack listener on its OWN recorded thread
+ * (originThreadOf), on itself. Anything else is refused with the reason. (It dies with the session like every listener.)
+ * null = allowed.
+ */
+export function ownThreadListenerRefusal(p: SessionProfile, body: Record<string, unknown>, target: { channelId: string; threadTs?: string } | null, own: { channel: string; thread_ts: string } | null): string | null {
+  const no = (what: string) => `restricted session (profile "${p.name}", triggers: own-thread): ${what}`;
+  if (p.triggers === true) return null;
+  if (p.triggers !== 'own-thread') return no('no listeners or cron jobs');
+  const type = String(body.type || 'github-pr');
+  if (type !== 'slack') return no(`only a Slack listener on its own incident thread — not a "${type}" listener`);
+  if (!own) return no('this session has no recorded incident thread (its creator sets metadata.origin, or the gatekeeper records it when the thread is bound)');
+  if (!target) return no('name the thread: channel_id + thread_ts');
+  if (target.channelId !== own.channel || target.threadTs !== own.thread_ts)
+    return no(`only its own incident thread ${own.channel}/${own.thread_ts} — not ${target.channelId}/${target.threadTs || '(whole channel)'}`);
+  return null;
 }
 
 /** May restricted `from` deliver a message to `to`? (send_message / task_session / a cron 'existing:' target) */
