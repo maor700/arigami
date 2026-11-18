@@ -378,9 +378,20 @@ export const SHARED_TOOLS = [
 /** Never for a restricted session: they change the host, an agent, or another session's standing. */
 export const NEVER_TOOLS = ['host_restart', 'create_agent', 'update_agent', 'permission_prompt_answer'];
 
+/**
+ * Engine-NATIVE scheduling and remote execution — tools the CLI itself ships that schedule work or run it somewhere the
+ * host does not see: Claude Code's cloud routines (RemoteTrigger), its session cron (CronCreate/Delete/List) and its
+ * self-paced wake-ups (ScheduleWakeup). Denied for EVERY restricted profile, whatever `triggers` says: a restricted
+ * session's only wake-ups are the host's own (cron triggers, listeners), which the profile governs and the host can see.
+ * Codex ships no such model tool (its built-ins are shell, apply_patch, update_plan, view_image, web_search), so there is
+ * no codex name to add; the same names are denied for a codex session by the shared PreToolUse hook all the same.
+ * An explicit list on purpose: a new engine tool of this kind must be added here, not guessed.
+ */
+export const ENGINE_NATIVE_SCHEDULING = ['RemoteTrigger', 'CronCreate', 'CronDelete', 'CronList', 'ScheduleWakeup'];
+
 /** The tools a profile's flags take away, whatever its allowlist says (they beat CORE_TOOLS too). */
 export function deniedByFlags(p: SessionProfile): string[] {
-  const out = new Set<string>(NEVER_TOOLS);
+  const out = new Set<string>([...NEVER_TOOLS, ...ENGINE_NATIVE_SCHEDULING]);
   if (p.desktop === 'none') for (const t of [...SCREEN_TOOLS, ...SHARED_TOOLS, ...FAMILIES.browser]) out.add(t);
   if (p.desktop === 'own') for (const t of SHARED_TOOLS) out.add(t);
   if (!p.maySpawn) out.add('create_session');

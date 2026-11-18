@@ -269,6 +269,9 @@ export function disallowedToolsFor(p: Policy | null, servers: string[] = []): st
   if (!p || !layersOf(p).some((l) => l.tools !== null || !!l.deny?.length)) return [];
   const out: string[] = [];
   for (const b of RESTRICTED_BUILTINS) if (!toolAllowed(p, b)) out.push(b);
+  // Built-ins a layer denies by name (a restricted profile's engine-native scheduling, session-profile.ts) — hidden at
+  // spawn too, not only refused at the hook. Only profiles carry `deny`; agent and Full spawns are unchanged.
+  for (const l of layersOf(p)) for (const d of l.deny || []) if (/^[A-Z]/.test(d) && !out.includes(d) && !toolAllowed(p, d)) out.push(d);
   for (const sv of new Set(servers)) if (sv && sv !== HOST_SERVER && !serverReachable(p, sv)) out.push(`mcp__${sv}`);
   return out;
 }
