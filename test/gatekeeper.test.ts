@@ -413,6 +413,21 @@ describe('bundled + restricted-audience extensions (core)', () => {
     expect(o.bundled.find((b: any) => b.name === 'gatekeeper')).toMatchObject({ enabled: false });
   });
 
+  test('restricted sessions load the gatekeeper\'s tools up front (alwaysLoad); a Full session\'s MCP config never has it', () => {
+    const o = run(
+      tmpDir('arigami-gkx-'),
+      "await ext.reload();await ext.patchExtension('gatekeeper',{enabled:true});const c=await import('./server/claude.js');" +
+        "const r=JSON.parse(c.mcpConfigFor({id:'s1',profile:{name:'r',layers:[{tools:['git','ext:gatekeeper']}],desktop:'none',talkTo:['parent','children'],maySpawn:false,triggers:false,hostRoutes:[],grants:[]}})).mcpServers;const f=JSON.parse(c.mcpConfigFor({id:'s2'})).mcpServers;" +
+        "emit({always:[...ext.alwaysLoadServers()],r:r['ext-gatekeeper']||null,arigami:r.arigami||null,full:Object.keys(f),fullAlways:Object.values(f).some(x=>x&&x.alwaysLoad)});" +
+        "await ext.patchExtension('gatekeeper',{enabled:false});"
+    );
+    expect(o.always).toEqual(['ext-gatekeeper']);
+    expect(o.r).toMatchObject({ type: 'http', alwaysLoad: true });
+    expect(o.arigami?.alwaysLoad).toBeUndefined();
+    expect(o.full).not.toContain('ext-gatekeeper');
+    expect(o.fullAlways).toBe(false);
+  });
+
   test('on: loaded and trusted; its tools reach only a restricted session; a Full session\'s config and summary are unchanged', () => {
     const o = run(
       tmpDir('arigami-gkx-'),
