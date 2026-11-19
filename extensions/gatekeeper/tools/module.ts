@@ -15,6 +15,7 @@ import * as D from '../lib/decide.ts';
 import * as S from '../lib/store.ts';
 import * as X from '../lib/services.ts';
 import { fetchFromSession, pushToRepo } from '../lib/git-push.ts';
+import * as CO from '../lib/git-checkout.ts';
 
 type Ctx = { caller?: D.Caller } & Record<string, unknown>;
 type Tool = { name: string; description: string; inputSchema: Record<string, unknown>; run: (args: any, ctx: Ctx) => Promise<unknown> | unknown };
@@ -377,6 +378,40 @@ const sessionTools: Tool[] = [
         const p = await pushToRepo(mirror, { webUrl: cfg.github.webUrl, repo, branch: String(a.branch), token, force: a.force === true });
         if (!p.ok) throw new Error(`push rejected: ${p.detail}`);
         return { ok: true, branch: String(a.branch), sha, repo };
+      }),
+  },
+  {
+    name: 'github_checkout',
+    description:
+      'Get the source of the repo into this session\'s own directory — the session has no GitHub token and no github.com access, ' +
+      'so this is the way to read the code. A new path: a checkout of the branch / tag / commit you name (default: the default branch), ' +
+      'origin set to the repo\'s plain https URL. An existing checkout made here: refreshed — the gatekeeper puts the latest ' +
+      'branches and tags in a bundle inside its .git, then run the returned `fetch` command in it yourself and merge/rebase/checkout as usual. ' +
+      'Push your work with github_push.',
+    inputSchema: obj({ ref: str('branch, tag or commit (default: the default branch)'), path: str('where, relative to the session directory (default: the repo name)'), repo: str('owner/name — only the configured repo; optional') }),
+    run: (a, ctx) =>
+      gated('github_checkout', 'github.read', ctx, String(a.ref || ''), async ({ caller, cfg }, deny) => {
+        const repo = needRepo(cfg, deny);
+        if (a.repo !== undefined && a.repo !== null && a.repo !== '' && String(a.repo).toLowerCase() !== repo.toLowerCase()) deny(`only the configured repo ${repo}, not ${String(a.repo)}`);
+        if (!caller.cwd) deny('the host did not say where this session works');
+        const rel = String(a.path || repo.split('/').pop() || 'repo');
+        let where: { target: string; exists: boolean };
+        try {
+          where = CO.checkoutTarget(caller.cwd!, rel, D.pathInside);
+        } catch (e) {
+          return deny((e as Error).message.includes('own directory') ? (e as Error).message : `no such parent directory for ${rel}`);
+        }
+        const token = await X.githubToken(cfg);
+        const mirror = await CO.fetchUpstream({ webUrl: cfg.github.webUrl, repo, token });
+        const ref = String(a.ref || '') || (await X.gh(cfg, 'GET', repoPath(cfg))).default_branch;
+        const r = await CO.resolveRef(mirror, ref);
+        const isRepo = where.exists && fs.existsSync(path.join(where.target, '.git'));
+        if (isRepo) {
+          await CO.writeBundle(mirror, where.target, D.pathInside, caller.cwd!);
+          return { ok: true, repo, path: rel, refreshed: true, ref, sha: r.sha, next: CO.fetchCommand(rel) };
+        }
+        await CO.freshCheckout(mirror, { target: where.target, sha: r.sha, branch: r.branch, origin: CO.originUrl(cfg.github.webUrl, repo) });
+        return { ok: true, repo, path: rel, created: true, ref, sha: r.sha, branch: r.branch, push: 'github_push { branch, path }' };
       }),
   },
   {

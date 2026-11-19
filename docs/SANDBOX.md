@@ -78,6 +78,11 @@ without valid credentials is refused.
 A benchmark reads it with `denyPattern: "\"decision\":\"DENIED\""`. The proxy log is the egress evidence: denied
 destinations, and allowed ones with the session that used them.
 
+**Repo source.** A sandbox has no github.com egress, and should not get it: an attacker's own token would make it an
+exfiltration path. With the gatekeeper on, a session gets the configured repo's code through `github_checkout`: the
+gatekeeper's mirror is copied into its own directory, with no token in it. Later fetches go through a bundle the
+session fetches locally, and pushes through `github_push` (`extensions/gatekeeper/README.md`).
+
 ## What is mounted
 
 | path | mode | why |
