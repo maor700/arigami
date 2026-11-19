@@ -509,6 +509,22 @@ test("a session's --mcp-config gains ext-hello, and a session with no extension 
   expect(o.after).toEqual(['arigami', 'ext-hello']);
 });
 
+test("a restricted session's --mcp-config has no extension server its profile never reaches (the gateway would refuse it)", () => {
+  const dir = tmp();
+  const spec = (tools: string[]) => JSON.stringify({ name: 'r', tools, desktop: 'none', talkTo: ['parent', 'children'] });
+  const o = run(
+    dir,
+    load +
+      "const claude=await import('./server/claude.js');const sp=await import('./server/session-profile.ts');" +
+      `await ext.addExtension(${JSON.stringify(HELLO)});await ext.reload();` +
+      "const keys=(s)=>Object.keys(JSON.parse(claude.mcpConfigFor(s)).mcpServers);" +
+      `emit({without:keys({id:'s1',profile:sp.fromSpec(${spec(['git'])})}),with:keys({id:'s2',profile:sp.fromSpec(${spec(['git', 'ext:hello'])})}),full:keys({id:'s3'})});`
+  );
+  expect(o.without).toEqual(['arigami']);
+  expect(o.with).toEqual(['arigami', 'ext-hello']);
+  expect(o.full).toEqual(['arigami', 'ext-hello']); // a Full session's config is unchanged
+});
+
 test('agent-policy: ext:<name> is a live family an allowlist can grant, and setExtFamilies replaces the old set', () => {
   const dir = tmp();
   const o = run(

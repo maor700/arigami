@@ -181,6 +181,10 @@ export function mcpConfigFor(s) {
   } catch {
     ext = {}; // a broken extension must never stop a session from starting
   }
+  // A server the session's allowlist/profile never reaches is not configured at all — the gateway would refuse it (403)
+  // and the engine report it as a server that "failed to connect". Same rule as codex.ts; a Full session has no policy.
+  const policy = policyForSession(s);
+  if (policy) for (const name of Object.keys(ext)) if (!serverReachable(policy, name)) delete ext[name];
   let own = {};
   if (slug) {
     try {
