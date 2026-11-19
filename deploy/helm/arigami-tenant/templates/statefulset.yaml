@@ -310,6 +310,15 @@ spec:
             - name: data
               mountPath: /data
               readOnly: true
+            {{- if include "arigami-tenant.sandboxOn" . }}
+            # …and the sandbox's work roots read-write: github_checkout writes the repo's source into the calling
+            # session's own folder (never anything else of the disk)
+            {{- range .Values.isolation.sandbox.workRoots }}
+            - name: data
+              mountPath: {{ . }}
+              subPath: {{ include "arigami-tenant.dataSubPath" . }}
+            {{- end }}
+            {{- end }}
             - name: gatekeeper-tmp
               mountPath: /tmp
           resources:

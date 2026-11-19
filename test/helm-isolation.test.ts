@@ -134,6 +134,9 @@ describe.skipIf(!HELM)('tenant chart: isolation', () => {
     const mounts = sb.volumeMounts.map((m: any) => `${m.mountPath}${m.readOnly ? ':ro' : ''}`);
     expect(mounts.sort()).toEqual(['/data/.arigami/ext-plugin:ro', '/data/.arigami/sandbox/sessions', '/data/.arigami/skills:ro', '/data/.arigami/user-plugin:ro', '/data/.arigami/user/skills:ro', '/data/home/.local/share/claude/versions:ro', '/data/sandbox-work', '/dev/shm', '/tmp'].sort());
     for (const m of sb.volumeMounts) if (m.name === 'data') expect(m.subPath).toBeTruthy(); // never the whole disk
+    // the gatekeeper writes github_checkout into a session's folder: the work roots rw, the rest of the disk ro
+    const gkm = container(d, 'gatekeeper').volumeMounts.filter((m: any) => m.name === 'data');
+    expect(gkm.map((m: any) => `${m.mountPath}${m.readOnly ? ':ro' : ''}`)).toEqual(['/data:ro', '/data/sandbox-work']);
     const eg = container(d, 'egress');
     expect(eg.securityContext).toMatchObject({ runAsGroup: 3000, allowPrivilegeEscalation: false, capabilities: { drop: ['ALL'] } });
     expect(eg.volumeMounts.filter((m: any) => m.name === 'data').map((m: any) => m.subPath)).toEqual(['.arigami/sandbox/egress']);
