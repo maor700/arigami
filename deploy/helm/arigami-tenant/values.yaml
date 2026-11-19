@@ -418,6 +418,8 @@ isolation:
     # under its home at first boot, and the sandbox runs that same file by its real path.
     engineDirs:
       - /data/home/.local/share/claude/versions
+    # /dev/shm for a session's own headless browser (profile desktop "own"); memory-backed, counts against the limit.
+    shmSize: 256Mi
     resources:
       requests: {cpu: 100m, memory: 512Mi}
       limits: {cpu: "2", memory: 3Gi}

@@ -371,6 +371,8 @@ spec:
               readOnly: true
             - name: sandbox-tmp
               mountPath: /tmp
+            - name: sandbox-shm
+              mountPath: /dev/shm
           resources:
             {{- toYaml $sb.resources | nindent 12 }}
         # The sandbox's only way out (docker/sandbox/egress-proxy.ts): per-session credentials, the model APIs plus
@@ -408,6 +410,10 @@ spec:
         - name: sandbox-tmp
           emptyDir:
             sizeLimit: 1Gi
+        - name: sandbox-shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: {{ .Values.isolation.sandbox.shmSize }}
         - name: egress-tmp
           emptyDir:
             sizeLimit: 64Mi

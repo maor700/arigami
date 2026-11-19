@@ -132,7 +132,7 @@ describe.skipIf(!HELM)('tenant chart: isolation', () => {
     expect(sb.envFrom).toBeUndefined();
     expect(JSON.stringify(sb.env)).not.toMatch(/secretKeyRef|TOKEN|KEY|PASSWORD/);
     const mounts = sb.volumeMounts.map((m: any) => `${m.mountPath}${m.readOnly ? ':ro' : ''}`);
-    expect(mounts.sort()).toEqual(['/data/.arigami/ext-plugin:ro', '/data/.arigami/sandbox/sessions', '/data/.arigami/skills:ro', '/data/.arigami/user-plugin:ro', '/data/.arigami/user/skills:ro', '/data/home/.local/share/claude/versions:ro', '/data/sandbox-work', '/tmp'].sort());
+    expect(mounts.sort()).toEqual(['/data/.arigami/ext-plugin:ro', '/data/.arigami/sandbox/sessions', '/data/.arigami/skills:ro', '/data/.arigami/user-plugin:ro', '/data/.arigami/user/skills:ro', '/data/home/.local/share/claude/versions:ro', '/data/sandbox-work', '/dev/shm', '/tmp'].sort());
     for (const m of sb.volumeMounts) if (m.name === 'data') expect(m.subPath).toBeTruthy(); // never the whole disk
     const eg = container(d, 'egress');
     expect(eg.securityContext).toMatchObject({ runAsGroup: 3000, allowPrivilegeEscalation: false, capabilities: { drop: ['ALL'] } });
