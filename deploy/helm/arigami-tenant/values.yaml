@@ -321,6 +321,9 @@ extraEnv: []
 # goes through `helm install --set` or lands in a values file on disk).
 secretEnv: {}
 existingSecret: ""
+# More existing Secrets loaded as env into the HOST container only (envFrom), e.g. the integrations a Full session
+# uses. Never into the gatekeeper, sandbox or egress containers. [] = none.
+extraEnvFromSecrets: []
 
 # K8S-3 (follow-on): when the control-plane provisions this tenant it also sets
 # `secretEnv.ARIGAMI_HANDOFF_SECRET` — a per-tenant HMAC key that lets it sign

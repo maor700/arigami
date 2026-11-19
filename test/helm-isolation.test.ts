@@ -161,5 +161,13 @@ describe.skipIf(!HELM)('tenant chart: isolation', () => {
   test('sandbox: a work root outside the data disk fails the render', () => {
     expect(() => render([...SB, '--set', 'isolation.sandbox.workRoots={/etc}'])).toThrow(/not under \/data/);
   });
+
+  test('extraEnvFromSecrets: into the host container only — never the gatekeeper, sandbox or egress', () => {
+    const d = render([...SB, '--set', 'extraEnvFromSecrets={full-integrations}']);
+    const refs = (c: any) => (c.envFrom || []).map((e: any) => e.secretRef?.name);
+    expect(refs(container(d, 'arigami'))).toContain('full-integrations');
+    for (const n of ['gatekeeper', 'sandbox', 'egress']) expect(JSON.stringify(container(d, n))).not.toContain('full-integrations');
+    expect(container(render([]), 'arigami').envFrom).toBeUndefined();
+  });
 });
 

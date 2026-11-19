@@ -216,10 +216,16 @@ spec:
             - name: {{ .name }}
               value: {{ .value | quote }}
             {{- end }}
-          {{- if or .Values.secretEnv .Values.existingSecret }}
+          {{- if or .Values.secretEnv .Values.existingSecret .Values.extraEnvFromSecrets }}
           envFrom:
+            {{- if or .Values.secretEnv .Values.existingSecret }}
             - secretRef:
                 name: {{ include "arigami-tenant.secretName" . }}
+            {{- end }}
+            {{- range .Values.extraEnvFromSecrets }}
+            - secretRef:
+                name: {{ . }}
+            {{- end }}
           {{- end }}
           volumeMounts:
             - name: data
