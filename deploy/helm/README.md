@@ -69,6 +69,7 @@ storage class's reclaim policy if that's not what you want).
 | `orgHost` | `false` | renders `ARIGAMI_ORG_HOST=1`: this tenant registers the profile's `scope: org` cron jobs. One org host per organisation, or every org job runs once per org host |
 | `secretEnv` / `existingSecret` | `{}` / `""` | `secretEnv` has the chart create a `Secret` from plain values (fine for a throwaway tenant, avoid for real ones — it goes through `--set`/shell history); `existingSecret` points at one your provisioner/external-secrets already created |
 | `podSecurityContext` | `{}` | left to the image's own entrypoint — `docker/entrypoint.sh` starts as root ON PURPOSE (first-boot PVC chown) then drops to `node` itself via `gosu`. Forcing `runAsNonRoot: true` here breaks that on a fresh PVC. `ci/stub-values.yaml` sets it for the (unprivileged) stub image, since that one has no such constraint |
+| `isolation.*` | `enabled: false` | hardening for restricted sessions, the whole tenant: the gatekeeper as a sidecar (`gatekeeper.identitiesSecret` required — a Secret with `identities.json`, created out of band), no sudo (`noSudo`), and an egress allowlist through a per-tenant squid in `egressProxy.namespace` (`sessionDomains`, `gatekeeperDomains`). Off = the render is unchanged. See docs/K8S.md "Isolation for restricted sessions" |
 
 ## `ci/stub-values.yaml`
 

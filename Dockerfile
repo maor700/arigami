@@ -29,9 +29,12 @@ ARG TARGETARCH
 #              a real TTY and needs no bridge.
 #   jq       : JSON in shell skills (queue scripts, PR context, upload URLs)
 #   sudo     : the workspace owner is admin in their own container (below)
+#   iptables : only for the Helm chart's `isolation.sandbox` init step, which limits the pod's sandbox container to
+#              the host's API and the egress proxy (it runs with NET_ADMIN; nothing else here can use it)
+#   tini     : PID 1 of that sandbox container — reaps what a session's processes leave behind
 #   gh        comes from the apt repo below
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      git curl ca-certificates ripgrep procps lsof python3-minimal less openssh-client gnupg gosu jq sudo \
+      git curl ca-certificates ripgrep procps lsof python3-minimal less openssh-client gnupg gosu jq sudo iptables tini \
     && rm -rf /var/lib/apt/lists/*
 
 # --- Everyday CLI tools agents reach for (~30MB): archives (unzip/zip, xz,
@@ -112,7 +115,7 @@ RUN npm install -g playwright @playwright/mcp \
 #     installed globally so the first bridge start needs no network. The
 #     checkout's auth_info/ is symlinked onto /data by the entrypoint (upstream
 #     hardcodes it next to src/); the message DB goes to ARIGAMI_WA_DATA_DIR. ---
-COPY scripts/install-whatsapp.sh scripts/prepare-whatsapp.mjs scripts/whatsapp-status.ts scripts/whatsapp-media.ts /opt/arigami-whatsapp-setup/
+COPY scripts/install-whatsapp.sh scripts/prepare-whatsapp.mjs scripts/whatsapp-status.ts scripts/whatsapp-media.ts scripts/whatsapp-transcribe.ts /opt/arigami-whatsapp-setup/
 RUN ARIGAMI_WA_MCP_DIR=/opt/whatsapp-mcp bash /opt/arigami-whatsapp-setup/install-whatsapp.sh \
     && chown -R node:node /opt/whatsapp-mcp
 
@@ -134,6 +137,10 @@ COPY docs/ ./docs/
 COPY profiles/ ./profiles/
 COPY bin/ ./bin/
 COPY .claude-plugin/ ./.claude-plugin/
+# Bundled extensions (off until an admin enables them; server/extensions.ts BUNDLED_EXT_DIR = <repo>/extensions).
+COPY extensions/ ./extensions/
+# The sandbox's agent, egress proxy and init (docs/SANDBOX.md): run by the tenant chart's sandbox containers.
+COPY docker/sandbox/ ./docker/sandbox/
 COPY tsconfig.json ./
 COPY --from=web /app/web/dist ./web/dist
 

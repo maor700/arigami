@@ -104,10 +104,9 @@ the funnel and expects its 401. Off by default.
 
 - **`/__api/sms/inbound`** — the pre-C3 phone webhook was unauthenticated; it is now an ordinary gated route (no
   credential → 401). Point the phone at the signed `/__api/webhooks/sms` URL (Settings → Webhooks).
-- **Authorization is coarse.** A session token can call any `/__api` route, not
-  only its own session's; API tokens inherit their owner's role; the only
-  admin-only surface is `/__api/auth/*` administration. Per-session scoping is
-  a follow-up.
+- **Authorization is coarse for Full sessions.** A Full (default) session's token can call any `/__api` route, not
+  only its own session's; API tokens inherit their owner's role; the only admin-only surface is `/__api/auth/*`
+  administration. A *restricted* session's token is scoped (below).
 - **Pairing = admin.** The code lives on the host's disk (`run/pairing-code`,
   mode 0600); whoever can read it can become admin. That is equivalent to
   local user access, which already owns everything.
@@ -127,6 +126,63 @@ the funnel and expects its 401. Off by default.
   `ARIGAMI_BIND=0.0.0.0` the headers are ignored unless `ARIGAMI_TRUST_PROXY=1`
   — and even then only for loopback peers, so a remote client can never forge
   an https origin (server/lib/proxy-headers.ts).
+
+## Restricted sessions (opt-in)
+
+A session with no profile is **Full** and behaves exactly as described above. A session can instead run under a
+**profile** (`server/session-profile.ts`), chosen per session (`POST /__api/sessions {profile}`), per project folder, per
+agent or per cron trigger (`$ARIGAMI_DIR/session-profiles.json`, admin-only `PUT /__api/session-profiles`). The effective
+profile is stored on the session record by the host at creation and no PATCH can change it. It carries:
+
+| field | effect |
+|---|---|
+| `tools` / `hostTools` | an A3-style allowlist, enforced by the same layers as an agent's (`--disallowedTools`, the PreToolUse hook, the host MCP's hidden set, the MCP gateway) for claude and codex alike |
+| `desktop` | `none`; `own` — its own display and Chrome, never the shared desktop (no fallback); `shared` — the owner's desktop too, but only for 30 minutes after a person presses *Allow* on a card |
+| `talkTo` | `parent` / `children`: the only sessions `send_message`, `task_session` and `report_to_master` reach; `from` is always the caller |
+| `maySpawn` | may create sessions — always its own children, which inherit its profile |
+| `triggers` | may create cron triggers (only its own, delivering to itself or its family; their runs inherit its profile) and listeners |
+| `hostRoutes` | host route groups beyond its own session: `memory`, `skills`, `setup`, `agents`, `host-resources` |
+| `egress` | with the sandbox on: what its egress proxy lets through besides the model API and its own host — groups (`npm`, `pypi`, `github`, `crates`, `go`) or hosts (`example.com`, `*.example.com`); absent = nothing more |
+| `limits` | host-side caps: `concurrent` (sessions of the profile working at once — more wait in a queue), `spendUsd` / `tokens` (one session tree; over it the tree is stopped, turns are refused and the owner is alerted) — `server/profile-limits.ts` |
+
+**Inheritance only narrows.** A child's profile is its parent's narrowed by the folder's, the agent's, the trigger's
+and any explicit pick: tool allowlists stack as layers that must all allow, the desktop mode takes the lower one,
+`talkTo` / `hostRoutes` intersect, flags AND. Every create path goes through `state.createSession`, which applies it.
+
+**Per-session API scope.** The auth gate refuses (403) any request a restricted session's token makes outside its own
+session's routes, its parent's `send`, its children's lifecycle and `task`/`send`, and the host routes its profile
+maps to; it never gets a WebSocket, the dev-server proxy or artifacts. Blocking `/__mcp/*` calls must name its own
+session. Its own PATCH is limited to cockpit fields and cannot touch the metadata the host reads as authority
+(`master`, `agent`, `screen`, cron pointers…). A restricted caller cannot pass `agent`, a foreign `master` or a folder.
+
+**Limits.** Enforcement is host-side and engine-agnostic, but without the sandbox the session still runs as the host's
+user: what it can do with Bash on the machine (files, network, sudo) is not limited by the profile. The sandbox
+(`sandbox.mode: "docker"`, [SANDBOX.md](SANDBOX.md)) closes that for standalone installs: each restricted session runs
+in its own container with no host secrets, no root and no network except an egress proxy with an allowlist. With `auth.mode: off` a local caller without any token is the admin, so a restricted session's
+host-route limits hold only with auth on (the host logs a warning when one is created with auth off). A profile binds at
+creation: moving a session into a folder later does not change it.
+
+**Grants and the gatekeeper.** A profile may also carry `grants` (`<ext>:<action>`), narrowed by intersection like
+`hostRoutes`. The host only stores them; an extension that acts for restricted sessions reads them from the caller facts
+the MCP gateway attaches to each call. The bundled `gatekeeper` extension (off by default, `extensions/gatekeeper/`)
+is that extension: it holds the bot identities (a GitHub App narrowed to one repo, a Slack bot without
+`chat:write.public`/`im:write`, Linear, Sentry without alert-rule write) in its own 0600 store, never in a session's
+env or files, and performs only the granted actions in its configured scope. Merge, revert and alert-rule changes run
+only on an operator's word in the session's own thread, verified by the message author's Slack user id in its code, or
+— for a merge — under the auto-rule (CI green + an approving review on the head commit). Every decision is audit-logged
+(`$ARIGAMI_DIR/gatekeeper/audit.log`). Without the sandbox, the same-user limit above applies to its store too; in the
+sandbox the store is never mounted.
+
+**Wake-ups.** `triggers` is `false`, `"own-thread"` or `true` (narrowing takes the lower). `"own-thread"` allows only a
+Slack listener on the session's own recorded thread (`metadata.origin` — host-protected; set by the session's creator, or
+recorded once by an extension holding the `session:origin` permission through the MCP gateway), on itself; cron and any
+other listener are refused with the reason. Listeners end with their session (archive or delete).
+
+**Engine-native scheduling.** Every restricted profile denies the engines' own scheduling / remote-execution tools —
+Claude Code's `RemoteTrigger` (cloud routines), `CronCreate`/`CronDelete`/`CronList` and `ScheduleWakeup` — whatever
+`triggers` says (`ENGINE_NATIVE_SCHEDULING`, an explicit list): hidden at spawn (`--disallowedTools`) and refused by the
+hook for both engines. Codex ships no such tool. Not covered here: a CLI run from Bash with the engine's own credential
+(e.g. `claude` / `codex cloud`) — that is the model-call proxy and isolation work.
 
 ## Reporting
 

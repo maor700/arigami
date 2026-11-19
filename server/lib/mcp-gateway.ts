@@ -32,6 +32,7 @@ import { createHash } from 'node:crypto';
 import { cfg, getSession } from '../state.js';
 import { auth } from '../auth.js';
 import * as extensions from '../extensions.js';
+import { extRemoteUrl, remoteEndpoint } from './ext-remote.js';
 
 export const GATEWAY_PREFIX = '/__mcp/s/';
 export const COMPOSIO_SERVER = 'composio-mcp';
@@ -94,6 +95,17 @@ async function extClient(name: string, spec: { command: string; args: string[]; 
   }
   const made = (async () => {
     const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
+    // An extension served by a sidecar (lib/ext-remote.ts): no child process here, the remote one holds the code and
+    // whatever it needs. The caller still rides in each call's _meta, exactly as with a local shared process.
+    const remote = extRemoteUrl(String(spec.env?.EXT_NAME || ''));
+    if (remote) {
+      const { StreamableHTTPClientTransport } = await import('@modelcontextprotocol/sdk/client/streamableHttp.js');
+      const transport = new StreamableHTTPClientTransport(remoteEndpoint(remote, 'shared'));
+      const client = new Client({ name: 'arigami-gateway', version: '0.1.0' }, (await import('./mcp-validator.js')).mcpClientOptions());
+      transport.onclose = () => extClients.delete(key);
+      await client.connect(transport);
+      return client;
+    }
     const { StdioClientTransport } = await import('@modelcontextprotocol/sdk/client/stdio.js');
     // The host's own env minus any session identity; the caller comes per call.
     const { ARIGAMI_SESSION_ID: _s, ARIGAMI_TOKEN: _t, ...base } = process.env as Record<string, string>;
@@ -116,7 +128,7 @@ export async function closeShared(): Promise<void> {
 }
 
 async function extProxy(name: string, session: any, token: string) {
-  const specs = extensions.extServersFor(ownerOf(session)) as Record<string, { command: string; args: string[]; cwd: string; env: Record<string, string> }>;
+  const specs = extensions.extServersFor(ownerOf(session), session) as Record<string, { command: string; args: string[]; cwd: string; env: Record<string, string> }>;
   const spec = specs[name];
   if (!spec) return null;
   const client = await extClient(name, spec);
@@ -124,14 +136,72 @@ async function extProxy(name: string, session: any, token: string) {
   const { ListToolsRequestSchema, CallToolRequestSchema } = await import('@modelcontextprotocol/sdk/types.js');
   const server = new Server({ name, version: '0.1.0' }, { capabilities: { tools: {} } });
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: ((await client.listTools()) as any).tools || [] }));
-  server.setRequestHandler(CallToolRequestSchema, async (req: any) =>
-    (await client.callTool({
+  // Restricted run mode: the caller's host-recorded profile rides along, so an extension that acts FOR a restricted
+  // session (a gatekeeper) decides on what the host enforces, not on anything the session says. Full sessions: unchanged.
+  const extra = session.profile ? await callerFacts(session) : null;
+  const owner = extensions.enabledExtensions().find((e) => name === `ext-${e.name}` || name.startsWith(`ext-${e.name}-`));
+  const mayRecordOrigin = !!session.profile && ((owner?.manifest as any)?.permissions || []).includes('session:origin');
+  server.setRequestHandler(CallToolRequestSchema, async (req: any) => {
+    const r = (await client.callTool({
       name: req.params.name,
       arguments: req.params.arguments || {},
-      _meta: { 'arigami/session': session.id, 'arigami/token': token },
-    } as any)) as any
-  );
+      _meta: { 'arigami/session': session.id, 'arigami/token': token, ...(extra || {}) },
+    } as any)) as any;
+    // `session:origin`: an extension that acts for restricted sessions may record, ONCE, the Slack thread a session
+    // works in (metadata.origin — host-protected, so the session itself never can). The host then holds it as the
+    // session's own thread (e.g. for a triggers:'own-thread' listener). Never changes an origin that is already set.
+    const o = r?._meta?.['arigami/origin'];
+    if (r?._meta) delete r._meta['arigami/origin'];
+    if (mayRecordOrigin && o && typeof o === 'object' && /^[CG][A-Z0-9]{4,20}$/.test(String(o.channel || '')) && /^\d{6,12}\.\d{1,8}$/.test(String(o.thread_ts || ''))) {
+      const cur = getSession(session.id) as any;
+      if (cur && !cur.metadata?.origin) {
+        const { patchSession } = await import('../state.js');
+        patchSession(session.id, { metadata: { origin: { kind: 'slack', channel: String(o.channel), thread_ts: String(o.thread_ts), recordedBy: name } } } as any);
+      }
+    }
+    return r;
+  });
   return server;
+}
+
+/** What the host knows about a restricted caller: its effective profile, its ancestors (host-recorded), its cwd. */
+async function callerFacts(session: any): Promise<Record<string, unknown>> {
+  const { describe } = await import('../session-profile.js');
+  const lineage: string[] = [];
+  const seen = new Set<string>([session.id]);
+  for (let p = session.profile?.parent as string | null; p && !seen.has(p) && lineage.length < 16; ) {
+    lineage.push(p);
+    seen.add(p);
+    p = (getSession(p) as any)?.profile?.parent ?? null;
+  }
+  // Where the session (or its nearest ancestor) was started from, as its creator recorded it: `metadata.origin` is a
+  // host-protected key (a restricted session can neither set nor change it). And the Slack threads its family watches
+  // through host listeners — self-registered, so an extension treats them as a claim to verify, not as authority.
+  const family = [session.id, ...lineage];
+  let origin: unknown = null;
+  for (const id of family) {
+    const o = (getSession(id) as any)?.metadata?.origin;
+    if (o && typeof o === 'object') { origin = o; break; }
+  }
+  let slackThreads: { session: string; channel: string; thread_ts: string }[] = [];
+  try {
+    const { listListeners } = await import('../state.js');
+    slackThreads = family.flatMap((id) =>
+      listListeners({ sessionId: id })
+        .filter((l: any) => l.type === 'slack' && l.status !== 'stopped' && l.params?.channelId && l.params?.threadTs)
+        .map((l: any) => ({ session: id, channel: String(l.params.channelId), thread_ts: String(l.params.threadTs) }))
+    );
+  } catch {
+    /* no listeners module in this process */
+  }
+  return {
+    'arigami/profile': describe(session.profile),
+    'arigami/lineage': lineage,
+    'arigami/cwd': String(session.cwd || ''),
+    'arigami/createdAt': String(session.createdAt || ''),
+    'arigami/origin': origin,
+    'arigami/slackThreads': slackThreads,
+  };
 }
 
 /** A host-held remote grant, for a session whose owner may use it. */
@@ -172,6 +242,8 @@ async function arigamiServer(session: any, token: string) {
     ARIGAMI_SESSION_ID: session.id,
     ...(typeof md.agent === 'string' && md.agent ? { ARIGAMI_AGENT: md.agent } : {}),
     ...(session.engine === 'codex' ? { ARIGAMI_ENGINE: 'codex' } : {}),
+    // Restricted run mode: the host server asks /policy for its hidden tools (as it does for an agent).
+    ...(session.profile ? { ARIGAMI_PROFILE: String(session.profile.name || 'restricted') } : {}),
   });
 }
 
@@ -189,6 +261,13 @@ export async function handle(req: IncomingMessage, res: ServerResponse, name: st
   if (!sessionId) return deny(res, 403, 'the MCP gateway serves sessions only — call it with a session token');
   const session = getSession(sessionId);
   if (!session) return deny(res, 404, 'no such session');
+  // Restricted run mode: a server no layer of the session's profile reaches is not served at all (the spawn did not
+  // list it either; this holds for a caller that names it anyway). Full sessions never get here.
+  if (session.profile && name !== 'arigami') {
+    const { policyForSession } = await import('../session-profile.js');
+    const { serverReachable } = await import('../agent-policy.js');
+    if (!serverReachable(policyForSession(session as any), name)) return deny(res, 403, `restricted session: MCP server ${name} is not in its profile`);
+  }
   const token = auth.tokenForSession(session.id);
   let server: any;
   try {

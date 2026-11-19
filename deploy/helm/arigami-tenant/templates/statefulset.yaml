@@ -23,6 +23,12 @@ spec:
     metadata:
       labels:
         {{- include "arigami-tenant.labels" . | nindent 8 }}
+      {{- if .Values.isolation.enabled }}
+      annotations:
+        # Two containers: `kubectl exec` / `kubectl cp` without -c (the control plane's busy probe, backups, support)
+        # must keep landing in the host, not the gatekeeper.
+        kubectl.kubernetes.io/default-container: arigami
+      {{- end }}
     spec:
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
@@ -46,13 +52,72 @@ spec:
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- if include "arigami-tenant.sandboxOn" . }}
+      {{- $sb := .Values.isolation.sandbox }}
+      initContainers:
+        # isolation.sandbox: the shared folders (owned by the host's user), and the pod's packet filter for the sandbox
+        # container's group: established flows, the host's API port and the egress proxy on loopback — nothing else
+        # (no DNS, no internet, no other loopback port). Root with NET_ADMIN, for this step only; the network namespace
+        # (and so the filter) lives as long as the pod, and the sandbox container itself has no capability to change it.
+        - name: sandbox-init
+          image: {{ include "arigami-tenant.imageRef" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            runAsUser: 0
+            runAsGroup: 0
+            runAsNonRoot: false
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+              add: ["NET_ADMIN", "NET_RAW", "CHOWN", "FOWNER", "DAC_OVERRIDE"]
+          command: ["sh", "-ec"]
+          args:
+            - |
+              # create what is missing, component by component, owned by the host's user (never a root-owned parent)
+              mk() { p=""; for c in $(echo "$1" | tr '/' ' '); do p="$p/$c"; [ -d "$p" ] || { mkdir "$p"; chown 1000:1000 "$p"; }; done; }
+              for d in /data/.arigami/sandbox/sessions /data/.arigami/sandbox/egress /data/.arigami/user/skills \
+                       /data/.arigami/user-plugin /data/.arigami/ext-plugin{{ range $sb.workRoots }} {{ . }}{{ end }}{{ range $sb.engineDirs }} {{ . }}{{ end }}; do
+                mk "$d"
+              done
+              chmod 0700 /data/.arigami/sandbox/egress
+              for v in "" 6; do
+                IPT=ip${v}tables; $IPT -w -L -n >/dev/null 2>&1 || IPT=ip${v}tables-legacy
+                $IPT -w -N ARIGAMI-SANDBOX 2>/dev/null || $IPT -w -F ARIGAMI-SANDBOX
+                $IPT -w -C OUTPUT -m owner --gid-owner {{ $sb.gid }} -j ARIGAMI-SANDBOX 2>/dev/null || \
+                  $IPT -w -I OUTPUT 1 -m owner --gid-owner {{ $sb.gid }} -j ARIGAMI-SANDBOX
+                $IPT -w -A ARIGAMI-SANDBOX -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+                if [ -z "$v" ]; then
+                  $IPT -w -A ARIGAMI-SANDBOX -o lo -d 127.0.0.1 -p tcp --dport {{ .Values.service.port }} -j ACCEPT
+                  $IPT -w -A ARIGAMI-SANDBOX -o lo -d 127.0.0.1 -p tcp --dport {{ $sb.egressPort }} -j ACCEPT
+                  # its own servers: the pod's own addresses (loopback, the pod IP), on its own port range only
+                  $IPT -w -A ARIGAMI-SANDBOX -m addrtype --dst-type LOCAL -p tcp --dport {{ $sb.serverPorts | replace "-" ":" }} -j ACCEPT
+                fi
+                $IPT -w -A ARIGAMI-SANDBOX -j REJECT
+                $IPT -w -S ARIGAMI-SANDBOX
+              done
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          resources:
+            requests: {cpu: 10m, memory: 32Mi}
+            limits: {cpu: 200m, memory: 128Mi}
+      {{- end }}
       containers:
         - name: arigami
           image: {{ include "arigami-tenant.imageRef" . | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- if and .Values.isolation.enabled .Values.isolation.noSudo }}
+          # isolation.noSudo: no_new_privs makes the image's setuid sudo inert (`sudo -n true` fails), and no
+          # capability is left to regain root with. docker/entrypoint.sh already skips its sudo-only steps then.
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          {{- else }}
           {{- with .Values.containerSecurityContext }}
           securityContext:
             {{- toYaml . | nindent 12 }}
+          {{- end }}
           {{- end }}
           {{- with .Values.command }}
           command:
@@ -113,14 +178,54 @@ spec:
             - name: ARIGAMI_ORG_HOST
               value: "1"
             {{- end }}
+            {{- if include "arigami-tenant.sandboxOn" . }}
+            # Restricted sessions run in the sandbox container below (server/lib/sandbox.ts, mode sidecar).
+            - name: ARIGAMI_SANDBOX
+              value: sidecar
+            - name: ARIGAMI_SANDBOX_AGENT
+              value: {{ printf "127.0.0.1:%v" .Values.isolation.sandbox.agentPort | quote }}
+            - name: ARIGAMI_SANDBOX_EGRESS
+              value: {{ printf "127.0.0.1:%v" .Values.isolation.sandbox.egressPort | quote }}
+            - name: ARIGAMI_SANDBOX_WORK_ROOTS
+              value: {{ join "," .Values.isolation.sandbox.workRoots | quote }}
+            - name: ARIGAMI_SANDBOX_SERVER_PORTS
+              value: {{ .Values.isolation.sandbox.serverPorts | quote }}
+            # abstract X sockets live in the pod's shared network namespace: keep the host's displays off them
+            - name: ARIGAMI_X_NOLISTEN_LOCAL
+              value: "1"
+            {{- end }}
+            {{- if include "arigami-tenant.gatekeeperOn" . }}
+            # The gatekeeper's tools are served by the sidecar below over the pod's loopback (server/lib/ext-remote.ts).
+            - name: ARIGAMI_EXT_REMOTE
+              value: {{ printf "gatekeeper=http://127.0.0.1:%v" .Values.isolation.gatekeeper.port | quote }}
+            {{- end }}
+            {{- if include "arigami-tenant.egressProxyOn" . }}
+            # Everything leaves through this tenant's egress proxy (the NetworkPolicy allows nothing else). No password:
+            # from this container only isolation.egressProxy.sessionDomains are reachable.
+            {{- $proxy := include "arigami-tenant.egressUrl" . }}
+            {{- range list "HTTPS_PROXY" "HTTP_PROXY" "https_proxy" "http_proxy" }}
+            - name: {{ . }}
+              value: {{ $proxy | quote }}
+            {{- end }}
+            {{- range list "NO_PROXY" "no_proxy" }}
+            - name: {{ . }}
+              value: "127.0.0.1,localhost,::1"
+            {{- end }}
+            {{- end }}
             {{- range .Values.extraEnv }}
             - name: {{ .name }}
               value: {{ .value | quote }}
             {{- end }}
-          {{- if or .Values.secretEnv .Values.existingSecret }}
+          {{- if or .Values.secretEnv .Values.existingSecret .Values.extraEnvFromSecrets }}
           envFrom:
+            {{- if or .Values.secretEnv .Values.existingSecret }}
             - secretRef:
                 name: {{ include "arigami-tenant.secretName" . }}
+            {{- end }}
+            {{- range .Values.extraEnvFromSecrets }}
+            - secretRef:
+                name: {{ . }}
+            {{- end }}
           {{- end }}
           volumeMounts:
             - name: data
@@ -149,11 +254,205 @@ spec:
             periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
             timeoutSeconds: {{ .Values.probes.readiness.timeoutSeconds }}
             failureThreshold: {{ .Values.probes.readiness.failureThreshold }}
+        {{- if include "arigami-tenant.gatekeeperOn" . }}
+        {{- $gk := .Values.isolation.gatekeeper }}
+        {{- if not $gk.identitiesSecret }}
+        {{- fail "isolation.gatekeeper.identitiesSecret must name a Secret holding identities.json (create it out of band)" }}
+        {{- end }}
+        # The gatekeeper (extensions/gatekeeper) as a sidecar: the same image, serving only the gatekeeper's tools on
+        # 127.0.0.1 (mcp/ext-serve.ts). The bot identities are mounted HERE ONLY; the host container never sees them.
+        - name: gatekeeper
+          image: {{ include "arigami-tenant.imageRef" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["bun", "/app/mcp/ext-serve.ts", "/app/extensions/gatekeeper/tools/module.ts"]
+          workingDir: /app
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          env:
+            - name: EXT_NAME
+              value: gatekeeper
+            - name: EXT_SERVE_PORT
+              value: {{ $gk.port | quote }}
+            - name: ARIGAMI_URL
+              value: {{ printf "http://127.0.0.1:%v" .Values.service.port | quote }}
+            - name: GATEKEEPER_DIR
+              value: /gatekeeper/state
+            - name: GATEKEEPER_IDENTITIES_FILE
+              value: /run/gatekeeper/identities/identities.json
+            - name: GATEKEEPER_CONFIG_FILE
+              value: /run/gatekeeper/config/config.json
+            - name: HOME
+              value: /gatekeeper/state
+            - name: TMPDIR
+              value: /tmp
+            - name: TZ
+              value: {{ .Values.env.TZ | quote }}
+            {{- if include "arigami-tenant.egressProxyOn" . }}
+            # The gatekeeper authenticates to the proxy, which is what opens isolation.egressProxy.gatekeeperDomains.
+            - name: EGRESS_PROXY_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "arigami-tenant.fullname" . }}-egress-auth
+                  key: password
+            {{- $hostport := printf "%s.%s.svc.cluster.local:%v" (include "arigami-tenant.egressName" .) .Values.isolation.egressProxy.namespace .Values.isolation.egressProxy.port }}
+            {{- range list "HTTPS_PROXY" "HTTP_PROXY" "https_proxy" "http_proxy" }}
+            - name: {{ . }}
+              value: {{ printf "http://gatekeeper:$(EGRESS_PROXY_PASSWORD)@%s" $hostport | quote }}
+            {{- end }}
+            {{- range list "NO_PROXY" "no_proxy" }}
+            - name: {{ . }}
+              value: "127.0.0.1,localhost,::1"
+            {{- end }}
+            {{- end }}
+          volumeMounts:
+            - name: gatekeeper-identities
+              mountPath: /run/gatekeeper/identities
+              readOnly: true
+            - name: gatekeeper-config
+              mountPath: /run/gatekeeper/config
+              readOnly: true
+            - name: gatekeeper-state
+              mountPath: /gatekeeper/state
+            # Read-only: github_push reads the commits from a checkout inside the calling session's directory.
+            - name: data
+              mountPath: /data
+              readOnly: true
+            {{- if include "arigami-tenant.sandboxOn" . }}
+            # …and the sandbox's work roots read-write: github_checkout writes the repo's source into the calling
+            # session's own folder (never anything else of the disk)
+            {{- range .Values.isolation.sandbox.workRoots }}
+            - name: data
+              mountPath: {{ . }}
+              subPath: {{ include "arigami-tenant.dataSubPath" . }}
+            {{- end }}
+            {{- end }}
+            - name: gatekeeper-tmp
+              mountPath: /tmp
+          resources:
+            {{- toYaml $gk.resources | nindent 12 }}
+        {{- end }}
+        {{- if include "arigami-tenant.sandboxOn" . }}
+        {{- $sb := .Values.isolation.sandbox }}
+        # The sandbox: restricted sessions' engines run here (docker/sandbox/sidecar-agent.ts). The host's uid (shared
+        # files keep one owner) with its own primary group, which the packet filter above confines. No secrets, no
+        # sudo, a read-only image, and of the data disk only the work roots, the per-session homes and the
+        # (read-only) user skills and plugins.
+        - name: sandbox
+          image: {{ include "arigami-tenant.imageRef" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          # tini as PID 1: it reaps whatever a session's processes leave behind (the agent ends them at session end)
+          command: ["tini", "-s", "--", "bun", "/app/docker/sandbox/sidecar-agent.ts"]
+          workingDir: /tmp
+          securityContext:
+            runAsUser: 1000
+            runAsGroup: {{ $sb.gid }}
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          env:
+            - name: SANDBOX_AGENT_LISTEN
+              value: {{ printf "127.0.0.1:%v" $sb.agentPort | quote }}
+            - name: SANDBOX_WORK_ROOTS
+              value: {{ join "," $sb.workRoots | quote }}
+            - name: HOME
+              value: /tmp
+            - name: TZ
+              value: {{ .Values.env.TZ | quote }}
+          volumeMounts:
+            {{- range $sb.workRoots }}
+            - name: data
+              mountPath: {{ . }}
+              subPath: {{ include "arigami-tenant.dataSubPath" . }}
+            {{- end }}
+            - name: data
+              mountPath: /data/.arigami/sandbox/sessions
+              subPath: .arigami/sandbox/sessions
+            {{- range $sb.engineDirs }}
+            - name: data
+              mountPath: {{ . }}
+              subPath: {{ include "arigami-tenant.dataSubPath" . }}
+              readOnly: true
+            {{- end }}
+            {{- range list "user/skills" "user-plugin" "ext-plugin" }}
+            - name: data
+              mountPath: {{ printf "/data/.arigami/%s" . }}
+              subPath: {{ printf ".arigami/%s" . }}
+              readOnly: true
+            {{- end }}
+            # $ARIGAMI_DIR/skills is the host's symlink to user/skills, and a subPath may not be a symlink: the same
+            # folder, under the old name too
+            - name: data
+              mountPath: /data/.arigami/skills
+              subPath: .arigami/user/skills
+              readOnly: true
+            - name: sandbox-tmp
+              mountPath: /tmp
+            - name: sandbox-shm
+              mountPath: /dev/shm
+          resources:
+            {{- toYaml $sb.resources | nindent 12 }}
+        # The sandbox's only way out (docker/sandbox/egress-proxy.ts): per-session credentials, the model APIs plus
+        # each profile's egress, private and metadata addresses refused, one JSON line per decision.
+        - name: egress
+          image: {{ include "arigami-tenant.imageRef" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["bun", "/app/docker/sandbox/egress-proxy.ts", "/data/.arigami/sandbox/egress"]
+          workingDir: /tmp
+          securityContext:
+            runAsUser: 1000
+            runAsGroup: {{ $sb.egressGid }}
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          env:
+            - name: HOME
+              value: /tmp
+          volumeMounts:
+            - name: data
+              mountPath: /data/.arigami/sandbox/egress
+              subPath: .arigami/sandbox/egress
+            - name: egress-tmp
+              mountPath: /tmp
+          resources:
+            {{- toYaml $sb.egressResources | nindent 12 }}
+        {{- end }}
       volumes:
         - name: dshm
           emptyDir:
             medium: Memory
             sizeLimit: {{ .Values.shm.sizeLimit }}
+        {{- if include "arigami-tenant.sandboxOn" . }}
+        - name: sandbox-tmp
+          emptyDir:
+            sizeLimit: 1Gi
+        - name: sandbox-shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: {{ .Values.isolation.sandbox.shmSize }}
+        - name: egress-tmp
+          emptyDir:
+            sizeLimit: 64Mi
+        {{- end }}
+        {{- if include "arigami-tenant.gatekeeperOn" . }}
+        - name: gatekeeper-identities
+          secret:
+            secretName: {{ .Values.isolation.gatekeeper.identitiesSecret }}
+            defaultMode: 0440 # root:fsGroup — readable by the sidecar's uid 1000 through its group
+        - name: gatekeeper-config
+          configMap:
+            name: {{ include "arigami-tenant.fullname" . }}-gatekeeper
+        - name: gatekeeper-state
+          persistentVolumeClaim:
+            claimName: {{ include "arigami-tenant.fullname" . }}-gatekeeper
+        - name: gatekeeper-tmp
+          emptyDir:
+            sizeLimit: 256Mi
+        {{- end }}
         {{- if not .Values.persistence.enabled }}
         - name: data
           emptyDir: {}

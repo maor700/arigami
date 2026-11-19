@@ -25,7 +25,13 @@ import { tokenForSession, quarantine, nextAvailable, getActiveId, getAccount, se
 import { refreshOne } from './oauth-login.js';
 import { getMemoryBootstrap } from './memory.js';
 import { personaBlock, getAgent } from './agents.js';
-import { policyFor, isRestrictive, disallowedToolsFor, hookSettings, strictMcpFor, serverTouched } from './agent-policy.js';
+import { isRestrictive, disallowedToolsFor, hookSettings, strictMcpFor, serverReachable } from './agent-policy.js';
+import { policyForSession, spawnEnvFor } from './session-profile.js';
+import * as sandbox from './lib/sandbox.js';
+import * as limits from './profile-limits.js';
+import { setSandboxedCheck } from './session-profile.js';
+// Restricted sessions in a sandbox: the host's own browser/screen tools would act outside the container (session-profile.ts).
+setSandboxedCheck((s) => sandbox.isSandboxed(s));
 import { appendActivity, budgetState, localDay, budgetRefusal, turnBlocked } from './agent-ledger.js';
 import { auth } from './auth.js';
 import { ensureUserPlugin, USER_SKILLS_DIR } from './skills.js';
@@ -129,21 +135,21 @@ const viaGateway = (servers) => {
 };
 // Composio over the gateway (lib/composio-mcp.ts), once the host holds a key —
 // unless the agent's allowlist never reaches into it.
-const composioServer = (slug) => {
+const composioServer = (s) => {
   if (!gatewayEnabled() || !composioKey()) return {};
-  const policy = policyFor(slug);
-  if (isRestrictive(policy) && policy.tools !== null && !serverTouched(policy, COMPOSIO_SERVER)) return {};
+  // A3 + restricted run mode: the session's agent allowlist and profile layers (policyForSession; null for Full).
+  if (!serverReachable(policyForSession(s), COMPOSIO_SERVER)) return {};
   return { [COMPOSIO_SERVER]: claudeEntry(COMPOSIO_SERVER) };
 };
 // Remote grants the HOST holds (lib/mcp-grants.ts) for this owner — through the
 // gateway under the grant's own name, which replaces a CLI-configured server of
 // the same name. An allowlist that never reaches a server does not get it.
-const hostGrantServers = (slug) => {
+const hostGrantServers = (slug, s) => {
   if (!gatewayEnabled()) return {};
-  const policy = policyFor(slug);
+  const policy = policyForSession(s);
   const out = {};
   for (const g of hostGrants.grantsFor(slug ? `agent:${slug}` : 'global')) {
-    if (isRestrictive(policy) && policy.tools !== null && !serverTouched(policy, g.name)) continue;
+    if (!serverReachable(policy, g.name)) continue;
     out[g.name] = claudeEntry(g.name);
   }
   return out;
@@ -171,10 +177,14 @@ export function mcpConfigFor(s) {
   const slug = typeof s?.metadata?.agent === 'string' && s.metadata.agent ? s.metadata.agent : null;
   let ext = {};
   try {
-    ext = extensions.extServersFor(slug ? `agent:${slug}` : 'global');
+    ext = extensions.extServersFor(slug ? `agent:${slug}` : 'global', s);
   } catch {
     ext = {}; // a broken extension must never stop a session from starting
   }
+  // A server the session's allowlist/profile never reaches is not configured at all — the gateway would refuse it (403)
+  // and the engine report it as a server that "failed to connect". Same rule as codex.ts; a Full session has no policy.
+  const policy = policyForSession(s);
+  if (policy) for (const name of Object.keys(ext)) if (!serverReachable(policy, name)) delete ext[name];
   let own = {};
   if (slug) {
     try {
@@ -183,7 +193,7 @@ export function mcpConfigFor(s) {
       own = {}; // a missing/foreign connections.json must never stop a session
     }
   }
-  return JSON.stringify({ mcpServers: { ...hostServers(), ...viaGateway(ext), ...composioServer(slug), ...own, ...hostGrantServers(slug) } });
+  return JSON.stringify({ mcpServers: { ...hostServers(), ...viaGateway(ext), ...composioServer(s), ...own, ...hostGrantServers(slug, s) } });
 }
 
 // engine-driver.ts's EngineDriver members for claude, pulled out of spawnProc()'s old inline argv (same flags/order).
@@ -605,7 +615,7 @@ export function ensureRunning(id) {
 // allowlist that does not name them denies them by name below, as before.
 function policyArgs(s) {
   const slug = typeof s.metadata?.agent === 'string' && s.metadata.agent ? s.metadata.agent : null;
-  const policy = policyFor(slug);
+  const policy = policyForSession(s);
   if (!isRestrictive(policy)) return [];
   const servers = new Set(Object.keys(mcpServersOf(s.id)));
   for (const sv of s.claude?.capabilities?.mcpServers || []) if (sv && typeof sv === 'object' && sv.name) servers.add(String(sv.name));
@@ -619,7 +629,7 @@ function policyArgs(s) {
   // name `ext:<name>` denies the whole server at layer 1, exactly like any
   // other external MCP server the agent was not granted.
   try {
-    for (const name of Object.keys(extensions.extServersFor(slug ? `agent:${slug}` : 'global'))) servers.add(name);
+    for (const name of Object.keys(extensions.extServersFor(slug ? `agent:${slug}` : 'global', s))) servers.add(name);
   } catch {
     /* loader not ready — the hook still enforces */
   }
@@ -683,6 +693,8 @@ function buildClaudeSpawn(s, { resume, sessionId }) {
     // A1: the agent this session was born from — host-mcp.js defaults
     // memory_write/memory_search to its namespace.
     ...(typeof s.metadata?.agent === 'string' && s.metadata.agent ? { ARIGAMI_AGENT: s.metadata.agent } : {}),
+    // Restricted run mode (session-profile.ts): only on a restricted session — a Full spawn's env is unchanged.
+    ...(s.profile ? { ARIGAMI_PROFILE: String(s.profile.name || 'restricted') } : {}),
     ARIGAMI_SKILLS: path.join(ROOT, 'skills'), // host skill pack for the session
     ARIGAMI_DOCS: docsDir(), // host docs, absolute — skills say $ARIGAMI_DOCS/LOGIN.md, never a cwd-relative docs/…
     ARIGAMI_USER_SKILLS: USER_SKILLS_DIR, // user/bundle skills (override shipped by name)
@@ -699,7 +711,8 @@ function buildClaudeSpawn(s, { resume, sessionId }) {
     // async childEnv() (server/lib/screen-driver.ts).
     ...(screenHandle?.display ? { DISPLAY: String(screenHandle.display) } : {}),
   };
-  return { bin: claudeBin(), args, env, cwd };
+  // Restricted run mode: an allowlisted env, none of the host's secrets. A Full session's env is this object, unchanged.
+  return { bin: claudeBin(), args, env: spawnEnvFor(s, env), cwd };
 }
 
 function spawnProc(s, resume) {
@@ -730,7 +743,10 @@ function spawnProc(s, resume) {
     setClaude(s.id, { state: 'dead' });
     return;
   }
-  const child = spawn(built.bin, built.args, { cwd: built.cwd, env: built.env, stdio: ['pipe', 'pipe', 'pipe'] });
+  // Restricted run mode + sandbox (lib/sandbox.ts): the same argv in the session's own container. A Full session (or
+  // the sandbox off) gets `built` itself back — its spawn is exactly what it always was.
+  const run = sandbox.wrapSpawn(s, built, engine.id);
+  const child = spawn(run.bin, run.args, { cwd: run.cwd, env: run.env, stdio: ['pipe', 'pipe', 'pipe'] });
   // A session's claude spawns its own tree (MCP servers, tool shells). Put it
   // under supervision so that tree dies with the host instead of outliving it
   // holding the inherited listen socket.
@@ -1021,7 +1037,8 @@ export function updateUsage(id, u, catalog = null) {
 // the `result` event closes the turn: one 'turn' line in the agent's
 // activity.jsonl (tokens + cost delta), then the budget check — exceeded → one
 // final warning into the session (once per local day) and a 'budget' line.
-export function noteTurnUsage(id, u) {
+export function noteTurnUsage(id, u, messageId = null) {
+  limits.noteUsage(id, u, messageId); // restricted sessions' spend caps (profile-limits.ts) — a no-op for every other session
   const p = record(id);
   if (!p?.agent || !u) return;
   p.turn.input += u.input_tokens || 0;
@@ -1031,6 +1048,7 @@ export function noteTurnUsage(id, u) {
 }
 
 export function recordTurn(id, j) {
+  limits.noteResult(id, j?.total_cost_usd); // restricted sessions' spend caps — a no-op for every other session
   const p = record(id);
   if (!p?.agent) return;
   const b = p.turn;
@@ -1789,7 +1807,7 @@ function handleEvent(id, j) {
     }
     case 'assistant':
       updateUsage(id, j.message?.usage);
-      noteTurnUsage(id, j.message?.usage);
+      noteTurnUsage(id, j.message?.usage, j.message?.id);
       for (const block of j.message?.content || []) {
         if (block.type === 'text' && block.text) {
           if (NOT_LOGGED_RE.test(block.text) && block.text.length < 160 && !isCodexSession(id)) continue; // the Connect card covers it
@@ -2319,10 +2337,20 @@ export function budgetRefusalFor(id) {
   return err;
 }
 
-export function sendMessage(id, text, attachments = [], { system = false } = {}) {
+export function sendMessage(id, text, attachments = [], { system = false, admitted = false } = {}) {
   if (!system) {
     const refusal = budgetRefusalFor(id);
     if (refusal) throw refusal;
+  }
+  // Restricted sessions only (profile-limits.ts): a tree over its spend cap gets no further turn, and a turn beyond
+  // its profile's concurrency cap waits in the host queue. Every other session passes straight through.
+  if (!admitted) {
+    const gate = limits.admit(id);
+    if (!gate.ok) {
+      if (!gate.queued) throw gate.error;
+      limits.enqueue(id, text, attachments, { system }, gate.note);
+      return true;
+    }
   }
   const p = ensureRunning(id); // respawns with --resume after an exit
   const saved = saveAttachments(id, attachments);
@@ -2499,6 +2527,8 @@ function runHeadless(s, prompt, onExit, { effort } = {}) {
     timeoutMs: 5 * 60 * 1000,
     effort,
     env,
+    // a restricted session's one-shot (explain / auto-review) reads its worktree: the same allowlisted env
+    restricted: !!s.profile,
     // ONLY the arigami MCP — skip the user's global servers (fast, focused); codex MCP children need the identity explicitly
     mcpServers: engine === 'codex'
       ? { arigami: gatewayEnabled() ? codexEntry('arigami') : { ...bunExec('host'), env } }
@@ -2975,3 +3005,15 @@ const claudeDriver = {
   effortLevels: () => EFFORT_LEVELS,
 };
 registerEngine(claudeDriver);
+
+// S15 — restricted sessions' concurrency + spend caps (profile-limits.ts). Wired here so that module imports nothing
+// of the engine side; every hook returns at once for a session without a profile.
+limits.wire({
+  getSession,
+  listSessions: () => listSessions({ archived: true }),
+  send: (id, text, attachments, opts) => { sendMessage(id, text, attachments, opts); },
+  interrupt: (id) => { interrupt(id); },
+  kill: (id) => { kill(id); },
+  appendChat: (id, ev) => { appendChat(id, ev); },
+  notify: (p) => { import('./notify.js').then((n) => n.notify(p)).catch(() => {}); },
+});

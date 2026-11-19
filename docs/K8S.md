@@ -496,3 +496,26 @@ reconcile/upgrades/backups — see `docs/CONTROL-PLANE.md` for those, and
    check the class's `reclaimPolicy` (Delete = "delete namespace deletes
    data", the intended tenant-delete semantics; Retain if you want an undo)
    and `allowVolumeExpansion` (local-path has none — size up front).
+
+## Isolation for restricted sessions (`isolation`, off by default)
+
+The tenant chart's `isolation` block hardens one tenant for restricted sessions (extensions/gatekeeper). With it off
+the chart renders exactly what it rendered before (checked with `helm template` against the previous chart). On, it
+applies to the whole tenant, Full sessions in it included:
+
+| piece | what it renders | what it closes |
+|---|---|---|
+| `gatekeeper` | a second container in the pod running `mcp/ext-serve.ts` with the gatekeeper's tools; its identities from a Secret you create out of band (`identitiesSecret`, key `identities.json`), its scope from a ConfigMap (`config`), its state on its own 1Gi claim; `ARIGAMI_EXT_REMOTE` on the host container | the bot credentials never exist in the host container (no file, no env), so no session can read them |
+| `noSudo` | `allowPrivilegeEscalation: false`, all capabilities dropped on the host container | the image's passwordless sudo (`sudo -n true` fails; the entrypoint already copes) |
+| `egressProxy` | the pod's NetworkPolicy allows only cluster DNS and this tenant's own squid; the squid (Deployment, Service, ConfigMap, Secret, NetworkPolicy named `arigami-egress-<id>`) runs in `egressProxy.namespace` and belongs to the release | outbound traffic is CONNECT to 443 on `sessionDomains`, plus `gatekeeperDomains` for the sidecar only (it authenticates to the proxy); IP literals, private ranges and the metadata endpoint are refused; the access log on the proxy's stdout is the evidence |
+| `sandbox` | restricted sessions' engines in a `sandbox` container (no secrets, no sudo, only the work roots of the disk, a packet filter that allows the host's API and the egress container on loopback and nothing else) and the egress proxy in an `egress` container — docs/SANDBOX.md § Kubernetes | the host container and Full sessions keep sudo and the pod's usual egress (use it with `noSudo: false` and `egressProxy.enabled: false`); restricted sessions can no longer read the host's files, use sudo or reach anything but their profile's egress |
+
+Notes an operator should know:
+
+- `kubectl exec` / `kubectl cp` without `-c` still land in the host container (`kubectl.kubernetes.io/default-container`),
+  so the control plane's busy probe and backups are unchanged.
+- The proxy namespace must be one the installer may write to. The proxy's own NetworkPolicy matters there: every tenant
+  admits ingress from the edge namespace, so it lets only this tenant in and only public 443 out.
+- DNS stays allowed (the proxy and Kubernetes names need it), so DNS-tunnel exfiltration is not closed by this.
+- Turning it on for an existing tenant is a `helm upgrade` of that release (the pod restarts; the data volume is
+  untouched). Turning it off again is the same, and removes the proxy objects and the gatekeeper claim.

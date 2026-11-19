@@ -321,6 +321,9 @@ extraEnv: []
 # goes through `helm install --set` or lands in a values file on disk).
 secretEnv: {}
 existingSecret: ""
+# More existing Secrets loaded as env into the HOST container only (envFrom), e.g. the integrations a Full session
+# uses. Never into the gatekeeper, sandbox or egress containers. [] = none.
+extraEnvFromSecrets: []
 
 # K8S-3 (follow-on): when the control-plane provisions this tenant it also sets
 # `secretEnv.ARIGAMI_HANDOFF_SECRET` — a per-tenant HMAC key that lets it sign
@@ -334,3 +337,99 @@ existingSecret: ""
 # `--set` are also stored in Helm's own release Secret. An org that wants this
 # key to exist in exactly one place should create the Secret out-of-band and
 # point `existingSecret` at it instead.
+
+# Tenant isolation for restricted sessions (docs/K8S.md "Isolation"). OFF by default: with `enabled: false` nothing
+# below renders and the chart's output is exactly what it was before this block existed. On, it changes the whole
+# tenant — every session in it, Full ones included:
+#
+#   gatekeeper   the gatekeeper extension's tools run in a SIDECAR container of the same pod. Its bot identities come
+#                from a Secret mounted only into that container, its scope from a read-only ConfigMap; the host
+#                container never holds either (extensions/gatekeeper/README.md).
+#   noSudo       no privilege escalation in the host container: the image's passwordless sudo stops working.
+#   egressProxy  the tenant's NetworkPolicy lets the pod reach only cluster DNS and its own egress proxy (a small squid
+#                in `egressProxy.namespace`, one per tenant, rendered and deleted with this release); the proxy
+#                allows only the listed domains, over CONNECT/443. The cloud metadata endpoint and every IP literal
+#                are unreachable by construction.
+isolation:
+  enabled: false
+  # Takes sudo away from the WHOLE host container (Full sessions too). With `sandbox` on, leave it false: restricted
+  # sessions then run in the sandbox container, which never has sudo, and Full sessions keep today's behaviour.
+  noSudo: true
+  gatekeeper:
+    enabled: true
+    port: 3199
+    # Name of an existing Secret in this namespace with the key `identities.json` (the gatekeeper's identities file:
+    # {github:{appId,installationId,privateKey}, slack:{botToken}, linear:{apiKey}, sentry:{token,alertsToken}}).
+    # Create it out of band (kubectl create secret generic … --from-file=identities.json=…) so no credential passes
+    # through Helm values or Helm's release Secret. Required when the gatekeeper is on.
+    identitiesSecret: ""
+    # The gatekeeper scope (extensions/gatekeeper/lib/store.ts Config, partial) — rendered into a ConfigMap, read-only.
+    config: {}
+    # Its own small volume: thread bindings, approvals already used, the audit log, push mirrors. Not shared with the
+    # host container. A standalone claim (not a volumeClaimTemplate), so turning isolation off again is a plain upgrade.
+    persistence:
+      size: 1Gi
+      storageClassName: ""
+    resources:
+      requests: {cpu: 50m, memory: 128Mi}
+      limits: {cpu: 500m, memory: 384Mi}
+  egressProxy:
+    enabled: true
+    # Where the proxy runs. Must be a namespace this release may create objects in. Its pods get their own
+    # NetworkPolicy (ingress only from this tenant's namespace; egress DNS + public 443), so a proxy living next to the
+    # cluster's edge cannot become a path into other tenants.
+    namespace: edge
+    image: ubuntu/squid:6.6-24.04_edge
+    port: 3128
+    # Everything in the tenant may reach these (the engines). Leading dot = the domain and its subdomains.
+    sessionDomains:
+      - .anthropic.com
+      - .claude.ai
+      - .claude.com
+      - .openai.com
+      - .chatgpt.com
+      - registry.npmjs.org
+    # Only the gatekeeper sidecar may reach these (it authenticates to the proxy; the host container has no password).
+    gatekeeperDomains:
+      - api.github.com
+      - github.com
+      - slack.com
+      - api.linear.app
+      - .sentry.io
+    resources:
+      requests: {cpu: 20m, memory: 64Mi}
+      limits: {cpu: 200m, memory: 192Mi}
+  # Restricted sessions in a SANDBOX container of this pod (docs/SANDBOX.md § Kubernetes): the host starts their
+  # engines there through the sandbox agent on the pod's loopback. That container has no secrets, no sudo (no new
+  # privileges, no capabilities), sees only `workRoots` of the data disk plus the per-session homes, and a packet
+  # filter set by a root init step lets its group reach nothing but the host's API port and the egress container on
+  # the pod's loopback — no DNS, no internet, no other port of the host. The egress container is the standalone
+  # sandbox's proxy: the model APIs plus each profile's `egress`, per-session credentials, a JSON line per decision in
+  # $ARIGAMI_DIR/sandbox/egress/proxy.log. Full sessions and the host container are not changed by this block.
+  sandbox:
+    enabled: false
+    agentPort: 3299
+    egressPort: 3128
+    # The ports a sandboxed session's own servers get (allocate_port). The packet filter lets the sandbox reach the pod's
+    # own addresses on these ports — its dev server, on localhost or the pod IP — and on no other port of the host.
+    # Keep the range clear of every port the host container uses.
+    serverPorts: "20000-20099"
+    # Primary groups the pod's packet filter matches (the uid stays the host's, so files on the shared disk keep one owner).
+    gid: 2000
+    egressGid: 3000
+    # Folders of the data disk (absolute, under /data) shared with the sandbox. A restricted session's folder must be
+    # inside one of them.
+    workRoots:
+      - /data/sandbox-work
+    # Engine installs on the data disk, shared READ-ONLY (binaries only): the host installs Claude Code's native build
+    # under its home at first boot, and the sandbox runs that same file by its real path.
+    engineDirs:
+      - /data/home/.local/share/claude/versions
+    # /dev/shm for a session's own headless browser (profile desktop "own"); memory-backed, counts against the limit.
+    shmSize: 256Mi
+    resources:
+      requests: {cpu: 100m, memory: 512Mi}
+      limits: {cpu: "2", memory: 3Gi}
+    egressResources:
+      requests: {cpu: 20m, memory: 64Mi}
+      limits: {cpu: 200m, memory: 192Mi}

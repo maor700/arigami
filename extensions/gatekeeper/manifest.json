@@ -1,0 +1,49 @@
+{
+  "name": "gatekeeper",
+  "version": "0.1.0",
+  "apiVersion": 1,
+  "title": "Permissions",
+  "description": "Restricted sessions: session profiles (where they apply, what they may do) and a gatekeeper that holds the bot identities (GitHub App, Slack bot, Linear, Sentry) and performs only the actions a session's profile grants \u2014 merges, reverts and alert-rule changes only on an operator's word, checked by Slack user id. Off by default; Full sessions are untouched.",
+  "trusted": true,
+  "audience": "restricted",
+  "tabs": [
+    {
+      "id": "permissions",
+      "title": "Permissions",
+      "entry": "ui/index.html",
+      "icon": "shield",
+      "openFrom": [
+        "tab-bar"
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "kind": "module",
+      "name": "gatekeeper",
+      "module": "tools/module.ts",
+      "env": {
+        "GATEKEEPER_DIR": "${ARIGAMI_DIR}/gatekeeper"
+      }
+    }
+  ],
+  "adminTools": [
+    "gk_admin_state",
+    "gk_admin_save_config",
+    "gk_admin_set_identity",
+    "gk_admin_clear_identity",
+    "gk_admin_test",
+    "gk_admin_bind",
+    "gk_admin_audit"
+  ],
+  "permissions": [
+    "session:origin",
+    "tools:gk_admin_state",
+    "tools:gk_admin_save_config",
+    "tools:gk_admin_set_identity",
+    "tools:gk_admin_clear_identity",
+    "tools:gk_admin_test",
+    "tools:gk_admin_bind",
+    "tools:gk_admin_audit"
+  ]
+}

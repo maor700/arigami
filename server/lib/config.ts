@@ -242,6 +242,64 @@ export interface NotifyConfig {
   whatsappJid?: string;
 }
 
+/**
+ * Restricted sessions in a sandbox (server/lib/sandbox.ts, docs/SANDBOX.md). `mode:'off'` (the default) = every
+ * session runs on the host as before. `mode:'docker'` = a RESTRICTED session's engine runs in its own container on an
+ * internal network whose only way out is the egress proxy; Full sessions are never touched.
+ */
+export interface SandboxConfig {
+  /**
+   * `sidecar` = the host runs in a pod next to a sandbox container that shares the pod's loopback (Helm chart
+   * `isolation.sandbox`): restricted engines are started there by its agent (docker/sandbox/sidecar-agent.ts), and its
+   * only way out is the egress proxy on the pod's loopback.
+   */
+  mode: 'off' | 'docker' | 'sidecar';
+  /** sidecar: the sandbox agent's address on the pod's loopback (default 127.0.0.1:3299). */
+  agent?: string;
+  /** sidecar: the egress proxy as the sandbox reaches it (default 127.0.0.1:3128). */
+  egress?: string;
+  /**
+   * sidecar: the only directories the sandbox container shares with the host (absolute). A restricted session's
+   * folder must be inside one of them; nothing else of the host's disk is visible to it.
+   */
+  workRoots?: string[];
+  /**
+   * sidecar: the ports a sandboxed session's own servers get (allocate_port), [lo, hi]. The pod's packet filter lets the
+   * sandbox reach the pod's own addresses on these ports and no other — so its dev server works on localhost and on
+   * the pod IP, while the host's own loopback services stay out of reach. Keep it clear of every port the host uses.
+   */
+  serverPorts?: [number, number];
+  /** The docker CLI (default `docker` on PATH). DOCKER_HOST in the host env picks the daemon (e.g. a docker gate). */
+  docker?: string;
+  /** Image with the engines (docker/sandbox/Dockerfile). Default `arigami-sandbox:latest`. */
+  image?: string;
+  /**
+   * The host's sandbox listener — the only address the egress relay forwards to. Default: the outside network's
+   * gateway IP on Linux, 127.0.0.1 on Docker Desktop (macOS/Windows); port 0 = any free port.
+   */
+  hostListen?: string;
+  /** Where the egress container reaches that listener (default: derived from hostListen / host.docker.internal). */
+  hostTarget?: string;
+  /** Join this existing network for the way out instead of creating `<prefix>-out` (a host that itself runs in a container). */
+  outsideNetwork?: string;
+  /** Internal network subnet (optional; docker picks one when absent). */
+  subnet?: string;
+  /** Bind-mount sources as the docker daemon sees them, when the host runs in a container: [{from, to}] path prefixes. */
+  pathMap?: { from: string; to: string }[];
+  /** Extra named egress groups (merged over the built-in ones: npm, pypi, github…). */
+  egressGroups?: Record<string, string[]>;
+  /** Hosts every sandbox may reach (default: the model APIs of the engines). */
+  egressBase?: string[];
+  /** Engine binaries inside the image (default `claude` / `codex` on its PATH). */
+  engines?: Record<string, string>;
+  /** Resolvers for the egress container (when the outside network cannot use the daemon's). */
+  dns?: string[];
+  /** Per-container limits. */
+  memory?: string;
+  cpus?: string;
+  pids?: number;
+}
+
 export interface Config {
   port: number;
   // Listen address. Default 127.0.0.1 (fail-closed): reach the host from other
@@ -324,6 +382,7 @@ export interface Config {
   // `deliver.whatsapp: true` and any extension notify() with no explicit JID
   // land there. Empty/absent = the channel is simply skipped.
   notify?: NotifyConfig;
+  sandbox: SandboxConfig;
   configDir?: string;
   configFile?: string;
   imgDir?: string;
@@ -335,6 +394,7 @@ export interface Config {
 }
 
 export const DEFAULTS: Config = {
+  sandbox: { mode: 'off' },
   port: 3099 + PORT_SHIFT,
   bind: '127.0.0.1',
   publicUrl: '',
@@ -577,6 +637,28 @@ function envOverrides(): Partial<Config> {
   if (E.ARIGAMI_LADDER_TAIL_TURNS != null && E.ARIGAMI_LADDER_TAIL_TURNS !== '' && Number.isFinite(Number(E.ARIGAMI_LADDER_TAIL_TURNS)))
     sup.ladderTailTurns = Number(E.ARIGAMI_LADDER_TAIL_TURNS);
   if (Object.keys(sup).length) o.supervisor = { ...DEFAULTS.supervisor, ...sup };
+  // Sandbox for restricted sessions (docs/SANDBOX.md). Each knob alone materializes o.sandbox; deepMerge fills the rest.
+  const sbx: Partial<SandboxConfig> = {};
+  if (E.ARIGAMI_SANDBOX === 'docker' || E.ARIGAMI_SANDBOX === 'off' || E.ARIGAMI_SANDBOX === 'sidecar') sbx.mode = E.ARIGAMI_SANDBOX;
+  if (E.ARIGAMI_SANDBOX_AGENT) sbx.agent = E.ARIGAMI_SANDBOX_AGENT;
+  if (E.ARIGAMI_SANDBOX_EGRESS) sbx.egress = E.ARIGAMI_SANDBOX_EGRESS;
+  if (E.ARIGAMI_SANDBOX_SERVER_PORTS && /^\d+-\d+$/.test(E.ARIGAMI_SANDBOX_SERVER_PORTS)) {
+    const [lo, hi] = E.ARIGAMI_SANDBOX_SERVER_PORTS.split('-').map(Number);
+    if (lo > 1024 && hi >= lo && hi < 65536) sbx.serverPorts = [lo, hi];
+  }
+  if (E.ARIGAMI_SANDBOX_WORK_ROOTS) sbx.workRoots = E.ARIGAMI_SANDBOX_WORK_ROOTS.split(',').map((d) => d.trim()).filter((d) => d.startsWith('/'));
+  if (E.ARIGAMI_SANDBOX_DOCKER) sbx.docker = E.ARIGAMI_SANDBOX_DOCKER;
+  if (E.ARIGAMI_SANDBOX_IMAGE) sbx.image = E.ARIGAMI_SANDBOX_IMAGE;
+  if (E.ARIGAMI_SANDBOX_HOST_LISTEN) sbx.hostListen = E.ARIGAMI_SANDBOX_HOST_LISTEN;
+  if (E.ARIGAMI_SANDBOX_HOST_TARGET) sbx.hostTarget = E.ARIGAMI_SANDBOX_HOST_TARGET;
+  if (E.ARIGAMI_SANDBOX_OUTSIDE_NETWORK) sbx.outsideNetwork = E.ARIGAMI_SANDBOX_OUTSIDE_NETWORK;
+  if (E.ARIGAMI_SANDBOX_SUBNET) sbx.subnet = E.ARIGAMI_SANDBOX_SUBNET;
+  if (E.ARIGAMI_SANDBOX_DNS) sbx.dns = E.ARIGAMI_SANDBOX_DNS.split(',').map((d) => d.trim()).filter(Boolean);
+  if (E.ARIGAMI_SANDBOX_PATH_MAP) {
+    // "from=to,from=to"
+    sbx.pathMap = E.ARIGAMI_SANDBOX_PATH_MAP.split(',').map((p) => p.split('=')).filter((p) => p.length === 2 && p[0] && p[1]).map(([from, to]) => ({ from, to }));
+  }
+  if (Object.keys(sbx).length) o.sandbox = { ...DEFAULTS.sandbox, ...sbx };
   return o;
 }
 

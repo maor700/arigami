@@ -346,6 +346,9 @@ export interface Session {
   inbox?: InboxState;
   statusSummary?: StatusSummary | null;
   summarizing?: boolean; // a summary generation run is in flight (transient)
+  // Restricted run mode (session-profile.ts): the EFFECTIVE profile the host enforces. Absent = a Full session.
+  // Host-owned: set once at creation (resolveProfile below), never through PATCH (not in PATCHABLE).
+  profile?: import('./session-profile.js').SessionProfile;
 }
 
 // A user-defined rail folder. Membership lives on the session (folderId) so a
@@ -650,6 +653,8 @@ export function createSession({
   engine,
   folderId,
   folderName,
+  profile,
+  parentId,
 }: {
   title?: string;
   cwd?: string;
@@ -661,6 +666,10 @@ export function createSession({
   engine?: string | null; // 'claude' | 'codex'; unset/unknown = cfg.defaultEngine — see Session.engine
   folderName?: string | null; // trimmed exact name; create if missing
   folderId?: string | null; // generic creation-time project-folder assignment (any caller) — same field the make-project/dispatch paths patch in after the fact
+  // Restricted run mode: an explicit pick ('<profile id>' | 'full' | an inline spec) and the parent session it is born
+  // under (default: metadata.master). Folded with the folder's / agent's / trigger's / parent's by the resolver.
+  profile?: unknown;
+  parentId?: string | null;
 } = {}): Session {
   const eng = engine === 'codex' || engine === 'claude' ? engine : defaultEngine();
   funnel.firstTime('session.first'); // K5 funnel — once per instance
@@ -726,6 +735,19 @@ export function createSession({
     },
     bg: [],
   };
+  // Restricted run mode: every create path lands here, so inheritance cannot be skipped by picking another one.
+  // No source applies → no field at all (a Full session's record is unchanged).
+  if (profileResolver) {
+    const md = session.metadata;
+    const prof = profileResolver({
+      parentId: parentId ?? (typeof md.master === 'string' && md.master ? md.master : null),
+      folderId: session.folderId ?? null,
+      agent: typeof md.agent === 'string' && md.agent ? md.agent : null,
+      triggerId: typeof md.cronTriggerId === 'string' && md.cronTriggerId ? md.cronTriggerId : null,
+      explicit: profile ?? null,
+    });
+    if (prof) session.profile = prof;
+  }
   db.sessions.set(session.id, session);
   touch(session);
   broadcast({ type: 'session-created', session: toWireSession(session) });
@@ -733,6 +755,20 @@ export function createSession({
   // the wire stays exactly as it is for the cockpit).
   try { emitLocal('session.created', { sessionId: session.id, title: session.title, cwd: session.cwd, agent: (session.metadata as any)?.agent ?? null }); } catch {}
   return session;
+}
+
+// Restricted run mode: injected by api.ts (session-profile.ts resolveForNewSession) so state.ts has no import cycle.
+export interface ProfileResolverInput {
+  parentId: string | null;
+  folderId: string | null;
+  agent: string | null;
+  triggerId: string | null;
+  explicit: unknown;
+}
+type ProfileResolver = (i: ProfileResolverInput) => import('./session-profile.js').SessionProfile | null;
+let profileResolver: ProfileResolver | null = null;
+export function setProfileResolver(fn: ProfileResolver | null): void {
+  profileResolver = fn;
 }
 
 const PATCHABLE = new Set([

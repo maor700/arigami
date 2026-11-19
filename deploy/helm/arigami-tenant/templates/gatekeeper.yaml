@@ -1,0 +1,27 @@
+{{- if include "arigami-tenant.gatekeeperOn" . -}}
+# The gatekeeper sidecar's scope (read-only to it; extensions/gatekeeper/lib/store.ts managed mode) and its own state
+# volume. Identities are NOT here: they come from isolation.gatekeeper.identitiesSecret, created out of band.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "arigami-tenant.fullname" . }}-gatekeeper
+  labels:
+    {{- include "arigami-tenant.labels" . | nindent 4 }}
+data:
+  config.json: {{ .Values.isolation.gatekeeper.config | toJson | quote }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "arigami-tenant.fullname" . }}-gatekeeper
+  labels:
+    {{- include "arigami-tenant.labels" . | nindent 4 }}
+spec:
+  accessModes: ["ReadWriteOnce"]
+  {{- with .Values.isolation.gatekeeper.persistence.storageClassName }}
+  storageClassName: {{ . }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.isolation.gatekeeper.persistence.size }}
+{{- end -}}

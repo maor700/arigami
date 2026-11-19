@@ -29,6 +29,7 @@ import { subscribe } from '../bus.js';
 import { ARIGAMI_DIR } from './instance.js';
 import * as state from '../state.js';
 import { auth } from '../auth.js';
+import { spawnEnvFor } from './session-env.js';
 import { sweepShm, shmHeadroom, reapShmOf, X11VNC_SHM_NEED } from './shm-sweep.js';
 
 export interface DesktopInfo {
@@ -230,11 +231,20 @@ export function startShmSweeper(): void {
   sweeper.unref?.();
 }
 
+/**
+ * ARIGAMI_X_NOLISTEN_LOCAL=1 (set by the tenant chart when restricted sessions run in a sandbox container of the same
+ * pod): no abstract-namespace X socket. Abstract unix sockets belong to the NETWORK namespace, which a pod's containers
+ * share — without this a sandboxed process could connect to the host's X displays. Clients use the socket file.
+ */
+function xLocalNolisten(): string[] {
+  return process.env.ARIGAMI_X_NOLISTEN_LOCAL === '1' ? ['-nolisten', 'local'] : [];
+}
+
 async function spawnDesktop(sessionId: string): Promise<DesktopInfo> {
   const { display, vncPort } = await allocateFree();
   const displayNum = display.slice(1);
 
-  const xvfb = spawn('Xvfb', [display, '-screen', '0', '1280x800x24', '-nolisten', 'tcp'], {
+  const xvfb = spawn('Xvfb', [display, '-screen', '0', '1280x800x24', '-nolisten', 'tcp', ...xLocalNolisten()], {
     stdio: ['ignore', 'ignore', 'pipe'],
   });
   supervise(xvfb, `desktop:${sessionId}:xvfb`);
@@ -250,7 +260,9 @@ async function spawnDesktop(sessionId: string): Promise<DesktopInfo> {
   // carries the session's host address and token, like the session's own engine process does.
   const sessionEnv: NodeJS.ProcessEnv = { ...process.env, ARIGAMI_SESSION_ID: sessionId, ARIGAMI_URL: cfg.hostBase || '', ARIGAMI_TOKEN: auth.tokenForSession(sessionId) };
   if (s?.cwd) sessionEnv.ARIGAMI_TERMINAL_CWD = s.cwd.replace(/^~(?=$|\/)/, os.homedir());
-  const extras = spawnShell(display, sessionId, { which, spawnFn: spawn, env: sessionEnv, configDir: DESKTOP_CONFIG_DIR, session: true });
+  // A restricted session's own desktop (terminal, browser launcher) gets the same allowlisted env as its engine.
+  const deskEnv = spawnEnvFor(s as any, sessionEnv) as NodeJS.ProcessEnv;
+  const extras = spawnShell(display, sessionId, { which, spawnFn: spawn, env: deskEnv, configDir: DESKTOP_CONFIG_DIR, session: true });
 
   const vncArgs = [
     '-display', display,
@@ -406,7 +418,7 @@ export async function ensureGlobalDesktop(opts: GlobalDesktopOpts = {}): Promise
   const sp = opts.spawnFn || spawn;
   const startTimeoutMs = opts.startTimeoutMs ?? 5000;
   const pids: number[] = [];
-  const xvfb = sp(xvfbBin, [display, '-screen', '0', '1280x800x24', '-nolisten', 'tcp'], { stdio: ['ignore', 'ignore', 'pipe'] });
+  const xvfb = sp(xvfbBin, [display, '-screen', '0', '1280x800x24', '-nolisten', 'tcp', ...xLocalNolisten()], { stdio: ['ignore', 'ignore', 'pipe'] });
   supervise(xvfb, 'desktop:global:xvfb');
   globalProcs.push(xvfb);
   if (xvfb.pid) pids.push(xvfb.pid);
