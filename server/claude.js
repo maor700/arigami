@@ -130,9 +130,7 @@ const hostServers = () => ({ arigami: gatewayEnabled() ? claudeEntry('arigami') 
 const viaGateway = (servers) => {
   if (!gatewayEnabled()) return servers;
   const out = {};
-  // a restricted-audience extension's tools (the gatekeeper) load up front — its sessions call them every turn
-  const always = extensions.alwaysLoadServers();
-  for (const name of Object.keys(servers)) out[name] = always.has(name) ? { ...claudeEntry(name), alwaysLoad: true } : claudeEntry(name);
+  for (const name of Object.keys(servers)) out[name] = claudeEntry(name);
   return out;
 };
 // Composio over the gateway (lib/composio-mcp.ts), once the host holds a key —

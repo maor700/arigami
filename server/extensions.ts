@@ -1287,17 +1287,6 @@ export function extServersFor(_owner: string = 'global', session?: { profile?: u
   return out;
 }
 
-/**
- * The MCP server keys of enabled restricted-audience extensions (the gatekeeper). A restricted session acts on the
- * outside world through them — nearly every turn — so their tools are loaded up front (claude `alwaysLoad`) instead of
- * being looked up with a ToolSearch round trip each time. Only restricted sessions ever get these servers.
- */
-export function alwaysLoadServers(): Set<string> {
-  const out = new Set<string>();
-  for (const e of enabledExtensions()) if (restrictedAudience(e)) for (const k of Object.keys(serversFor(e))) out.add(k);
-  return out;
-}
-
 /** `ext:<name>` → the tool patterns of that extension (agent-policy FAMILIES). */
 export function extFamilies(): Record<string, string[]> {
   const out: Record<string, string[]> = {};
