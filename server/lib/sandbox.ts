@@ -19,6 +19,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import http from 'node:http';
 import crypto from 'node:crypto';
+import os from 'node:os';
 import { spawnSync } from 'node:child_process';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { cfg } from './config.js';
@@ -400,12 +401,46 @@ const CHROMIUM = '/usr/bin/chromium';
  * only its own loopback (its dev server) direct. Never a user-data-dir, a CDP endpoint or an extension bridge — so
  * never the owner's Chrome.
  */
-export function ownBrowserConfig(proxy: { server: string; username: string; password: string }, outputDir: string, executablePath: string = CHROMIUM) {
+/**
+ * The browser makes no calls of its own: no background networking, component / variation / safe-browsing updates,
+ * sync, sign-in, pings or prediction services. Everything it fetches is something the session asked for — so the
+ * proxy log holds the session's traffic, not the browser's housekeeping.
+ */
+// Google's own endpoints point at a closed local port, so what is left of the browser's housekeeping never leaves it
+// (in a sidecar the sandbox's packet filter refuses that port locally; elsewhere nothing listens there).
+const NOWHERE = 'http://127.0.0.1:9';
+export const QUIET_BROWSER_ARGS = [
+  '--disable-background-networking',
+  '--disable-component-update',
+  '--disable-sync',
+  '--disable-default-apps',
+  '--disable-domain-reliability',
+  '--disable-client-side-phishing-detection',
+  '--disable-crl-sets',
+  '--safebrowsing-disable-auto-update',
+  '--disable-field-trial-config',
+  '--dns-prefetch-disable',
+  '--no-service-autorun',
+  '--no-default-browser-check',
+  '--no-first-run',
+  '--no-pings',
+  '--metrics-recording-only',
+  '--variations-server-url=data:,',
+  `--gaia-url=${NOWHERE}`,
+  `--lso-url=${NOWHERE}`,
+  `--google-apis-url=${NOWHERE}`,
+  `--google-base-url=${NOWHERE}`,
+  `--sync-url=${NOWHERE}`,
+  `--component-updater=url-source=${NOWHERE}`,
+  '--disable-features=OptimizationHints,OptimizationGuideModelDownloading,OptimizationHintsFetching,OptimizationTargetPrediction,MediaRouter,Translate,AutofillServerCommunication,CertificateTransparencyComponentUpdater,InterestFeedContentSuggestions,SafeBrowsingEnhancedProtection,PrivacySandboxSettings4,ChromeWhatsNewUI,SigninInterception,PreconnectToSearch,CaptivePortalDetection,NetworkTimeServiceQuerying,DnsOverHttps,LensOverlay,SearchPrefetchServicePrefetching',
+];
+
+export function ownBrowserConfig(proxy: { server: string; username: string; password: string }, outputDir: string, executablePath: string = CHROMIUM, direct: string[] = ['localhost', '127.0.0.1']) {
   return {
     browser: {
       browserName: 'chromium',
       isolated: true,
-      launchOptions: { executablePath, headless: true, chromiumSandbox: false, proxy: { ...proxy, bypass: 'localhost,127.0.0.1' } },
+      launchOptions: { executablePath, headless: true, chromiumSandbox: false, args: QUIET_BROWSER_ARGS, proxy: { ...proxy, bypass: direct.join(',') } },
     },
     outputDir,
   };
@@ -531,6 +566,13 @@ export function launchSpec(s: { id: string; profile: SProfile }, built: Built, e
 // launcher (sandbox-sidecar-launch.ts) relays the engine's stdio. Same rules as a container per session: the
 // restricted env, this engine's credential only, a per-session HOME and TMPDIR, the egress policy of its profile.
 
+/** This host's own (pod) interface addresses — what a sidecar sandbox reaches as "itself". */
+export function ownAddresses(ifaces: ReturnType<typeof os.networkInterfaces> = os.networkInterfaces()): string[] {
+  const out: string[] = [];
+  for (const list of Object.values(ifaces)) for (const a of list || []) if (!a.internal && a.family === 'IPv4') out.push(a.address);
+  return [...new Set(out)];
+}
+
 /** The shared work root (cfg.sandbox.workRoots) a folder is in, or null. */
 export function workRootOf(dir: string, roots: string[] = cfg.sandbox?.workRoots || []): string | null {
   let real = dir;
@@ -601,6 +643,10 @@ export function sidecarSpec(s: { id: string; profile: SProfile }, built: Built, 
   const secret = secretOf(egressKey(), s.id);
   const cred = `${encodeURIComponent(s.id)}:${secret}`;
   const proxy = `http://${cred}@${SIDECAR_EGRESS()}`;
+  // Its own addresses go direct, never through the proxy: loopback and this pod's own interface addresses (the sandbox
+  // shares the pod's network) — so `vite --host 0.0.0.0`'s "Network" URL works like localhost. No other private range
+  // is added; the pod's packet filter still allows only its own server ports there (sandbox.serverPorts).
+  const direct = ['localhost', '127.0.0.1', '::1', ...ownAddresses()];
   Object.assign(env, {
     HOME: home,
     TMPDIR: tmp,
@@ -608,7 +654,7 @@ export function sidecarSpec(s: { id: string; profile: SProfile }, built: Built, 
     USER: 'sandbox',
     SHELL: '/bin/bash',
     HTTP_PROXY: proxy, HTTPS_PROXY: proxy, http_proxy: proxy, https_proxy: proxy,
-    NO_PROXY: 'localhost,127.0.0.1,::1', no_proxy: 'localhost,127.0.0.1,::1',
+    NO_PROXY: direct.join(','), no_proxy: direct.join(','),
     ARIGAMI_SANDBOX: 'sidecar',
     DISABLE_AUTOUPDATER: '1',
     CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
@@ -621,7 +667,7 @@ export function sidecarSpec(s: { id: string; profile: SProfile }, built: Built, 
     const conf = path.join(home, '.arigami-browser.json');
     let chrome = CHROMIUM;
     if (process.env.CHROME_BIN) try { chrome = fs.realpathSync(process.env.CHROME_BIN); } catch { chrome = process.env.CHROME_BIN; }
-    fs.writeFileSync(conf, JSON.stringify(ownBrowserConfig({ server: `http://${SIDECAR_EGRESS()}`, username: s.id, password: secret }, path.join(tmp, 'browser'), chrome)), { mode: 0o600 });
+    fs.writeFileSync(conf, JSON.stringify(ownBrowserConfig({ server: `http://${SIDECAR_EGRESS()}`, username: s.id, password: secret }, path.join(tmp, 'browser'), chrome, direct)), { mode: 0o600 });
     args = withOwnBrowser(engineId, args, env, conf);
   }
   // The engine binary: cfg.sandbox.engines, else the file the driver resolved, by its REAL path (an engine the host

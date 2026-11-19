@@ -83,6 +83,18 @@ exfiltration path. With the gatekeeper on, a session gets the configured repo's 
 gatekeeper's mirror is copied into its own directory, with no token in it. Later fetches go through a bundle the
 session fetches locally, and pushes through `github_push` (`extensions/gatekeeper/README.md`).
 
+**What stays denied on purpose.**
+
+- **An error-reporting ingest that the app under test calls.** For example, a Sentry DSN baked into a dev build:
+  `o…ingest….sentry.io`. An ingest endpoint accepts any payload for its project. With a DSN the attacker chooses,
+  it is an exfiltration channel. Add a project's own ingest host to a profile's `egress` only if the data it would
+  carry may leave.
+- **The own browser's housekeeping.** It is started with background networking, component and variation updates,
+  safe-browsing updates, sync, sign-in, pings and preconnect turned off. Google's service URLs point at a closed local
+  port (`QUIET_BROWSER_ARGS`, lib/sandbox.ts). Measured on Chrome 1xx headless loading a local page: 16 requests
+  before, 1 after (`www.gstatic.com`). Whatever is left is refused like any other destination, and the refusal is
+  logged.
+
 ## What is mounted
 
 | path | mode | why |
@@ -248,6 +260,18 @@ How the container is held:
 | disk | only `isolation.sandbox.workRoots`, the per-session homes and, read-only, the user skills and plugins and the engine's install dir. Never `$ARIGAMI_DIR`, the host's home, `accounts.json`, the gatekeeper store or any token file |
 | network | a root init step (`NET_ADMIN`, that step only) installs a packet filter in the pod's network namespace for that group. It allows established flows, the host's API port and the egress proxy on loopback, and nothing else: no DNS, no internet and no other loopback port (VNC, CDP, the gatekeeper, dev servers). The container itself has no capability to change it. |
 | X displays | the host starts Xvfb with `-nolisten local` (`ARIGAMI_X_NOLISTEN_LOCAL=1`). Abstract unix sockets belong to the shared network namespace. |
+
+Everything a session starts ends with it. `tini` is the container's PID 1 and reaps orphans. When the engine exits,
+the agent ends every process that carries the session's `ARIGAMI_SESSION_ID` (from `/proc/<pid>/environ`), including
+the ones that left its process group, such as a backgrounded dev server or a browser. A container per session gets the
+same effect from docker removing the container.
+
+Its own servers: `allocate_port` gives a sandboxed session a port from `isolation.sandbox.serverPorts` (default
+`20000-20099`). The packet filter lets the sandbox reach the pod's own addresses on that range and no other local
+port. Its `NO_PROXY` and its browser's proxy bypass list loopback and the pod's own interface addresses, and no other
+private range. So `vite --host 0.0.0.0` works on localhost and on its "Network" URL. The host's loopback services stay
+out of reach, and so does a Full session's dev server, which uses the dispatcher pool. Keep the range clear of every
+port the host container uses.
 
 A restricted session's folder must be inside a work root. Any other folder is refused with the reason, and the session
 never runs on the host. Full sessions and the host container are untouched: their spawn is what the engine driver

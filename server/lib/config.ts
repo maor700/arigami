@@ -263,6 +263,12 @@ export interface SandboxConfig {
    * folder must be inside one of them; nothing else of the host's disk is visible to it.
    */
   workRoots?: string[];
+  /**
+   * sidecar: the ports a sandboxed session's own servers get (allocate_port), [lo, hi]. The pod's packet filter lets the
+   * sandbox reach the pod's own addresses on these ports and no other — so its dev server works on localhost and on
+   * the pod IP, while the host's own loopback services stay out of reach. Keep it clear of every port the host uses.
+   */
+  serverPorts?: [number, number];
   /** The docker CLI (default `docker` on PATH). DOCKER_HOST in the host env picks the daemon (e.g. a docker gate). */
   docker?: string;
   /** Image with the engines (docker/sandbox/Dockerfile). Default `arigami-sandbox:latest`. */
@@ -636,6 +642,10 @@ function envOverrides(): Partial<Config> {
   if (E.ARIGAMI_SANDBOX === 'docker' || E.ARIGAMI_SANDBOX === 'off' || E.ARIGAMI_SANDBOX === 'sidecar') sbx.mode = E.ARIGAMI_SANDBOX;
   if (E.ARIGAMI_SANDBOX_AGENT) sbx.agent = E.ARIGAMI_SANDBOX_AGENT;
   if (E.ARIGAMI_SANDBOX_EGRESS) sbx.egress = E.ARIGAMI_SANDBOX_EGRESS;
+  if (E.ARIGAMI_SANDBOX_SERVER_PORTS && /^\d+-\d+$/.test(E.ARIGAMI_SANDBOX_SERVER_PORTS)) {
+    const [lo, hi] = E.ARIGAMI_SANDBOX_SERVER_PORTS.split('-').map(Number);
+    if (lo > 1024 && hi >= lo && hi < 65536) sbx.serverPorts = [lo, hi];
+  }
   if (E.ARIGAMI_SANDBOX_WORK_ROOTS) sbx.workRoots = E.ARIGAMI_SANDBOX_WORK_ROOTS.split(',').map((d) => d.trim()).filter((d) => d.startsWith('/'));
   if (E.ARIGAMI_SANDBOX_DOCKER) sbx.docker = E.ARIGAMI_SANDBOX_DOCKER;
   if (E.ARIGAMI_SANDBOX_IMAGE) sbx.image = E.ARIGAMI_SANDBOX_IMAGE;

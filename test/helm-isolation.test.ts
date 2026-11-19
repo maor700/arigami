@@ -152,6 +152,10 @@ describe.skipIf(!HELM)('tenant chart: isolation', () => {
     expect(script).toContain('-o lo -d 127.0.0.1 -p tcp --dport 3128 -j ACCEPT');
     expect(script.trim().split('\n').filter((l: string) => /-A ARIGAMI-SANDBOX/.test(l)).at(-1)).toContain('-j REJECT');
     expect(script).not.toMatch(/--dport 53|udp/); // no DNS for the sandbox
+    // its own servers: only the pod's own addresses, only its own port range
+    expect(script).toContain('-m addrtype --dst-type LOCAL -p tcp --dport 20000:20099 -j ACCEPT');
+    expect(container(d, 'arigami').env.find((e: any) => e.name === 'ARIGAMI_SANDBOX_SERVER_PORTS').value).toBe('20000-20099');
+    expect(container(d, 'sandbox').command.slice(0, 3)).toEqual(['tini', '-s', '--']);
   });
 
   test('sandbox: a work root outside the data disk fails the render', () => {

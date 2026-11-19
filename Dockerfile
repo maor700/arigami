@@ -31,9 +31,10 @@ ARG TARGETARCH
 #   sudo     : the workspace owner is admin in their own container (below)
 #   iptables : only for the Helm chart's `isolation.sandbox` init step, which limits the pod's sandbox container to
 #              the host's API and the egress proxy (it runs with NET_ADMIN; nothing else here can use it)
+#   tini     : PID 1 of that sandbox container — reaps what a session's processes leave behind
 #   gh        comes from the apt repo below
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      git curl ca-certificates ripgrep procps lsof python3-minimal less openssh-client gnupg gosu jq sudo iptables \
+      git curl ca-certificates ripgrep procps lsof python3-minimal less openssh-client gnupg gosu jq sudo iptables tini \
     && rm -rf /var/lib/apt/lists/*
 
 # --- Everyday CLI tools agents reach for (~30MB): archives (unzip/zip, xz,

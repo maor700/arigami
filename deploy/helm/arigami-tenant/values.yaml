@@ -407,6 +407,10 @@ isolation:
     enabled: false
     agentPort: 3299
     egressPort: 3128
+    # The ports a sandboxed session's own servers get (allocate_port). The packet filter lets the sandbox reach the pod's
+    # own addresses on these ports — its dev server, on localhost or the pod IP — and on no other port of the host.
+    # Keep the range clear of every port the host container uses.
+    serverPorts: "20000-20099"
     # Primary groups the pod's packet filter matches (the uid stays the host's, so files on the shared disk keep one owner).
     gid: 2000
     egressGid: 3000

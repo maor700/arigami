@@ -89,6 +89,8 @@ spec:
                 if [ -z "$v" ]; then
                   $IPT -w -A ARIGAMI-SANDBOX -o lo -d 127.0.0.1 -p tcp --dport {{ .Values.service.port }} -j ACCEPT
                   $IPT -w -A ARIGAMI-SANDBOX -o lo -d 127.0.0.1 -p tcp --dport {{ $sb.egressPort }} -j ACCEPT
+                  # its own servers: the pod's own addresses (loopback, the pod IP), on its own port range only
+                  $IPT -w -A ARIGAMI-SANDBOX -m addrtype --dst-type LOCAL -p tcp --dport {{ $sb.serverPorts | replace "-" ":" }} -j ACCEPT
                 fi
                 $IPT -w -A ARIGAMI-SANDBOX -j REJECT
                 $IPT -w -S ARIGAMI-SANDBOX
@@ -186,6 +188,8 @@ spec:
               value: {{ printf "127.0.0.1:%v" .Values.isolation.sandbox.egressPort | quote }}
             - name: ARIGAMI_SANDBOX_WORK_ROOTS
               value: {{ join "," .Values.isolation.sandbox.workRoots | quote }}
+            - name: ARIGAMI_SANDBOX_SERVER_PORTS
+              value: {{ .Values.isolation.sandbox.serverPorts | quote }}
             # abstract X sockets live in the pod's shared network namespace: keep the host's displays off them
             - name: ARIGAMI_X_NOLISTEN_LOCAL
               value: "1"
@@ -333,7 +337,8 @@ spec:
         - name: sandbox
           image: {{ include "arigami-tenant.imageRef" . | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          command: ["bun", "/app/docker/sandbox/sidecar-agent.ts"]
+          # tini as PID 1: it reaps whatever a session's processes leave behind (the agent ends them at session end)
+          command: ["tini", "-s", "--", "bun", "/app/docker/sandbox/sidecar-agent.ts"]
           workingDir: /tmp
           securityContext:
             runAsUser: 1000

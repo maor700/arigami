@@ -7,7 +7,7 @@ import path from 'node:path';
 import net from 'node:net';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { FRAME, encodeFrame, FrameReader } from '../docker/sandbox/sidecar-frames.ts';
-import { startError } from '../docker/sandbox/sidecar-agent.ts';
+import { startError, sessionPids } from '../docker/sandbox/sidecar-agent.ts';
 import { runInChild } from './_child.js';
 import { tmpDir } from './_tmp.js';
 
@@ -101,6 +101,16 @@ describe('agent ⇄ launcher', () => {
     expect(left).toBe('');
   });
 
+  test("the session's processes end with it — also one that left its process group (setsid: a dev server, a browser)", async () => {
+    const sid = `s_life_${Date.now()}`;
+    const { p } = launch({ argv: ['sh', '-c', 'setsid sleep 37 </dev/null >/dev/null 2>&1 & sleep 0.3; echo started'], env: { PATH: process.env.PATH, ARIGAMI_SESSION_ID: sid }, cwd: root });
+    expect(await new Response(p.stdout).text()).toContain('started');
+    expect(await p.exited).toBe(0);
+    const t0 = Date.now();
+    while (Date.now() - t0 < 6000 && sessionPids(sid).length) await Bun.sleep(100);
+    expect(sessionPids(sid)).toEqual([]);
+  });
+
   test('a cwd outside the work roots never starts; the reason reaches the session', async () => {
     const { p } = launch({ argv: ['sh', '-c', 'echo ran'], env: { PATH: process.env.PATH }, cwd: '/' });
     const [out, err, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]);
@@ -116,6 +126,23 @@ describe('agent ⇄ launcher', () => {
     const b = launch({ argv: ['true'], env: {}, cwd: root, agent: '127.0.0.1:1' });
     expect(await new Response(b.p.stderr).text()).toContain('not reachable');
     expect(await b.p.exited).toBe(1);
+  });
+});
+
+describe('sessionPids', () => {
+  test('finds a session by its exact id in environ; never another id, a prefix of it, or a process without one', () => {
+    const proc = tmpDir('arigami-fakeproc-');
+    const mk = (pid: number, env: string[]) => { fs.mkdirSync(path.join(proc, String(pid))); fs.writeFileSync(path.join(proc, String(pid), 'environ'), env.map((e) => e + '\0').join('')); };
+    mk(11, ['PATH=/bin', 'ARIGAMI_SESSION_ID=s_a']);
+    mk(12, ['ARIGAMI_SESSION_ID=s_a', 'HOME=/x']);
+    mk(13, ['ARIGAMI_SESSION_ID=s_ab']);
+    mk(14, ['XARIGAMI_SESSION_ID=s_a']);
+    mk(15, ['PATH=/bin']);
+    mk(1, ['ARIGAMI_SESSION_ID=s_a']);
+    fs.mkdirSync(path.join(proc, 'self'));
+    expect(sessionPids('s_a', proc, 99).sort()).toEqual([11, 12]);
+    expect(sessionPids('s_a', proc, 11)).toEqual([12]);
+    expect(sessionPids('../x', proc)).toEqual([]);
   });
 });
 
@@ -217,9 +244,26 @@ describe('the spawn in sidecar mode (server/lib/sandbox.ts)', () => {
     expect(server.command).toBe('playwright-mcp');
     const conf = JSON.parse(fs.readFileSync(server.args[1], 'utf8'));
     expect(conf.browser.launchOptions.executablePath).toBe(fs.realpathSync('/bin/true'));
-    expect(conf.browser.launchOptions.proxy).toMatchObject({ server: 'http://127.0.0.1:3128', username: 's_own', bypass: 'localhost,127.0.0.1' });
+    expect(conf.browser.launchOptions.proxy).toMatchObject({ server: 'http://127.0.0.1:3128', username: 's_own' });
     expect(conf.browser.launchOptions.proxy.password).toBe(own.env.HTTPS_PROXY.split(':')[2].split('@')[0]);
     expect(conf.browser.isolated).toBe(true);
+    // no calls of its own (no google housekeeping in the proxy log)
+    for (const a of ['--disable-background-networking', '--disable-component-update', '--disable-sync', '--no-default-browser-check', '--safebrowsing-disable-auto-update']) expect(conf.browser.launchOptions.args).toContain(a);
+    expect(conf.browser.launchOptions.args.find((a: string) => a.startsWith('--disable-features='))).toContain('OptimizationHints');
+    // its own addresses direct (loopback + this pod's own interfaces), the same list as NO_PROXY — and nothing else
+    const direct = conf.browser.launchOptions.proxy.bypass.split(',');
+    expect(direct.slice(0, 3)).toEqual(['localhost', '127.0.0.1', '::1']);
+    expect(own.env.NO_PROXY.split(',')).toEqual(direct);
+    const nets = Object.values(require('node:os').networkInterfaces()).flat().filter((a: any) => a && !a.internal && a.family === 'IPv4').map((a: any) => a.address);
+    expect(direct.slice(3).sort()).toEqual([...new Set(nets)].sort());
+  });
+
+  test('serverPorts: ARIGAMI_SANDBOX_SERVER_PORTS → cfg.sandbox.serverPorts (a sane range only)', () => {
+    const d = tmpDir('arigami-sbxc-');
+    const go = (v: string) => { const r = runInChild("const {cfg}=await import('./server/lib/config.ts');emit(cfg.sandbox?.serverPorts||null);", { ...env(d, '/w'), ARIGAMI_SANDBOX_SERVER_PORTS: v }); if (!r.ok) throw new Error(r.error); return r.out[0]; };
+    expect(go('20000-20099')).toEqual([20000, 20099]);
+    expect(go('80-90')).toBeNull();
+    expect(go('3000-2000')).toBeNull();
+    expect(go('nope')).toBeNull();
   });
 });
-

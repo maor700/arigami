@@ -3563,8 +3563,11 @@ function sanitizeSubtask(subtask: string | null): string {
 // not claimed by any live session's metadata.port. Released implicitly when the
 // session is deleted. Returns null if the pool is exhausted (worker still spawns,
 // just without a host-allocated port).
-function allocatePort(): number | null {
-  const [lo, hi] = cfg.dispatcher.portRange;
+function allocatePort(sandboxed = false): number | null {
+  // A session whose engine runs in the pod's sandbox sidecar serves from its own range — the only local ports the
+  // sandbox may reach (lib/sandbox.ts serverPorts); every other session from the dispatcher pool, as before.
+  const sb = sandboxed && sandbox.sidecarMode() ? cfg.sandbox?.serverPorts : undefined;
+  const [lo, hi] = sb || cfg.dispatcher.portRange;
   const used = new Set(
     state
       .listSessions()
@@ -3644,7 +3647,7 @@ async function wireWorker(
     ...(subtask ? { subtask } : {}),
   };
   if (body.needsServer) {
-    const port = allocatePort();
+    const port = allocatePort(!!(master.profile || body.profile));
     if (port) metadata.port = port; // surfaced to the worker as $PORT (claude.js)
   }
   const parentDir =
@@ -3709,7 +3712,7 @@ async function wireFullChild(masterId: string, body: any): Promise<WireResult> {
     ...(subtask ? { subtask } : {}),
   };
   if (body.needsServer) {
-    const port = allocatePort();
+    const port = allocatePort(!!(master.profile || body.profile));
     if (port) metadata.port = port;
   }
   const parentDir =
@@ -7121,7 +7124,7 @@ export async function handle(
         if (body.metadata && typeof body.metadata === 'object' && body.metadata.needs_server === true) {
           delete body.metadata.needs_server;
           if (!s.metadata?.port) {
-            const port = allocatePort();
+            const port = allocatePort(!!(s as any).profile);
             if (port) body.metadata.port = port;
           }
         }
@@ -8681,7 +8684,7 @@ export async function handle(
     if (sub === 'allocate-port' && m === 'POST') {
       const existing = Number(s.metadata?.port);
       if (Number.isFinite(existing) && existing > 0) return json(res, { port: existing, existing: true });
-      const port = allocatePort();
+      const port = allocatePort(!!(s as any).profile);
       if (!port) return json(res, { error: 'port pool exhausted' }, 503);
       state.patchSession(id, { metadata: { port } });
       return json(res, { port, existing: false });

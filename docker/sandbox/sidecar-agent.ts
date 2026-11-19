@@ -23,6 +23,39 @@ const [bindHost, bindPort] = (process.env.SANDBOX_AGENT_LISTEN || '127.0.0.1:329
 const roots = String(process.env.SANDBOX_WORK_ROOTS || '').split(',').map((r) => r.trim()).filter((r) => r.startsWith('/'));
 const log = (m: string) => process.stderr.write(`[sandbox-agent] ${m}\n`);
 
+/**
+ * Every process of one session, wherever it went: the engine runs in its own process group, but a tool can start
+ * something in a group of its own (`setsid`, a dev server, a browser). They all inherit the session's env, so the
+ * session id in /proc/<pid>/environ finds them (same uid: readable). Never this agent itself.
+ */
+export function sessionPids(sessionId: string, procDir = '/proc', self = process.pid): number[] {
+  if (!/^[A-Za-z0-9_-]{1,80}$/.test(sessionId)) return [];
+  const want = Buffer.from(`ARIGAMI_SESSION_ID=${sessionId}\0`);
+  const out: number[] = [];
+  let entries: string[] = [];
+  try { entries = fs.readdirSync(procDir); } catch { return out; }
+  for (const e of entries) {
+    const pid = Number(e);
+    if (!Number.isInteger(pid) || pid <= 1 || pid === self) continue;
+    try {
+      const env = fs.readFileSync(path.join(procDir, e, 'environ'));
+      if (env.indexOf(want) === 0 || env.indexOf(Buffer.concat([Buffer.from('\0'), want])) >= 0) out.push(pid);
+    } catch { /* gone, or not ours */ }
+  }
+  return out;
+}
+
+/** End every process of the session: SIGTERM, then SIGKILL what is left after `graceMs`. */
+export async function endSession(sessionId: string, graceMs = 3000): Promise<number> {
+  const first = sessionPids(sessionId);
+  for (const pid of first) try { process.kill(pid, 'SIGTERM'); } catch {}
+  if (!first.length) return 0;
+  const t0 = Date.now();
+  while (Date.now() - t0 < graceMs && sessionPids(sessionId).length) await new Promise((r) => setTimeout(r, 100));
+  for (const pid of sessionPids(sessionId)) try { process.kill(pid, 'SIGKILL'); } catch {}
+  return first.length;
+}
+
 const within = (p: string, dir: string) => p === dir || p.startsWith(dir.endsWith('/') ? dir : dir + '/');
 
 /** The checks this side makes on a start request, whatever the host already checked. */
@@ -39,6 +72,14 @@ export function startError(h: { argv?: unknown; env?: unknown; cwd?: unknown }, 
 function serve(sock: net.Socket): void {
   const reader = new FrameReader();
   let child: ChildProcess | null = null;
+  let sessionId = '';
+  let ended = false;
+  // When the engine is gone, so is everything the session started (a container per session gets this from docker).
+  const endAll = () => {
+    if (ended || !sessionId) return;
+    ended = true;
+    void endSession(sessionId).then((n) => { if (n) log(`session ${sessionId}: ended ${n} leftover process(es)`); });
+  };
   let header = '';
   let headed = false;
   const send = (type: number, payload: Buffer | string) => { if (!sock.destroyed) sock.write(encodeFrame(type, payload)); };
@@ -61,6 +102,7 @@ function serve(sock: net.Socket): void {
       if (why) return fail(why);
       const env: Record<string, string> = {};
       for (const [k, v] of Object.entries(h.env)) if (typeof v === 'string') env[k] = v;
+      sessionId = env.ARIGAMI_SESSION_ID || '';
       // its own process group, so a signal reaches the engine's tool processes too
       child = spawn(h.argv[0], h.argv.slice(1), { cwd: h.cwd, env, stdio: ['pipe', 'pipe', 'pipe'], detached: true });
       child.stdout!.on('data', (b: Buffer) => send(FRAME.STDOUT, b));
@@ -68,6 +110,7 @@ function serve(sock: net.Socket): void {
       child.stdin!.on('error', () => {});
       child.on('error', (e) => fail(`cannot start ${h.argv[0]}: ${e.message}`));
       child.on('exit', (code, signal) => {
+        endAll();
         send(FRAME.EXIT, JSON.stringify({ code, signal }));
         sock.end();
       });
@@ -92,6 +135,7 @@ function serve(sock: net.Socket): void {
       killTree('SIGTERM');
       setTimeout(() => killTree('SIGKILL'), 5000).unref();
     }
+    endAll();
   };
   sock.on('close', gone);
   sock.on('error', () => sock.destroy());
