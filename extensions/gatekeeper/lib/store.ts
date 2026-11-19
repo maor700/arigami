@@ -44,6 +44,12 @@ export interface Config {
     /** user / bot / app ids whose thread roots a session may bind itself to (operators always count) */
     threadOpeners: string[];
     bindOnFirstUse: boolean;
+    /**
+     * TEST-ONLY. Slack app ids whose posts FOR a configured operator count as that operator's own word (a test harness
+     * that posts with the operator's user token through its own app). Empty = only messages Slack does not mark as a
+     * bot's count — keep it empty in production (decide.ts isTestApproverMessage).
+     */
+    testApproverApps: string[];
   };
   linear: { apiUrl: string; teamId: string; projectId: string | null };
   sentry: { baseUrl: string; org: string; project: string; alertRules: string[] };
@@ -61,7 +67,7 @@ export const DEFAULT_CONFIG: Config = {
     allowForcePush: false,
     autoMerge: { enabled: false, requiredChecks: [], approvers: [], minApprovals: 1 },
   },
-  slack: { apiUrl: 'https://slack.com/api', channel: '', operators: [], threadOpeners: [], bindOnFirstUse: true },
+  slack: { apiUrl: 'https://slack.com/api', channel: '', operators: [], threadOpeners: [], bindOnFirstUse: true, testApproverApps: [] },
   linear: { apiUrl: 'https://api.linear.app/graphql', teamId: '', projectId: null },
   sentry: { baseUrl: 'https://sentry.io', org: '', project: '', alertRules: [] },
   approvals: { maxAgeMin: 240, verbs: {} },

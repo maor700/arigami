@@ -33,7 +33,7 @@ A refusal reaches the model as `denied by the gatekeeper: <reason>`.
 |---|---|---|
 | `gatekeeper:slack.read` | `slack_read_thread`, `slack_read_channel`, `slack_bind_thread` | |
 | `gatekeeper:slack.post` | `slack_thread_say` (own thread only; no @channel/@here) , `slack_bind_thread` | |
-| `gatekeeper:github.read` | `github_get_pr`, `github_list_prs`, `github_run_logs` | |
+| `gatekeeper:github.read` | `github_get_pr`, `github_list_prs`, `github_run_logs`, `github_checkout` | |
 | `gatekeeper:github.push` | `github_push` | |
 | `gatekeeper:github.pr` | `github_open_pr`, `github_pr_note` | |
 | `gatekeeper:github.review` | `github_request_review` | |
@@ -54,6 +54,24 @@ needs `ext:gatekeeper` in its tools (the tab adds it).
 No tool name reads as "send / post / reply / comment": the host would turn those into owner Send cards. A restricted
 session's writes are already confined here (its own thread, its own repo, its team, its project), and running them
 autonomously inside those limits is the point.
+
+### TEST ONLY: `slack.testApproverApps`
+
+Empty by default. **Keep it empty in production.**
+
+A test harness often cannot make a person type in Slack. It posts the operator's words with the operator's user token
+through its own Slack app, so Slack marks the message with `bot_id` / `app_id`, and the gatekeeper rightly refuses it
+as "not a person's message". Listing that app's id makes such a message count, only when:
+
+- the message's `app_id` is in the list;
+- its `user` is a configured operator;
+- it is not a classic `bot_message`.
+
+Every other check stays as it is (the verb in its own words, not a quote, fresh, names no other PR, used once). A
+stranger posting through the same app is not an operator, the session's own bot is a bot user and never an operator,
+and display names or quotes are never read. Approvals that came this way are audited with `viaTestApp`. The read
+tools show such messages as the operator's (`bot: false, operatorViaTestApp: true`). The Permissions tab shows a
+warning while the list is non-empty.
 
 ### The incident thread
 
@@ -92,6 +110,26 @@ operator and that carries no `bot_id` is the operator, even when an app sent it 
 token that posted; a bot token always adds a `bot_id`, and display-name/icon overrides need a bot token too. The only
 way to post with `user: <operator>` and no `bot_id` is a user token of that operator — the operator, or an app the
 operator personally authorised to write as them (their own delegation).
+
+### The repo's source without a token: `github_checkout`
+
+A restricted session has no GitHub token and, in a sandbox, no github.com egress. It gets the code from the
+gatekeeper, and only for the one configured repo. A `repo` argument naming another repo is refused.
+
+- **The mirror.** The gatekeeper fetches every branch and tag into its own bare mirror,
+  `$ARIGAMI_DIR/gatekeeper/git/upstream/<owner>__<name>.git`. The installation token travels in an http header in the
+  env of that one git process, as for pushes.
+- **A new checkout.**
+  - It goes to `path`, relative to the session directory (default: the repo name). It must stay inside that directory:
+    `..`, absolute paths and symlinks out of it are refused. It must not exist yet, or must be empty.
+  - It is cloned and checked out in a gatekeeper-private temp dir, then copied in without overwriting anything.
+  - Origin is the plain `https://github.com/<repo>.git`. There is no token and no credential config anywhere in the
+    checkout.
+- **A refresh.** The same tool on an existing checkout: the gatekeeper never runs git inside a repo the session
+  controls, because its `.git/config` could make git run a command in the host's process. It writes a fresh bundle of
+  the mirror into the checkout's `.git` instead, and the session runs the returned `git fetch … .git/arigami-origin.bundle
+  …` itself. That is a local fetch with no network.
+- **Pushing.** `github_push` works from such a checkout as from any other.
 
 ### Pushing without a token
 

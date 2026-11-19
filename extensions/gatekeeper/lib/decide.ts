@@ -146,6 +146,22 @@ export function bindingCandidates(c: Caller, configuredChannel: string, named?: 
  */
 export const isBotMessage = (m: { bot_id?: string; subtype?: string }): boolean => !!m.bot_id || m.subtype === 'bot_message';
 
+/**
+ * TEST-ONLY (config `slack.testApproverApps`, empty by default): a bot-marked message still counts as its author's own
+ * word when ALL of these hold — the app that posted it is listed, its `user` is a configured operator, and it is not a
+ * classic `bot_message`. It exists for a test harness that can only post an operator's words through its own Slack
+ * app (with that operator's user token). A stranger through the same app is not an operator; the session's own bot is
+ * a bot user, never an operator; display names and quotes are never read. Leave the list empty in production.
+ */
+export function isTestApproverMessage(m: { user?: string; bot_id?: string; app_id?: string; subtype?: string }, operators: string[], testApproverApps: string[] | undefined): boolean {
+  if (!testApproverApps?.length || !isBotMessage(m)) return false;
+  return m.subtype !== 'bot_message' && !!m.app_id && testApproverApps.includes(m.app_id) && !!m.user && operators.includes(m.user);
+}
+
+/** A person's own message: not bot-marked, or a listed test approver app posting for an operator (see above). */
+export const isPersonMessage = (m: { user?: string; bot_id?: string; app_id?: string; subtype?: string }, operators: string[], testApproverApps?: string[]): boolean =>
+  !isBotMessage(m) || isTestApproverMessage(m, operators, testApproverApps);
+
 /** The session's incident thread: its own binding, else its nearest ancestor's (host-recorded lineage, parent first). */
 export function effectiveBinding(session: string, lineage: string[], bindings: Record<string, Binding>): (Binding & { from: string }) | null {
   for (const id of [session, ...lineage]) if (bindings[id]) return { ...bindings[id], from: id };
@@ -236,6 +252,8 @@ export interface ApprovalQuery {
   /** the bound thread's messages (conversations.replies), root first */
   messages: SlackMessage[];
   operators: string[];
+  /** TEST-ONLY: Slack app ids whose posts for an operator count as the operator's (isTestApproverMessage). */
+  testApproverApps?: string[];
   /** `${channel}:${ts}` already used */
   consumed: Set<string> | string[];
   nowMs: number;
@@ -247,7 +265,7 @@ export interface ApprovalQuery {
   notBeforeMs?: number | null;
 }
 
-export type ApprovalVerdict = { ok: true; approver: string; ts: string; channel: string; text: string } | { ok: false; reason: string };
+export type ApprovalVerdict = { ok: true; approver: string; ts: string; channel: string; text: string; viaTestApp?: string } | { ok: false; reason: string };
 
 /** Is there an operator's approval for this action in the session's own thread? Checked on the AUTHOR USER ID only. */
 export function findOperatorApproval(q: ApprovalQuery): ApprovalVerdict {
@@ -260,7 +278,7 @@ export function findOperatorApproval(q: ApprovalQuery): ApprovalVerdict {
   const consider = (m: SlackMessage): ApprovalVerdict | null => {
     const tag = `message ${m.ts}`;
     if (m.thread_ts !== q.binding!.thread_ts && m.ts !== q.binding!.thread_ts) return { ok: false, reason: `${tag} is not in the session's thread` };
-    if (isBotMessage(m)) return { ok: false, reason: `${tag} is not a person's message` };
+    if (!isPersonMessage(m, q.operators, q.testApproverApps)) return { ok: false, reason: `${tag} is not a person's message` };
     if (!m.user || !q.operators.includes(m.user)) return { ok: false, reason: `${tag} is by ${m.user || 'nobody'}, not an operator` };
     const age = (q.nowMs - Number(m.ts) * 1000) / 60_000;
     if (!(age <= q.maxAgeMin)) return { ok: false, reason: `${tag} is older than ${q.maxAgeMin} min` };
@@ -271,7 +289,8 @@ export function findOperatorApproval(q: ApprovalQuery): ApprovalVerdict {
     const nums = numbersIn(m.text || '');
     if (q.action.startsWith('github.') && nums.length && !nums.includes(String(q.target))) return { ok: false, reason: `${tag} names #${nums.join(', #')}, not #${q.target}` };
     if (used.has(`${q.binding!.channel}:${m.ts}`)) return { ok: false, reason: `${tag} was already used for an earlier action` };
-    return { ok: true, approver: m.user, ts: m.ts, channel: q.binding!.channel, text: String(m.text || '').slice(0, 200) };
+    const viaTestApp = isTestApproverMessage(m, q.operators, q.testApproverApps) ? m.app_id : undefined;
+    return { ok: true, approver: m.user, ts: m.ts, channel: q.binding!.channel, text: String(m.text || '').slice(0, 200), ...(viaTestApp ? { viaTestApp } : {}) };
   };
   if (q.approvalTs) {
     const m = q.messages.find((x) => x.ts === q.approvalTs);

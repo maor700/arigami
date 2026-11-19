@@ -29,6 +29,9 @@ import { isRestrictive, disallowedToolsFor, hookSettings, strictMcpFor, serverRe
 import { policyForSession, spawnEnvFor } from './session-profile.js';
 import * as sandbox from './lib/sandbox.js';
 import * as limits from './profile-limits.js';
+import { setSandboxedCheck } from './session-profile.js';
+// Restricted sessions in a sandbox: the host's own browser/screen tools would act outside the container (session-profile.ts).
+setSandboxedCheck((s) => sandbox.isSandboxed(s));
 import { appendActivity, budgetState, localDay, budgetRefusal, turnBlocked } from './agent-ledger.js';
 import { auth } from './auth.js';
 import { ensureUserPlugin, USER_SKILLS_DIR } from './skills.js';

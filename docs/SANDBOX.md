@@ -78,6 +78,11 @@ without valid credentials is refused.
 A benchmark reads it with `denyPattern: "\"decision\":\"DENIED\""`. The proxy log is the egress evidence: denied
 destinations, and allowed ones with the session that used them.
 
+**Repo source.** A sandbox has no github.com egress, and should not get it: an attacker's own token would make it an
+exfiltration path. With the gatekeeper on, a session gets the configured repo's code through `github_checkout`: the
+gatekeeper's mirror is copied into its own directory, with no token in it. Later fetches go through a bundle the
+session fetches locally, and pushes through `github_push` (`extensions/gatekeeper/README.md`).
+
 ## What is mounted
 
 | path | mode | why |
@@ -122,6 +127,29 @@ nothing of the other engine. This is the one secret left inside a sandbox. Remov
 
 The consequence for codex: it cannot refresh its own login inside the sandbox. If the access token expires during a
 long run, the turn fails with 401. The next spawn picks up the host's refreshed login.
+
+## Its own browser (desktop "own")
+
+A sandboxed session whose profile has `desktop: "own"` (or `"shared"`) gets its own browser inside its own container.
+It is a headless Chromium driven by a Playwright MCP server, which the host adds to that session's engine:
+claude's `--mcp-config`, or codex's per-session `config.toml`.
+
+- **Its tools are `mcp__playwright__*`.** The profile's flags allow them for `own`/`shared` without the allowlist
+  naming them, and deny them for `none`. With `none` the server is not added at all.
+- **The browser is confined.**
+  - Its profile lives in memory (`isolated`).
+  - Every request goes through the session's egress proxy with the session's own credentials, so the same allowlist
+    and deny log apply. Only the container's own loopback is reached directly, so it can open the session's own dev
+    server.
+  - It is never given a user-data dir, a CDP endpoint or an extension bridge, so it can never be the owner's Chrome.
+  - Screenshots and page snapshots land in the session's scratch dir.
+- **The host's own browser and screen tools are denied in a sandbox** (`browser_*`, `capture_screen`, `desktop_*`,
+  `request_screen`). They would act outside the container, on a Chrome and a desktop terminal with the host's network.
+  `sign_in`, the vault and the shared desktop are denied for `own` as before. The owner's signed-in Chrome is
+  therefore out of reach (S08).
+- Without a sandbox, a restricted `desktop: "own"` session keeps the host's per-session Chrome on its own display
+  (unchanged). A Playwright MCP registered for the user is allowed there too. The bench image registers one that runs
+  an `--isolated` headless Chrome, never the owner's.
 
 ## Concurrency and spend caps (S15)
 
@@ -185,10 +213,8 @@ restricted sessions' requests with their own token pass the listener: any other 
   - On **Windows**, container paths must be POSIX. The planner and argv rewriting assume POSIX paths today, so the
     Windows host needs `pathMap` from `C:\…` to the `/run/desktop/mnt/host/c/…` form. Without it, sessions refuse to
     start rather than run unsandboxed. This is designed and not yet tested.
-- **The desktop:** `desktop: "own"` in a sandboxed session still gets its own display and Chrome from the host's desktop
-  manager, never the owner's, as in the unsandboxed restricted mode. Moving that display into the container is the
-  next step: the image would add Xvfb + Chromium, and the host would reach VNC/CDP through `docker exec` pipes. Until
-  then, use `desktop: "none"` for the strongest isolation.
+- **The desktop:** see "Its own browser" above. A sandboxed session never gets the host's display, the host's Chrome
+  or the shared desktop.
 
 ## Kubernetes: a sandbox container in the tenant's pod (`sandbox.mode: "sidecar"`)
 

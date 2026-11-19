@@ -198,5 +198,28 @@ describe('the spawn in sidecar mode (server/lib/sandbox.ts)', () => {
     const o = run(d, work, `emit({in:sb.workRootOf(${JSON.stringify(path.join(work, 'repo'))}),out:sb.workRootOf('/'),self:sb.workRootOf(${JSON.stringify(work)})});`);
     expect(o).toEqual({ in: fs.realpathSync(work), out: null, self: fs.realpathSync(work) });
   });
+
+  test('desktop "own": its own headless browser in the sidecar — the image\'s Chrome, every request through its own proxy credentials', () => {
+    const d = tmpDir('arigami-sbxc-');
+    const work = tmpDir('arigami-sbxc-work-');
+    const r = runInChild(
+      "const sb=await import('./server/lib/sandbox.ts');" +
+        `const go=(desktop)=>{const r=sb.wrapSpawn({id:'s_'+desktop,profile:{name:'p',desktop}},{bin:'/bin/true',args:['-p'],env:{},cwd:${JSON.stringify(work)}},'claude');const s=JSON.parse(require('fs').readFileSync(r.args[1],'utf8'));require('fs').rmSync(r.args[1]);return s;};` +
+        "emit({own:go('own'),none:go('none')});",
+      { ...env(d, work), CHROME_BIN: '/bin/true' }
+    );
+    if (!r.ok) throw new Error(r.error);
+    const { own, none } = r.out[0] as any;
+    expect(none.argv).toEqual([fs.realpathSync('/bin/true'), '-p']);
+    const i = own.argv.indexOf('--mcp-config');
+    expect(i).toBeGreaterThan(0);
+    const server = JSON.parse(own.argv[i + 1]).mcpServers.playwright;
+    expect(server.command).toBe('playwright-mcp');
+    const conf = JSON.parse(fs.readFileSync(server.args[1], 'utf8'));
+    expect(conf.browser.launchOptions.executablePath).toBe(fs.realpathSync('/bin/true'));
+    expect(conf.browser.launchOptions.proxy).toMatchObject({ server: 'http://127.0.0.1:3128', username: 's_own', bypass: 'localhost,127.0.0.1' });
+    expect(conf.browser.launchOptions.proxy.password).toBe(own.env.HTTPS_PROXY.split(':')[2].split('@')[0]);
+    expect(conf.browser.isolated).toBe(true);
+  });
 });
 
