@@ -141,6 +141,7 @@ export const strings = {
   'launcher.options.engine': 'Engine',
   'launcher.options.engineClaudeDesc': 'Anthropic Claude Code — the default engine',
   'launcher.options.engineCodexDesc': 'OpenAI Codex CLI',
+  'launcher.options.engineGeminiDesc': 'Google Gemini, through the Antigravity CLI (agy)',
   'launcher.options.codexModelDefaultDesc': "Use Codex's own default model",
   'launcher.options.noSkill': 'No skill — blank chat',
 
@@ -355,6 +356,9 @@ export const strings = {
   'launcher.account.typeCodexHome': 'this machine’s codex login',
   'launcher.account.typeChatgpt': 'ChatGPT login',
   'launcher.account.typeApiKey': 'API key',
+  'launcher.account.usageAfterRun': 'Usage shows up after {provider} next runs.',
+  'launcher.account.typeGeminiHome': 'this machine’s agy login',
+  'launcher.account.localOnlyBody': '{provider} runs on this machine’s own sign-in. Sign in once with its CLI on the host (`agy`) and the account appears here by itself.',
   // providers (the add-account chooser + the card badge)
   'launcher.account.providerLabel': 'Provider',
   'launcher.account.providerHint':

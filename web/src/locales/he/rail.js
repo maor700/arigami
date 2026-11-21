@@ -194,6 +194,8 @@ export const strings = {
   // ל-Codex אין מצבים בכלל — ראו docs/ENGINES.md.
   'rail.permCodexAskDesc': "Codex שואל לפני הרצת פקודות או עריכת קבצים (כרטיס בצ'אט).",
   'rail.permCodexBypassDesc': 'Codex לא שואל (או לפי מדיניות האישורים של המארח). ה-worktree הוא הגבול.',
+  'rail.permEngineAskDesc': "{engine} שואל לפני פקודות וכלים (כרטיס בצ'אט); על עריכות קבצים בתיקיית העבודה הוא לא שואל.",
+  'rail.permEngineBypassDesc': '{engine} לא שואל. ה-worktree הוא הגבול.',
   'rail.noPermissionModes': 'ל-{engine} אין מצבי הרשאה — הוא תמיד רץ בלי sandbox ובלי לשאול. ה-worktree הוא הגבול.',
   'rail.claudeWorkingSwitch': '{engine} עובד — מעבר יעצור את הריצה הנוכחית.',
   'rail.appliesToTerminal': 'חל על סשן הטרמינל הזה.',

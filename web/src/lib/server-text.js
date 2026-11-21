@@ -4,7 +4,7 @@
 import { t } from './i18n.js';
 
 const RULES = [
-  [/^(?:claude|codex) exited \d+:.*(?:not logged in|\/login|unauthori[sz]ed|auth)/i, 'server.engineNotSignedIn'],
+  [/^(?:claude|codex|gemini|agy) exited \d+:.*(?:not logged in|\/login|unauthori[sz]ed|auth)/i, 'server.engineNotSignedIn'],
   [/not logged in|please run \/login|^not signed in$/i, 'server.engineNotSignedIn'],
   [/^display :?\d+ not reachable/i, 'server.desktopDown'],
   [/^screen disabled/i, 'server.desktopOff'],

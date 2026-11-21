@@ -81,8 +81,8 @@ test('one-engine gate + P1-11: Start needs either engine; usage, Connections and
   expect(fs.readFileSync(web('components/setup/EngineConnect.jsx'), 'utf8')).toMatch(/id: 'codex'.*flow: 'codex'/);
   expect(fs.readFileSync(web('components/Wizard.jsx'), 'utf8')).toMatch(/step\.id === 'codex'/);
   const rail = fs.readFileSync(web('components/Rail.jsx'), 'utf8');
-  expect(rail).toMatch(/activeEngine === 'codex'/);
-  expect(rail).toMatch(/<UsageMini usage=\{activeUsage\} provider=\{activeEngine\} \/>/);
+  expect(rail).toMatch(/activeProvider !== 'claude'/); // codex and gemini read their own provider's active account
+  expect(rail).toMatch(/<UsageMini usage=\{activeUsage\} provider=\{activeProvider\} \/>/);
   expect(fs.readFileSync(web('components/settings/Connections.jsx'), 'utf8')).toMatch(/OWN_SECTION = new Set\(\[[^\]]*'codex'/);
   expect(fs.readFileSync(web('locales/en/host.js'), 'utf8')).not.toMatch(/No Claude accounts/);
 });

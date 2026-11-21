@@ -183,15 +183,16 @@ test('a Claude model is NOT dropped while its list is still loading', () => {
 
 /* ---------- the engine choice is a VISIBLE toggle, not a hidden select ---- */
 
-test('the engine choice is a two-button radio group, not a <select> among the others', () => {
+test('the engine choice is a radio group with one button per engine, not a <select> among the others', () => {
   const html = render(h(Launcher.EngineToggle, { options: { engine: '', skill: '', model: '', effort: '' }, onChange() {} }));
-  // a select would bury the alternative one click deep; both engines must be
+  // a select would bury the alternatives one click deep; every engine must be
   // readable without opening anything
   expect(html).not.toContain('<select');
   expect(html).toContain('role="radiogroup"');
-  expect((html.match(/role="radio"/g) || []).length).toBe(2);
+  expect((html.match(/role="radio"/g) || []).length).toBe(3);
   expect(html).toContain('Claude');
   expect(html).toContain('Codex');
+  expect(html).toContain('Gemini');
   // and the current one is marked, not just styled
   expect(html).toMatch(/aria-checked="true"[^>]*>Claude</);
   const codex = render(h(Launcher.EngineToggle, { options: { engine: 'codex' }, onChange() {} }));
@@ -266,7 +267,7 @@ test('a codex host default: the toggle starts on Codex, picking Claude sends it 
     expect(engines.coerceSessionOptions({ engine: 'claude' }).engine).toBe('claude');
     expect(engines.coerceSessionOptions({ engine: 'codex' }).engine).toBe('');
     expect(render(h(Launcher.SessionOptionsPicker, { options: { engine: '', skill: '', model: '', effort: '' }, onChange() {} }))).toContain('GPT-5.6-Terra');
-    engines.setDefaultEngine('gemini');
+    engines.setDefaultEngine('nope');
     expect(engines.DEFAULT_ENGINE).toBe('claude');
   } finally {
     engines.setDefaultEngine('claude');

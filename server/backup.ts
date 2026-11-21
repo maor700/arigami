@@ -192,7 +192,7 @@ function packageVersion(): string {
  * CLI-invokable module has no business paying for. The two are asserted
  * identical in test/backup.test.ts.
  */
-const LOCAL_TYPES = new Set(['keychain', 'codex-home']);
+const LOCAL_TYPES = new Set(['keychain', 'codex-home', 'gemini-home']);
 export function sanitizeAccountsForExport(raw: { activeId?: string | null; activeIds?: Record<string, string | null>; accounts?: any[] } | null): any {
   if (!raw || !Array.isArray(raw.accounts)) return raw;
   if (!raw.accounts.some((a) => a && LOCAL_TYPES.has(a.type))) return raw; // nothing to rewrite — same reference, byte-identical on re-serialize

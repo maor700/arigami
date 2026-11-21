@@ -24,6 +24,10 @@
 //   session's $CODEX_HOME symlinks its auth.json to it (server/codex.ts) —
 //   exactly the way a keychain account is a live pointer, not a copy.
 //
+// Gemini account types:
+//   - gemini-home  : the machine's own `agy` login (~/.gemini), a live pointer like
+//                    `codex-home`; agy owns its token file, the host only reads it.
+//
 // Claude tokens are kept portably in accounts.json under the state dir (macOS
 // ~/.arigami, Linux/K8s /data — same code path), the file is chmod 600, and
 // oauth-token secrets are encrypted at rest with a key derived from
@@ -43,6 +47,7 @@ import { HOME } from './lib/platform.js';
 import { cfg } from './lib/config.js';
 import { broadcast } from './bus.js';
 import { PROVIDERS, DEFAULT_PROVIDER, normalizeProvider, isProviderId } from './lib/providers.js';
+import { hasLocalGeminiLogin } from './lib/gemini-home.js';
 
 const STATE_DIR = cfg.stateDir || cfg.configDir;
 const FILE = path.join(STATE_DIR, 'accounts.json');
@@ -247,6 +252,17 @@ function seed() {
     });
     dirty = true;
   }
+  if (hasLocalGeminiLogin() && !store.accounts.some((a) => a.type === 'gemini-home')) {
+    store.accounts.push({
+      id: uid(),
+      label: 'Default (Gemini login)',
+      provider: 'gemini',
+      type: 'gemini-home',
+      pool: true,
+      addedAt: new Date().toISOString(),
+    });
+    dirty = true;
+  }
   const envTok = process.env.CLAUDE_CODE_OAUTH_TOKEN;
   // Dedup on the sealed token OR the importedFromEnv marker: after a
   // ARIGAMI_SECRET rotation `open()` returns '' for every existing sealed
@@ -291,10 +307,20 @@ export function initAccounts() {
   return listAccounts();
 }
 
+/** Adopt a local login made after boot (`agy`, `codex login`, `claude`) — idempotent; true when an account was added. */
+export function adoptLocalLogins() {
+  const n = store.accounts.length;
+  seed();
+  if (store.accounts.length === n) return false;
+  broadcast({ type: 'accounts-updated', accounts: listAccounts() });
+  return true;
+}
+
 // ---- B4 backup portability (#2) ----------------------------------------------
 // A `keychain` account is a live pointer into THIS machine's OS credential
 // store (macOS Keychain, or ~/.claude/.credentials.json) — it cannot travel;
-// a `codex-home` account is the same kind of pointer into ~/.codex. Shipping
+// a `codex-home` account is the same kind of pointer into ~/.codex, and a
+// `gemini-home` account into ~/.gemini. Shipping
 // either as-is in a backup is a dead reference that only fails once a session
 // on the new machine tries to authenticate. exportFull() (backup.ts) calls this
 // to rewrite accounts.json before it goes into the archive: the record is KEPT
@@ -304,7 +330,7 @@ export function initAccounts() {
 // `pool: false` so auto-pick never round-robins into it. `oauth-token`,
 // `chatgpt` and `api-key` accounts are untouched — their credential travels
 // (the codex-accounts/ directory rides in the same archive).
-const LOCAL_TYPES = new Set(['keychain', 'codex-home']);
+const LOCAL_TYPES = new Set(['keychain', 'codex-home', 'gemini-home']);
 export function sanitizeAccountsForExport(raw) {
   if (!raw || !Array.isArray(raw.accounts)) return raw;
   if (!raw.accounts.some((a) => a && LOCAL_TYPES.has(a.type))) return raw; // nothing to rewrite — same reference, byte-identical on re-serialize
@@ -355,7 +381,8 @@ export function listAccounts() {
 
 // Resolve the raw bearer token for a CLAUDE account (keychain read is live).
 // Codex accounts have no bearer token to hand out — their credential is the
-// auth.json codex reads itself (codexAuthPathFor).
+// auth.json codex reads itself (codexAuthPathFor); a gemini account's is the
+// token file agy reads itself.
 export function resolveToken(idOrAccount) {
   const a = typeof idOrAccount === 'string' ? getAccount(idOrAccount) : idOrAccount;
   if (!a || a.provider !== 'claude') return null;
@@ -397,12 +424,13 @@ export function claudeAuthEnv(accountId) {
 
 // True if the host can resolve at least one usable credential for a provider —
 // claude: a live macOS keychain login OR a stored oauth-token; codex: any codex
-// account whose auth.json exists. On macOS the keychain login is NOT a file/env
+// account whose auth.json exists; gemini: the machine's agy login. On macOS the keychain login is NOT a file/env
 // var, so onboarding's auth gate must ask here instead of just probing
 // ~/.claude/.credentials.json (which would falsely report "unauthed" for a
 // subscription login that lives only in the keychain).
 export function hasCredentials(provider = DEFAULT_PROVIDER) {
   if (!store.accounts.length) load();
+  if (normalizeProvider(provider) === 'gemini') return hasLocalGeminiLogin();
   if (normalizeProvider(provider) === 'codex') {
     return store.accounts.some((a) => a.provider === 'codex' && fs.existsSync(path.join(codexHomeOfAccount(a), 'auth.json')));
   }

@@ -81,6 +81,15 @@ async function fetchUsage(accountId) {
       return { available: false, reason: 'fetch-failed' };
     }
   }
+  // A gemini account's quota is Google's 5-hour bucket (server/gemini-account.ts, its own 5-minute cache).
+  if (getAccount(accountId)?.provider === 'gemini') {
+    try {
+      const m = await import('./gemini-account.js');
+      return await m.geminiUsage();
+    } catch {
+      return { available: false, reason: 'fetch-failed' };
+    }
+  }
   const token = resolveToken(accountId);
   if (!token) return { available: false, reason: 'no-credentials' };
   try {
@@ -104,7 +113,7 @@ async function fetchUsage(accountId) {
 // Reasons that say nothing about the account itself — the endpoint throttled us
 // or the network blipped. A real state (http-401, no-credentials) replaces the
 // last reading; a transient one must not, or the rail meter vanishes.
-const TRANSIENT = new Set(['usage-throttled', 'fetch-failed']);
+const TRANSIENT = new Set(['usage-throttled', 'fetch-failed', 'token-expired']);
 
 // The last reading persisted in accounts.json, rebuilt as a usage object — what
 // survives a host restart when the first live fetch is throttled.
@@ -185,6 +194,14 @@ async function identityOf(accountId) {
     try {
       const m = await import('./codex-account.js');
       const ident = await m.codexIdentity(codexHomeOfAccount(a));
+      return { email: ident.email, plan: ident.plan };
+    } catch {
+      return {};
+    }
+  }
+  if (a.provider === 'gemini') {
+    try {
+      const ident = await (await import('./gemini-account.js')).geminiIdentity();
       return { email: ident.email, plan: ident.plan };
     } catch {
       return {};
@@ -285,9 +302,10 @@ export function startUsagePolling() {
           if (a.id === activeId) broadcast({ type: 'usage-updated', usage: data });
         }
         // One-shot identity fill (keychain accounts resolve; setup-tokens don't).
-        if (!a.email && !identTried.has(a.id)) {
-          identTried.add(a.id);
+        // gemini: the plan needs a live token, so keep asking (a cached, local read) until it is known.
+        if ((!a.email || (a.provider === 'gemini' && !a.plan)) && !identTried.has(a.id)) {
           const ident = await identityOf(a.id);
+          if (a.provider !== 'gemini' || ident.plan) identTried.add(a.id);
           const patch = {};
           for (const k of ['email', 'org', 'plan']) if (ident[k]) patch[k] = ident[k];
           if (Object.keys(patch).length) patchAccount(a.id, patch);

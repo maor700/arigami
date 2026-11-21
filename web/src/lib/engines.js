@@ -1,7 +1,7 @@
 // Which agent-engine CLI a new session is born on, and what the two pickers
 // standing next to that choice are allowed to offer.
 //
-// `session.engine` ('claude' | 'codex') is read at every spawn by pickEngine()
+// `session.engine` ('claude' | 'codex' | 'gemini') is read at every spawn by pickEngine()
 // (server/lib/engine-driver.ts). It is the FIRST of the launcher's four
 // selects because it decides the contents of two of the others: the model list
 // and the effort scale are engine-specific, not a shared vocabulary that
@@ -16,6 +16,8 @@
 //            — the catalog is per login. lib/models.js hands the rows to
 //            setCodexCatalog(); CODEX_MODELS below is only the fallback shown
 //            until that first fetch lands.
+//   gemini — families from the same GET /models (`agy models`, setGeminiCatalog()); GEMINI_MODELS is the fallback.
+//            agy bakes the effort into the id (gemini-4-neon-high): model = the family, effort = the suffix.
 //
 // Why the effort scales are NOT shared (the thing not to "simplify"):
 // `claude --effort` is a flag with one fixed ladder for every model. Codex has
@@ -27,7 +29,7 @@
 import { t } from './i18n.js';
 import { EFFORT_OPTIONS } from './effort.js';
 
-export const ENGINE_IDS = ['claude', 'codex'];
+export const ENGINE_IDS = ['claude', 'codex', 'gemini'];
 // Host default (cfg.defaultEngine from GET /__api/config, set by store.loadConfig); '' in the launcher/agent forms means this.
 export let DEFAULT_ENGINE = 'claude';
 
@@ -51,9 +53,16 @@ export function resolveEngine(engine) {
 // talking to ("Codex is working…", "Reply to Codex…"); `term` is the CLI-ish
 // lowercase form the terminal header wears next to the session name.
 const ENGINE_NAMES = {
-  claude: { label: 'Claude Code', term: 'claude-code' },
-  codex: { label: 'Codex', term: 'codex' },
+  claude: { label: 'Claude Code', term: 'claude-code', short: 'Claude' },
+  codex: { label: 'Codex', term: 'codex', short: 'Codex' },
+  gemini: { label: 'Gemini', term: 'gemini', short: 'Gemini' },
 };
+
+/** The one-word engine name for a rail row, or null when the session runs on the host default (nothing to say). */
+export function engineBadge(engine) {
+  const e = normalizeEngine(engine);
+  return e === DEFAULT_ENGINE ? null : ENGINE_NAMES[e].short;
+}
 
 /**
  * How to NAME this session's engine in UI copy.
@@ -77,20 +86,40 @@ export function setCodexTransport(transport) {
   CODEX_TRANSPORT = transport === 'exec' ? 'exec' : 'app-server';
 }
 
-/** Does this engine have permission modes? claude: all four; codex app-server: bypass vs ask; codex exec: none (docs/ENGINES.md). */
+/** Does this engine have permission modes? claude and gemini: all four; codex app-server: bypass vs ask; codex exec: none (docs/ENGINES.md). */
 export function hasPermissionModes(engine) {
-  return normalizeEngine(engine) === 'claude' || CODEX_TRANSPORT === 'app-server';
+  return permissionModesFor(engine).length > 0;
 }
 
 /** The permission modes this engine offers (values of the cockpit picker). */
 export function permissionModesFor(engine) {
-  if (normalizeEngine(engine) === 'claude') return ['default', 'acceptEdits', 'plan', 'bypassPermissions'];
+  const e = normalizeEngine(engine);
+  if (e === 'claude' || e === 'gemini') return ['default', 'acceptEdits', 'plan', 'bypassPermissions']; // gemini: agy's own accept-edits / plan modes
   return CODEX_TRANSPORT === 'app-server' ? ['default', 'bypassPermissions'] : [];
 }
 
-/** Can this engine compact its context? codex only on app-server (thread/compact/start). */
+/** Locale key for a mode whose meaning differs from claude's on this engine (`{engine}` placeholder for gemini); null = the option's own description. */
+export function permDescKey(engine, mode) {
+  const e = normalizeEngine(engine);
+  if (e === 'codex') return mode === 'default' ? 'rail.permCodexAskDesc' : 'rail.permCodexBypassDesc';
+  if (e === 'gemini' && mode === 'default') return 'rail.permEngineAskDesc'; // agy never asks about workspace file edits
+  if (e === 'gemini' && mode === 'bypassPermissions') return 'rail.permEngineBypassDesc';
+  return null;
+}
+
+/** Does a permission-mode change wait for the next turn instead of stopping the running one? (every engine but claude) */
+export function permAppliesNextTurn(engine) {
+  return normalizeEngine(engine) !== 'claude';
+}
+
+/** Can this engine compact its context (now and by threshold)? codex only on app-server (thread/compact/start); gemini through agy's own /compact. */
 export function supportsCompaction(engine) {
-  return normalizeEngine(engine) === 'claude' || CODEX_TRANSPORT === 'app-server';
+  return normalizeEngine(engine) !== 'codex' || CODEX_TRANSPORT === 'app-server';
+}
+
+/** Is the session's CLI the `claude` one? Gates what only talks about it: /usage, the CLI-update badge, "refresh model list". */
+export function isClaudeEngine(engine) {
+  return normalizeEngine(engine) === 'claude';
 }
 
 /** Lowercase CLI-ish name for the terminal header. */
@@ -104,6 +133,7 @@ export function engineOptions() {
   return [
     { value: 'claude', label: 'Claude', desc: t('launcher.options.engineClaudeDesc') },
     { value: 'codex', label: 'Codex', desc: t('launcher.options.engineCodexDesc') },
+    { value: 'gemini', label: 'Gemini', desc: t('launcher.options.engineGeminiDesc') },
   ];
 }
 
@@ -173,6 +203,53 @@ export function codexCommonEfforts() {
   return commonEfforts(codexCatalog());
 }
 
+// Gemini families (FALLBACK — see geminiCatalog()); unpinned, agy runs Neon at High.
+export const GEMINI_DEFAULT_MODEL = 'gemini-4-neon';
+export const GEMINI_DEFAULT_EFFORT = 'high';
+export const GEMINI_MODELS = [
+  { value: 'gemini-4-neon', label: 'Gemini 4 Neon', desc: '', efforts: ['low', 'medium', 'high', 'xhigh'], defaultEffort: 'high' },
+  { value: 'gemini-4-argon', label: 'Gemini 4 Argon', desc: '', efforts: ['low', 'medium', 'high'], defaultEffort: 'high' },
+  { value: 'gemini-4-hydrogen', label: 'Gemini 4 Hydrogen', desc: '', efforts: ['low', 'medium', 'high', 'xhigh'], defaultEffort: 'high' },
+  { value: 'gemini-3.8-flash', label: 'Gemini 3.8 Flash', desc: '', efforts: ['low', 'medium', 'high'], defaultEffort: 'high' },
+];
+
+let liveGeminiModels = null;
+
+/** Adopt the server's Gemini families ({id, name, efforts, defaultEffort}); null/empty = keep the fallback. */
+export function setGeminiCatalog(rows) {
+  liveGeminiModels =
+    Array.isArray(rows) && rows.length
+      ? rows
+          .filter((r) => r && typeof r.id === 'string' && Array.isArray(r.efforts) && r.efforts.length)
+          .map((r) => ({ value: r.id, label: r.name || r.id, desc: r.desc || '', efforts: r.efforts, defaultEffort: r.defaultEffort || null }))
+      : null;
+  if (liveGeminiModels && !liveGeminiModels.length) liveGeminiModels = null;
+  return liveGeminiModels;
+}
+
+/** The Gemini families the picker offers right now: the live catalog, else the fallback. */
+export function geminiCatalog() {
+  return liveGeminiModels || GEMINI_MODELS;
+}
+
+/** The catalog of an engine that has one in this module (codex, gemini); [] for claude (its list is fetched). */
+export function catalogFor(engine) {
+  const e = normalizeEngine(engine);
+  return e === 'codex' ? codexCatalog() : e === 'gemini' ? geminiCatalog() : [];
+}
+
+/** The catalog entry behind a model value on any engine, or null. */
+export function catalogModel(model, engine) {
+  const lists = engine ? [catalogFor(engine)] : [codexCatalog(), geminiCatalog()];
+  // agy reports the running model with its effort baked in (gemini-4-neon-high) — that is the family's row.
+  const family = String(model || '').replace(/-(low|medium|high|xhigh|max)$/, '');
+  for (const l of lists) {
+    const hit = l.find((m) => m.value === model) || (l === geminiCatalog() ? l.find((m) => m.value === family) : null);
+    if (hit) return hit;
+  }
+  return null;
+}
+
 const EFFORT_KEY = {
   minimal: 'rail.effortMinimal',
   low: 'rail.effortLow',
@@ -189,7 +266,15 @@ const EFFORT_KEY = {
  * pure and testable (the one GET /models carries both engines' catalogs).
  */
 export function modelOptionsFor(engine, claudeModels) {
-  if (normalizeEngine(engine) !== 'codex') return claudeModels || [];
+  const e = normalizeEngine(engine);
+  if (e === 'gemini') {
+    const def = geminiCatalog().find((m) => m.value === GEMINI_DEFAULT_MODEL) || geminiCatalog()[0];
+    return [
+      { value: 'default', label: t('rail.effortDefault'), desc: def.label },
+      ...geminiCatalog().map(({ value, label, desc }) => ({ value, label, desc })),
+    ];
+  }
+  if (e !== 'codex') return claudeModels || [];
   return [
     { value: 'default', label: t('rail.effortDefault'), desc: t('launcher.options.codexModelDefaultDesc') },
     ...codexCatalog().map(({ value, label, desc }) => ({ value, label, desc })),
@@ -209,9 +294,17 @@ export function codexModel(model) {
  * model's `default_reasoning_level` stand.
  */
 export function effortOptionsFor(engine, model) {
-  if (normalizeEngine(engine) !== 'codex') return EFFORT_OPTIONS;
-  const m = codexModel(model);
-  const levels = m ? m.efforts : codexCommonEfforts();
+  const e = normalizeEngine(engine);
+  if (e === 'claude') return EFFORT_OPTIONS;
+  let levels;
+  if (e === 'gemini') {
+    // No model pinned = the default family, whose ladder is known (unlike codex's).
+    const g = catalogModel(model, 'gemini') || catalogModel(GEMINI_DEFAULT_MODEL, 'gemini') || geminiCatalog()[0];
+    levels = g.efforts;
+  } else {
+    const m = codexModel(model);
+    levels = m ? m.efforts : codexCommonEfforts();
+  }
   return [
     { value: 'default', label: t('rail.effortDefault') },
     ...levels.map((e) => ({ value: e, label: EFFORT_KEY[e] ? t(EFFORT_KEY[e]) : e })), // a rung with no label yet shows as-is
@@ -241,9 +334,9 @@ export function coerceSessionOptions(options, claudeModels) {
   const known = modelOptionsFor(engine, claudeModels);
   if (out.model) {
     const listed = known.some((o) => o.value === out.model);
-    // Claude with an unloaded list → keep. Codex always has a list (live or
-    // fallback), so an unlisted value there is genuinely wrong.
-    if (!listed && (engine === 'codex' || (claudeModels && claudeModels.length))) out.model = '';
+    // Claude with an unloaded list → keep. Codex and Gemini always have a list
+    // (live or fallback), so an unlisted value there is genuinely wrong.
+    if (!listed && (engine !== 'claude' || (claudeModels && claudeModels.length))) out.model = '';
   }
   if (out.effort && !effortOptionsFor(engine, out.model).some((o) => o.value === out.effort)) out.effort = '';
   return out;

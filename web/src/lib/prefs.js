@@ -97,7 +97,7 @@ function sanitizeSessionOptions(o) {
     // '' = claude (the default engine) — same "unset means claude" rule the
     // server's pickEngine() uses, so a preset saved before engines existed
     // keeps launching Claude sessions.
-    engine: p.engine === 'codex' ? 'codex' : '',
+    engine: p.engine === 'codex' || p.engine === 'gemini' ? p.engine : '',
     skill: typeof p.skill === 'string' ? p.skill : '',
     model: typeof p.model === 'string' ? p.model : '',
     effort: typeof p.effort === 'string' ? p.effort : '',

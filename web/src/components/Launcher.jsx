@@ -19,7 +19,7 @@ import {
   setModeDefaultSessionPreset,
 } from '../lib/prefs.js';
 import { useModels } from '../lib/models.js';
-import { modelOptionsFor, effortOptionsFor, coerceSessionOptions, resolveEngine, permissionModesFor, normalizeEngine } from '../lib/engines.js';
+import { modelOptionsFor, effortOptionsFor, coerceSessionOptions, resolveEngine, permissionModesFor, permDescKey, engineLabel } from '../lib/engines.js';
 import { extLauncherItems, findExtension } from '../lib/ext.js';
 import { cn } from '../lib/utils.js';
 import ExtLauncherPane from './ExtLauncherPane.jsx';
@@ -1053,7 +1053,6 @@ export function PermissionPicker({ value, onChange, engine, label }) {
   const name = useId();
   const allowed = permissionModesFor(engine);
   if (!allowed.length) return null; // the engine has no modes to pick from
-  const codex = normalizeEngine(engine) === 'codex';
   const current = permissionModeForEngine(value, engine);
   return (
     <fieldset className="flex min-w-0 flex-col gap-1.5">
@@ -1061,7 +1060,7 @@ export function PermissionPicker({ value, onChange, engine, label }) {
       <div role="radiogroup" aria-label={label} className={cn(cardBox, 'flex flex-col gap-0.5 p-1')}>
         {LAUNCH_PERMISSION_MODES.filter((o) => allowed.includes(o.value)).map((o) => {
           const on = o.value === current;
-          const desc = codex ? (o.value === 'default' ? 'rail.permCodexAskDesc' : 'rail.permCodexBypassDesc') : o.desc;
+          const desc = permDescKey(engine, o.value) || o.desc;
           return (
             <label
               key={o.value}
@@ -1075,7 +1074,7 @@ export function PermissionPicker({ value, onChange, engine, label }) {
                   {o.danger && <StatusDot status="err" />}
                   {t(o.label)}
                 </span>
-                <span className="block text-xs leading-snug text-muted-foreground">{t(desc)}</span>
+                <span className="block text-xs leading-snug text-muted-foreground">{t(desc, { engine: engineLabel(engine) })}</span>
               </span>
             </label>
           );

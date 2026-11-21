@@ -216,7 +216,7 @@ Explain/review/summary run on the session's engine; memory episodes, LEARN1, ski
 
 ## Accounts are per provider
 
-An account (`server/accounts.js`) carries a `provider` — `claude` or `codex` (`server/lib/providers.ts`,
+An account (`server/accounts.js`) carries a `provider` — `claude`, `codex` or `gemini` (`server/lib/providers.ts`,
 client mirror `web/src/lib/providers.js`). A provider is bound to the engine that consumes its
 credential, and nothing crosses the line: `pickSessionAccount(provider)` pins a new session to an
 account of its engine's provider, `nextAvailable()` never rotates a claude session onto a codex login
@@ -262,6 +262,35 @@ REST (generic, provider in the body): `GET /__api/accounts/providers`, `POST /__
 `GET …/login/status?id=`, `POST …/login/code`, `POST …/login/cancel`. The flow id prefix says which
 module owns it (`oauth_` claude PKCE, `cdx_` codex device-auth, `auth_` the legacy setup-token
 scrape); the older `/__api/accounts/oauth/*` routes are unchanged for the `connect-claude` playbook.
+
+### Gemini accounts and quota
+
+Provider `gemini` feeds the `gemini` engine (Google's Antigravity CLI, `agy`). One account type:
+
+- **`gemini-home`** — the machine's own `agy` Google login in `~/.gemini` (`ARIGAMI_GEMINI_DIR` overrides), seeded like
+  `codex-home`: a live pointer, not removable from the cockpit, `gemini-home-stale` in a backup. A login made after boot is
+  adopted on the next `GET /__api/accounts`. There is no add flow: sign in with `agy` on the host.
+
+The token file (`antigravity-cli/antigravity-oauth-token`) is agy's. The host reads the access token from it for the calls
+below and nothing else: it is never written, copied into `accounts.json`, logged, or passed to a session.
+
+Quota (`server/gemini-account.ts`, 5-minute cache whatever the 60-second usage poll asks): `POST
+https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary` and `:fetchAvailableModels`. Every Gemini
+model reports one shared 5-hour bucket (`remainingFraction`, `resetTime`); it becomes the `session` window (`windowMins`
+300) of the usual `{session, week}` shape, so the account card and the rail meter draw it unchanged. `week` is null. The
+summary's `3p-5h` / `3p-weekly` buckets (Claude and GPT through Google) ride along as `thirdParty` and are not drawn.
+The plan tier is `loadCodeAssist` → `paidTier.name` (else `currentTier.name`), cached an hour, shown on the card and in
+Settings › Host › Gemini CLI (`GET /__api/host/gemini`); the email is the token file's `id_token_email`.
+
+The access token lives about an hour and only agy renews it. When it has lapsed the last reading stays (with none, the
+card says usage shows up after the next run). The host runs `agy models` to let agy renew it only while someone is
+looking (Accounts or Settings › Host opened in the last 15 minutes), at most once an hour; the usage poll alone never runs agy.
+An exhausted bucket is inferred from a missing `remainingFraction` (proto3 drops zeros) — not reproduced here.
+
+Cockpit: the model picker lists the families `GET /__api/models` carries as `gemini` (`GEMINI_MODELS` in
+`web/src/lib/engines.js` until it lands) and sends the family as `model` and the rung as `effort` (default Neon, high);
+Claude/GPT-through-Google and the Orchestrator ids are not offered. All four permission modes; "compact now" and the
+auto-compact threshold both work. `/usage`, the CLI-update badge and "refresh model list" are hidden in a gemini session.
 
 ## The rule for text in the UI
 

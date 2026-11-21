@@ -141,6 +141,7 @@ export const strings = {
   'launcher.options.engine': 'מנוע',
   'launcher.options.engineClaudeDesc': 'Claude Code של Anthropic — מנוע ברירת המחדל',
   'launcher.options.engineCodexDesc': 'Codex CLI של OpenAI',
+  'launcher.options.engineGeminiDesc': 'Gemini של Google, דרך Antigravity CLI ‏(agy)',
   'launcher.options.codexModelDefaultDesc': 'המודל שקודקס בוחר בעצמו',
   'launcher.options.noSkill': 'בלי מיומנות — צ׳אט ריק',
 
@@ -355,6 +356,9 @@ export const strings = {
   'launcher.account.typeCodexHome': 'כניסת codex של המכונה הזו',
   'launcher.account.typeChatgpt': 'כניסת ChatGPT',
   'launcher.account.typeApiKey': 'מפתח API',
+  'launcher.account.usageAfterRun': 'השימוש יופיע אחרי ההרצה הבאה של {provider}.',
+  'launcher.account.typeGeminiHome': 'כניסת agy של המכונה הזו',
+  'launcher.account.localOnlyBody': '{provider} רץ על הכניסה של המכונה הזו עצמה. היכנסו פעם אחת עם ה-CLI שלו על המארח (`agy`) והחשבון יופיע כאן לבד.',
   // providers (the add-account chooser + the card badge)
   'launcher.account.providerLabel': 'ספק',
   'launcher.account.providerHint':

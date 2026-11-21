@@ -60,8 +60,8 @@ import { openAgent, deleteAgentConfirmed } from './DelegatedLine.jsx';
 import { untilTime, nextCronFor } from './RoutineList.jsx';
 import { UsageMini } from './Usage.jsx';
 import { MachineMini } from './Machine.jsx';
-import { DEFAULT_ENGINE, normalizeEngine } from '../lib/engines.js';
-import { snapshotUsage } from '../lib/providers.js';
+import { DEFAULT_ENGINE, normalizeEngine, engineBadge } from '../lib/engines.js';
+import { snapshotUsage, providerForEngine } from '../lib/providers.js';
 import { useT, dirOf } from '../lib/i18n.js';
 import { useIsDesktop } from '../lib/useMedia.js';
 import MicButton from './MicButton.jsx';
@@ -513,6 +513,7 @@ function Row({ session, selected, onSelect, onArchive, onRestore, onRestart, onD
                   #{String(pr).replace(/^#/, '')}
                 </Badge>
               )}
+              {engineBadge(session.engine) && <span data-row-engine={normalizeEngine(session.engine)} className="shrink-0">{engineBadge(session.engine)}</span>}
               {/* UX1: born from an agent — the row wears its face AND says whose job
                   this is, so a work session never reads as "the agent itself". */}
               {agent && (
@@ -1377,9 +1378,10 @@ export default function Rail({
   // P1-11: the active engine = the selected session's, else the host default.
   const selSession = selectedId ? sessions.find((s) => s.id === selectedId) : null;
   const activeEngine = selSession ? normalizeEngine(selSession.engine) : DEFAULT_ENGINE;
-  const codexId = accounts?.activeIds?.codex;
-  const activeUsage = activeEngine === 'codex'
-    ? (codexId && (accountUsage?.[codexId] || snapshotUsage((accounts?.accounts || []).find((a) => a.id === codexId)))) || null
+  const activeProvider = providerForEngine(activeEngine);
+  const otherId = activeProvider === 'claude' ? null : accounts?.activeIds?.[activeProvider];
+  const activeUsage = activeProvider !== 'claude'
+    ? (otherId && (accountUsage?.[otherId] || snapshotUsage((accounts?.accounts || []).find((a) => a.id === otherId)))) || null
     : (accounts?.activeId && accountUsage?.[accounts.activeId]) || usage;
   const [dragging, setDragging] = useState(false);
   const sDragId = useRef(null); // flat-mode session drag
@@ -2118,7 +2120,7 @@ export default function Rail({
       {/* usage charts (session / week) — compact, above the footer. Reflects the
           active account (see activeUsage above). F8: hidden until the first
           session exists — a percentage without context on the first screen. */}
-      {serverCount > 0 && <UsageMini usage={activeUsage} provider={activeEngine} />}
+      {serverCount > 0 && <UsageMini usage={activeUsage} provider={activeProvider} />}
       {/* what the machine is doing — the snapshot sessions read via host_resources — under the usage. On a phone
           the rail's height belongs to the sessions: shown only under pressure. */}
       <MachineMini quiet={!isDesktop} />
@@ -2139,7 +2141,7 @@ export default function Rail({
             onOpenSetup={onOpenSetup}
             onOpenSettings={onOpenSettings}
           />
-          {!isDesktop && serverCount > 0 && <UsageMini usage={activeUsage} provider={activeEngine} chip />}
+          {!isDesktop && serverCount > 0 && <UsageMini usage={activeUsage} provider={activeProvider} chip />}
           {/* VOICE1: voice COMMANDS (switch/create sessions, settings…) — the
               composer mic dictates; this one goes through the router. */}
           <MicButton
