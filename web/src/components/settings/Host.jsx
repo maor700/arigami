@@ -198,6 +198,7 @@ export default function Host({ section = '' }) {
   const [cliBusy, setCliBusy] = useState(null); // 'check' | 'update' | 'auto'
   const [cx, setCx] = useState(null); // P1-10: GET /host/codex
   const [cxBusy, setCxBusy] = useState(null); // 'check' | 'update'
+  const [gm, setGm] = useState(null); // GET /host/gemini: {installed, signedIn, email, plan}
   const [busy, setBusy] = useState(false);
   const [checking, setChecking] = useState(false);
   const [log, setLog] = useState([]);
@@ -213,6 +214,7 @@ export default function Host({ section = '' }) {
     api.get('/version').then(setVer).catch(() => setVer(null));
     api.get('/host/claude').then(setCli).catch(() => setCli(null));
     api.get('/host/codex').then(setCx).catch(() => setCx(null));
+    api.get('/host/gemini').then(setGm).catch(() => setGm(null));
   };
   useEffect(() => { load(); }, []);
 
@@ -439,6 +441,16 @@ export default function Host({ section = '' }) {
               {cx.sandbox.available ? t('host.codexSandbox.available') : t('host.codexSandbox.unavailable', { detail: cx.sandbox.detail })}
             </span>
           )}
+        </Field>
+        <Field label={t('host.geminiCli')} hint={t('host.geminiCli.hint')} wrap>
+          <span className="flex flex-wrap items-center justify-end gap-2" data-gemini-cli>
+            <span className="font-mono text-xs text-fg" dir="ltr">{!gm ? '…' : gm.installed ? t('host.cli.installed', { v: gm.installed }) : t('host.geminiCli.missing')}</span>
+            {gm?.installed && (
+              <span className={`text-xs ${gm.signedIn ? 'text-fgdim' : 'text-warn'}`} dir="auto">
+                {gm.signedIn ? [gm.email, gm.plan].filter(Boolean).join(' · ') || t('host.geminiCli.signedIn') : t('host.geminiCli.signedOut')}
+              </span>
+            )}
+          </span>
         </Field>
         <DefaultEngineField />
         <Field label={t('host.restart')} hint={t('host.restart.hint')} wrap>

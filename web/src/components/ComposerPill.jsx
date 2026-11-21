@@ -8,7 +8,7 @@ import { CheckIcon, ChevronDownIcon, RefreshCwIcon, SlidersHorizontalIcon } from
 import { api } from '../lib/api.js';
 import { useT } from '../lib/i18n.js';
 import { useModels, refreshModels } from '../lib/models.js';
-import { modelOptionsFor, effortOptionsFor, effortLabelFor, engineLabel, normalizeEngine, hasPermissionModes, permissionModesFor, codexModel } from '../lib/engines.js';
+import { modelOptionsFor, effortOptionsFor, effortLabelFor, engineLabel, isClaudeEngine, hasPermissionModes, permissionModesFor, permDescKey, permAppliesNextTurn, catalogModel } from '../lib/engines.js';
 import { toastError } from '../lib/toast.js';
 import { registerComposerPill } from '../lib/composerPill.js';
 import { Button, Popover, PopoverContent, PopoverTrigger, StatusDot, Tip, TooltipProvider } from './ui/index.js';
@@ -29,7 +29,7 @@ function prettyModel(m) {
   if (s.includes('sonnet')) return 'Sonnet';
   if (s.includes('haiku')) return 'Haiku';
   if (s.includes('fable')) return 'Fable';
-  return codexModel(String(m))?.label || String(m);
+  return catalogModel(String(m))?.label || String(m);
 }
 
 // Arrow keys move focus between the options of one group (Home/End jump);
@@ -98,7 +98,6 @@ export default function ComposerPill({ session }) {
   }, []);
   const claude = session.claude || {};
   const working = claude.state === 'working';
-  const codex = normalizeEngine(session.engine) === 'codex';
   const engine = engineLabel(session.engine);
   const { models: claudeModels, loading, cliUpdate } = useModels();
   const modelOpts = modelOptionsFor(session.engine, claudeModels);
@@ -112,7 +111,7 @@ export default function ComposerPill({ session }) {
   const permOpts = PERM.filter((o) => permissionModesFor(session.engine).includes(o.value)).map((o) => ({
     ...o,
     label: t(o.label),
-    desc: codex ? t(o.value === 'default' ? 'rail.permCodexAskDesc' : 'rail.permCodexBypassDesc') : t(o.desc),
+    desc: t(permDescKey(session.engine, o.value) || o.desc, { engine }),
   }));
   const permLabel = permOpts.find((o) => o.value === perm)?.label || perm;
 
@@ -132,8 +131,8 @@ export default function ComposerPill({ session }) {
   };
   const pick = (kind, value, label, current) => {
     if (value === current) { setOpen(false); return; } // already this → do nothing
-    // Codex applies a permission mode on its next turn — nothing to stop.
-    if (working && !(kind === 'perm' && codex)) { setPending({ kind, value, label }); return; }
+    // Codex and Gemini apply a permission mode on the next turn — nothing to stop.
+    if (working && !(kind === 'perm' && permAppliesNextTurn(session.engine))) { setPending({ kind, value, label }); return; }
     apply(kind, value);
   };
   const warn = pending && (
@@ -186,7 +185,7 @@ export default function ComposerPill({ session }) {
           <div className="thin-scroll max-h-[60vh] overflow-y-auto">
             <Section
               title={t('rail.model')}
-              extra={normalizeEngine(session.engine) === 'claude' && (
+              extra={isClaudeEngine(session.engine) && (
                 <span className="flex items-center gap-1">
                   {cliUpdate?.updateAvailable && (
                     <a href="#/settings/host/host" onClick={() => setOpen(false)} dir="ltr" title={t('rail.cliUpdate.hint', { v: cliUpdate.latest })} className="rounded-sm bg-muted px-1.5 text-2xs text-foreground no-underline">

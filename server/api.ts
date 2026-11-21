@@ -4834,6 +4834,10 @@ export async function handle(
       const sandbox = (await import('./lib/codex-sandbox.js')).readCodexSandbox(); // P4-6
       return json(res, { ...(st.installed ? st : { ...st, installed: await cx.codexInstalled() }), sandbox });
     }
+    // Settings › Host › Gemini CLI: agy's version, and who is signed in on which plan.
+    if (p === '/__api/host/gemini' && m === 'GET') {
+      return json(res, await (await import('./gemini-account.js')).geminiHostStatus());
+    }
     // The self-update watcher's view: what it last saw upstream, which channel
     // this install updates through, and whether it is allowed to apply it
     // (lib/self-update.ts). Read-only — applying still goes through
@@ -5787,6 +5791,8 @@ export async function handle(
     }
     if (p === '/__api/accounts' && m === 'GET') {
       const acc = await import('./accounts.js');
+      (acc as any).adoptLocalLogins(); // a CLI login made after boot (agy, codex, claude) shows up without a restart
+      if ((acc as any).getActiveId('gemini')) (await import('./gemini-account.js')).noteGeminiDemand();
       return json(res, (acc as any).listAccounts());
     }
     // The providers a human can add an account for (server/lib/providers.ts) —
@@ -5804,6 +5810,7 @@ export async function handle(
       const body = (await readBody(req)) as any;
       try {
         const provider = pr.normalizeProvider(body?.provider);
+        if (!pr.PROVIDERS[provider].methods.length) throw new Error(`${pr.PROVIDERS[provider].label} runs on this machine's own login — sign in with its CLI on the host`);
         if (provider === 'codex') {
           const cx = await import('./codex-account.js');
           return json(res, await cx.addApiKeyAccount({ label: body?.label, key: body?.token }));
@@ -5821,6 +5828,7 @@ export async function handle(
       const pr = await import('./lib/providers.js');
       const body = (await readBody(req)) as any;
       const provider = pr.normalizeProvider(body?.provider);
+      if (!pr.PROVIDERS[provider].methods.length) return badRequest(res, `${pr.PROVIDERS[provider].label} runs on this machine's own login — sign in with its CLI on the host`);
       if (provider === 'codex') {
         const cx = await import('./codex-account.js');
         return json(res, cx.startBrowserLogin({ label: body?.label }));

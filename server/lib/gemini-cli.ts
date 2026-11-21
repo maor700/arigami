@@ -3,6 +3,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { which, extraBinDirs, HOME } from './platform.js';
+import { geminiHomeOverride, geminiTokenFile, hasLocalGeminiLogin } from './gemini-home.js';
+
+// The gemini home and token file live in lib/gemini-home.ts (shared with accounts.js); these are the driver's names for them.
+export { geminiHomeOverride };
+export const agyTokenFile = geminiTokenFile;
+export const agyLoggedIn = hasLocalGeminiLogin;
 
 export const AGY_MISSING =
   'the Gemini engine needs the Antigravity CLI (`agy`) and it is not installed on this host — install it, sign in once by running `agy`, and try again';
@@ -20,28 +26,10 @@ export function requireAgy(env: NodeJS.ProcessEnv = process.env): string {
   return bin;
 }
 
-/** A gemini home other than ~/.gemini: ARIGAMI_GEMINI_HOME (ARIGAMI_GEMINI_DIR is the same knob), or null. */
-export function geminiHomeOverride(env: NodeJS.ProcessEnv = process.env): string | null {
-  return env.ARIGAMI_GEMINI_HOME || env.ARIGAMI_GEMINI_DIR || null;
-}
-
-/** agy's own Google login (it refreshes the file itself; never read into a log). */
-export function agyTokenFile(env: NodeJS.ProcessEnv = process.env): string {
-  return path.join(geminiHomeOverride(env) || path.join(HOME, '.gemini'), 'antigravity-cli', 'antigravity-oauth-token');
-}
-
 /** `agy acp` argv; an overridden gemini home goes as --gemini-dir (only the acp subcommand takes it — measured). */
 export function agyAcpArgs(env: NodeJS.ProcessEnv = process.env, extra: string[] = []): string[] {
   const home = geminiHomeOverride(env);
   return ['acp', ...(home ? ['--gemini-dir', home] : []), ...extra];
-}
-
-export function agyLoggedIn(env: NodeJS.ProcessEnv = process.env): boolean {
-  try {
-    return fs.statSync(agyTokenFile(env)).size > 0;
-  } catch {
-    return false;
-  }
 }
 
 /** Can a gemini session start here: the CLI is installed and signed in. */

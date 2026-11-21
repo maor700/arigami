@@ -197,6 +197,8 @@ export const strings = {
   // Codex has no modes at all — see docs/ENGINES.md.
   'rail.permCodexAskDesc': 'Codex asks before running commands or editing files (a card in the chat).',
   'rail.permCodexBypassDesc': "Codex never asks (or follows the host's approval policy). The worktree is the boundary.",
+  'rail.permEngineAskDesc': '{engine} asks before commands and tools (a card in the chat); file edits in the workspace are not asked about.',
+  'rail.permEngineBypassDesc': '{engine} never asks. The worktree is the boundary.',
   'rail.noPermissionModes': '{engine} has no permission modes — it always runs unsandboxed, without asking. The worktree is the boundary.',
   'rail.claudeWorkingSwitch': '{engine} is working — switching will stop the current run.',
   'rail.appliesToTerminal': 'Applies to this terminal session.',

@@ -18,6 +18,7 @@ import { toastError } from '../../lib/toast.js';
 import { confirmDialog } from '../../lib/confirm.js';
 import { subscribePush, unsubscribePush, isPushSubscribed } from '../../lib/push.js';
 import * as setupApi from '../../lib/setup-api.js';
+import { providerLabel, providerForEngine } from '../../lib/providers.js';
 import { capTitle, capFamily, manualFor } from '../setup/registry.js';
 import { Icon } from '../../lib/icons.js';
 import { faPlus, faCheck } from '@fortawesome/free-solid-svg-icons';
@@ -250,8 +251,8 @@ export default function Connections({ initialAdd = false, section = '' }) {
       id: c.id,
       title: c.title || capTitle(t, c.id),
       provider: 'native-mcp',
-      detail: [d.tools, d.heldBy === 'host' ? t('mcp.card.viaHost') : '', engineOnly ? t('mcp.card.engineOnly', { engines: (d.engines || []).map((e) => (e === 'codex' ? 'Codex' : 'Claude')).join(', ') }) : '', c.resolvedFrom && c.resolvedFrom !== c.owner ? ownerName(c.resolvedFrom) : ''].filter(Boolean).join(' · '),
-      ...(engineOnly ? { pill: <StatusPill status="missing" label={t('mcp.card.enginePill', { engines: (d.engines || []).map((e) => (e === 'codex' ? 'Codex' : 'Claude')).join(', ') })} />, actions: <button type="button" data-move-to-host={c.id} disabled={busy} onClick={() => setDialog(c)} className="cursor-pointer text-xs text-fg underline hover:text-ink">{t('mcp.card.moveToHost')}</button> } : {}),
+      detail: [d.tools, d.heldBy === 'host' ? t('mcp.card.viaHost') : '', engineOnly ? t('mcp.card.engineOnly', { engines: (d.engines || []).map((e) => providerLabel(providerForEngine(e))).join(', ') }) : '', c.resolvedFrom && c.resolvedFrom !== c.owner ? ownerName(c.resolvedFrom) : ''].filter(Boolean).join(' · '),
+      ...(engineOnly ? { pill: <StatusPill status="missing" label={t('mcp.card.enginePill', { engines: (d.engines || []).map((e) => providerLabel(providerForEngine(e))).join(', ') })} />, actions: <button type="button" data-move-to-host={c.id} disabled={busy} onClick={() => setDialog(c)} className="cursor-pointer text-xs text-fg underline hover:text-ink">{t('mcp.card.moveToHost')}</button> } : {}),
       cap: c,
     });
   }

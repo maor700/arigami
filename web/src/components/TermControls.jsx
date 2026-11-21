@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { api } from '../lib/api.js';
 import { usePrefs, termViewFrom, setTermOverride } from '../lib/prefs.js';
 import { useModels, refreshModels } from '../lib/models.js';
-import { modelOptionsFor, effortOptionsFor, effortLabelFor, engineLabel, normalizeEngine, hasPermissionModes, permissionModesFor, codexModel } from '../lib/engines.js';
+import { modelOptionsFor, effortOptionsFor, effortLabelFor, engineLabel, isClaudeEngine, hasPermissionModes, permissionModesFor, permDescKey, permAppliesNextTurn, catalogModel } from '../lib/engines.js';
 import { restartSession, clearSessionConversation } from '../lib/store.js';
 import { toastError } from '../lib/toast.js';
 import { contextColor } from './ui.jsx';
@@ -49,7 +49,7 @@ function prettyModel(m) {
   if (s.includes('sonnet')) return 'Sonnet';
   if (s.includes('haiku')) return 'Haiku';
   if (s.includes('fable')) return 'Fable';
-  return codexModel(String(m))?.label || String(m);
+  return catalogModel(String(m))?.label || String(m);
 }
 
 const DIR_OPTIONS = [
@@ -156,14 +156,15 @@ function PermissionModal({ session, onClose }) {
     onClose();
   };
 
-  const codex = normalizeEngine(session.engine) === 'codex';
-  // Codex app-server applies the mode on its next turn — nothing to stop.
-  const options = PERMISSION_OPTIONS.filter((o) => permissionModesFor(session.engine).includes(o.value)).map((o) =>
-    codex ? { ...o, desc: t(o.value === 'default' ? 'rail.permCodexAskDesc' : 'rail.permCodexBypassDesc') } : o
-  );
+  // Codex app-server and Gemini apply the mode on the next turn — nothing to stop.
+  const nextTurn = permAppliesNextTurn(session.engine);
+  const options = PERMISSION_OPTIONS.filter((o) => permissionModesFor(session.engine).includes(o.value)).map((o) => {
+    const key = permDescKey(session.engine, o.value);
+    return key ? { ...o, desc: t(key, { engine }) } : o;
+  });
   const pick = (mode) => {
     if (mode === current) return onClose(); // already this mode → do nothing
-    if (working && !codex) return setPending(mode); // mid-run → must confirm the interruption
+    if (working && !nextTurn) return setPending(mode); // mid-run → must confirm the interruption
     apply(mode); // idle → switch in place immediately
   };
 
@@ -203,7 +204,7 @@ function ModelModal({ session, onClose }) {
   // a Codex session must never be offered a Claude alias (see lib/engines.js).
   const { models: claudeModels, loading, cliUpdate } = useModels();
   const options = modelOptionsFor(session.engine, claudeModels);
-  const isClaude = normalizeEngine(session.engine) === 'claude';
+  const isClaude = isClaudeEngine(session.engine);
   const modelLabel = Object.fromEntries(options.map((o) => [o.value, o.label]));
 
   const apply = async (model) => {

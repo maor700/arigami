@@ -7,7 +7,7 @@ import { untilTime } from '../lib/time.js';
 import { useT } from '../lib/i18n.js';
 import { usePrefs, setPrefs } from '../lib/prefs.js';
 import { ChevronDown, ChevronUp } from 'lucide-react';
-import { windowLabel } from '../lib/providers.js';
+import { windowLabel, providerLabel, normalizeProvider } from '../lib/providers.js';
 import { useIsDesktop } from '../lib/useMedia.js';
 
 // Remaining-capacity color: green when there's plenty left, amber when getting
@@ -108,8 +108,8 @@ export function UsageMini({ usage, provider = 'claude', chip = false }) {
   const desktop = useIsDesktop();
   if (!usage?.available || (!usage.session && !usage.week)) return null;
   const expanded = prefs.usageExpanded;
-  // codex windows are labelled by length (a free plan has one 30-day window)
-  const label = (which) => provider === 'codex' ? windowLabel(t, provider, which, usage[which]) : t(which === 'session' ? 'dialogs.sessionWindow5h' : 'dialogs.weekWindow7d');
+  // codex/gemini windows are labelled by length (a codex free plan has one 30-day window, gemini only a 5-hour one)
+  const label = (which) => normalizeProvider(provider) !== 'claude' ? windowLabel(t, provider, which, usage[which]) : t(which === 'session' ? 'dialogs.sessionWindow5h' : 'dialogs.weekWindow7d');
   const toggle = () => setPrefs({ usageExpanded: !expanded });
   if (!desktop) {
     // Phone: the rail is for sessions — usage is a small "N%" chip in the footer row (`chip`), and the bars open
@@ -118,7 +118,7 @@ export function UsageMini({ usage, provider = 'claude', chip = false }) {
     const used = Math.max(0, Math.min(100, win.pct ?? 0));
     if (chip) {
       return (
-        <button type="button" onClick={toggle} aria-expanded={expanded} aria-label={`${provider === 'codex' ? 'Codex' : 'Claude'} ${t('dialogs.usageShort')} ${used}%`} data-usage-mini-phone title={label(usage.session ? 'session' : 'week')} className="flex min-h-11 shrink-0 cursor-pointer items-center gap-1.5 rounded-md px-1.5 text-2xs text-muted-foreground hover:bg-muted hover:text-foreground">
+        <button type="button" onClick={toggle} aria-expanded={expanded} aria-label={`${providerLabel(provider)} ${t('dialogs.usageShort')} ${used}%`} data-usage-mini-phone title={label(usage.session ? 'session' : 'week')} className="flex min-h-11 shrink-0 cursor-pointer items-center gap-1.5 rounded-md px-1.5 text-2xs text-muted-foreground hover:bg-muted hover:text-foreground">
           <span className="h-1 w-8 overflow-hidden rounded-full bg-muted">
             <span className="block h-full rounded-full" style={{ width: `${used}%`, background: barTone(100 - used) }} />
           </span>
@@ -142,7 +142,9 @@ export function UsageMini({ usage, provider = 'claude', chip = false }) {
         aria-expanded={expanded}
         className="flex cursor-pointer items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground"
       >
-        <span className="flex-1 text-start">{t('dialogs.usageSpent')}</span>
+        <span className="flex-1 text-start" data-usage-provider={normalizeProvider(provider)}>
+          {t('dialogs.usageSpent')}{normalizeProvider(provider) !== 'claude' ? ` · ${providerLabel(provider)}` : ''}
+        </span>
         {expanded ? <ChevronUp className="size-3.5" /> : <ChevronDown className="size-3.5" />}
       </button>
       <MiniBar title={label('session')} win={usage.session} />

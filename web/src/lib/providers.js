@@ -27,6 +27,16 @@ export const PROVIDERS = {
     pastePattern: '^sk-',
     dot: '#10a37f',
   },
+  gemini: {
+    id: 'gemini',
+    label: 'Gemini',
+    engine: 'gemini',
+    localType: 'gemini-home',
+    methods: [], // the machine's own `agy` login only
+    pasteHint: '',
+    pastePattern: '',
+    dot: '#4285f4',
+  },
 };
 
 export const PROVIDER_IDS = Object.keys(PROVIDERS);
@@ -59,6 +69,7 @@ export const TYPE_LABEL_KEYS = {
   'codex-home': 'launcher.account.typeCodexHome',
   chatgpt: 'launcher.account.typeChatgpt',
   'api-key': 'launcher.account.typeApiKey',
+  'gemini-home': 'launcher.account.typeGeminiHome',
 };
 
 /** Merge the server catalog (authoritative) over the local table, keeping local-only fields (dot). */

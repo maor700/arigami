@@ -419,9 +419,10 @@ function CapBody({ caps, session, initialTab, onClose, onPickCommand }) {
   }, [onClose]);
   // Normalize agents (strings from init, objects from initialize) to {name,…}.
   const agents = (caps.agents || []).map((a) => (typeof a === 'string' ? { name: a } : a));
-  const codex = normalizeEngine(session?.engine) === 'codex';
-  const { codexVersion } = useModels();
-  // P4-2: codex has no init report — a thread id means it ran; account/plan come from the accounts store.
+  const engineId = normalizeEngine(session?.engine);
+  const codex = engineId !== 'claude'; // codex and gemini: no claude-style init report
+  const { codexVersion, geminiVersion } = useModels();
+  // P4-2: codex/gemini have no init report — a thread id means it ran; account/plan come from the accounts store.
   const started = codex ? !!session?.claude?.sessionId : !!(caps.commands?.length || caps.slashCommands?.length || caps.mcpServers?.length || caps.counts?.commands || caps.counts?.mcpServers);
   const codexAccount = codex ? sessionAccounts(session, accounts).account : null;
   return (
@@ -518,8 +519,8 @@ function CapBody({ caps, session, initialTab, onClose, onPickCommand }) {
               {(codex
                 ? [
                     [t('dialogs.infoModel'), caps.model || session?.claude?.modelChoice],
-                    [t('dialogs.infoVersion'), codexVersion],
-                    [t('dialogs.infoPermissionMode'), 'bypassPermissions'],
+                    [t('dialogs.infoVersion'), engineId === 'codex' ? codexVersion : geminiVersion],
+                    [t('dialogs.infoPermissionMode'), session?.claude?.permissionMode || 'bypassPermissions'],
                     [t('dialogs.infoAccount'), codexAccount?.email || codexAccount?.label],
                     [t('dialogs.infoPlan'), codexAccount?.plan],
                     [t('dialogs.infoMcpServers'), caps.mcpServers?.length ?? caps.counts?.mcpServers],

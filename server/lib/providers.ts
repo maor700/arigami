@@ -18,7 +18,7 @@
 
 import type { EngineId } from './engine-driver.js';
 
-export type ProviderId = 'claude' | 'codex';
+export type ProviderId = 'claude' | 'codex' | 'gemini';
 
 export interface ProviderAddMethod {
   /** 'browser' = an interactive sign-in the host drives; 'paste' = a secret the human pastes */
@@ -37,6 +37,7 @@ export interface AccountProvider {
   localType: string;
   /** every `account.type` this provider issues */
   types: string[];
+  /** ways to ADD an account from the cockpit; empty = the machine's own login is the only account */
   methods: ProviderAddMethod[];
   /** placeholder shown in the paste box */
   pasteHint: string;
@@ -70,6 +71,16 @@ export const PROVIDERS: Record<ProviderId, AccountProvider> = {
     ],
     pasteHint: 'sk-…',
     pastePattern: '^sk-',
+  },
+  gemini: {
+    id: 'gemini',
+    label: 'Gemini',
+    engine: 'gemini',
+    localType: 'gemini-home',
+    types: ['gemini-home'],
+    methods: [], // the machine's own `agy` login only — server/gemini-account.ts
+    pasteHint: '',
+    pastePattern: '',
   },
 };
 

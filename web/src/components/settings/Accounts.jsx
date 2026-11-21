@@ -55,6 +55,7 @@ function StateBadge({ account, usage }) {
   if (usage?.available && (usage.session?.pct ?? 0) >= 100) return <StatusPill status="error" label={t('launcher.account.atSessionLimit')} />;
   if (usage && !usage.available) {
     if (usage.reason === 'usage-throttled' || usage.reason === 'api-key') return usage.reason === 'api-key' ? <StatusPill status="ok" label={t('launcher.account.available')} /> : null;
+    if (usage.reason === 'token-expired') return <StatusPill status="ok" label={t('launcher.account.available')} />; // gemini: agy renews its token on its next run
     const label = usage.reason === 'http-401' ? t('launcher.account.tokenInvalid')
       : usage.reason === 'http-403' ? t('launcher.account.usageNeedsRelogin') // token lacks user:profile scope — sessions still run
         : usage.reason === 'no-credentials' ? t('launcher.account.notSignedIn') : t('launcher.account.unavailable');
@@ -100,7 +101,9 @@ function AccountCard({ account, usage, busy, catalog, onSetActive, onSetPool, on
               ? t('launcher.account.apiKeyUsage')
               : usage && !usage.available && usage.reason === 'http-403'
                 ? t('launcher.account.usageHidden')
-                : t('launcher.account.checkingUsage')}
+                : usage && !usage.available && usage.reason === 'token-expired'
+                  ? t('launcher.account.usageAfterRun', { provider: (catalog[provider] || PROVIDERS[provider])?.label })
+                  : t('launcher.account.checkingUsage')}
           </div>
         )}
       </div>
@@ -298,8 +301,10 @@ export default function Accounts({ initialAdd = false, identity, onConnectAuto, 
         <div className="rounded-xl border border-hair bg-panel p-3">
           <div className="text-sm font-medium text-fg">{t('launcher.account.addHeading')}</div>
           <ProviderPicker catalog={catalog} value={provider} onChange={setProvider} />
-          <p className="mt-2 text-xs leading-snug text-fgdim">{provider === 'codex' ? t('launcher.account.codexAddBody') : t('launcher.account.addBody')}</p>
-          <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder={t('launcher.account.labelPlaceholder')} className={INPUT} />
+          <p className="mt-2 text-xs leading-snug text-fgdim" data-add-body={provider}>
+            {!P.methods?.length ? t('launcher.account.localOnlyBody', { provider: P.label }) : provider === 'codex' ? t('launcher.account.codexAddBody') : t('launcher.account.addBody')}
+          </p>
+          {!!P.methods?.length && <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder={t('launcher.account.labelPlaceholder')} className={INPUT} />}
           <div className="mt-2.5 flex flex-wrap items-center gap-2">
             {P.methods?.some((m) => m.id === 'browser') && (
               <button type="button" data-auth-browser disabled={busy} onClick={startAuth} className={PRIMARY}>

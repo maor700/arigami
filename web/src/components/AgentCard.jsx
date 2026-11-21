@@ -218,7 +218,7 @@ function AgentCardView({ props: { sessionId, event } }) {
             <>
               <button type="button" onClick={() => openPage(agent.slug)} className="cursor-pointer underline hover:text-[var(--term-accent-strong)]">{t('agent.card.openPage')}</button>
               {agent.skills?.length ? <span dir="auto">· {agent.skills.join(', ')}</span> : null}
-              {agent.engine === 'codex' ? <span>· {engineLabel(agent.engine)}</span> : null}
+              {agent.engine && agent.engine !== 'claude' ? <span data-agent-engine={agent.engine}>· {engineLabel(agent.engine)}</span> : null}
               {agent.model ? <span>· {agent.model}</span> : null}
             </>
           )}
