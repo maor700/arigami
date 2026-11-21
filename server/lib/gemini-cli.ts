@@ -20,9 +20,20 @@ export function requireAgy(env: NodeJS.ProcessEnv = process.env): string {
   return bin;
 }
 
+/** A gemini home other than ~/.gemini: ARIGAMI_GEMINI_HOME (ARIGAMI_GEMINI_DIR is the same knob), or null. */
+export function geminiHomeOverride(env: NodeJS.ProcessEnv = process.env): string | null {
+  return env.ARIGAMI_GEMINI_HOME || env.ARIGAMI_GEMINI_DIR || null;
+}
+
 /** agy's own Google login (it refreshes the file itself; never read into a log). */
 export function agyTokenFile(env: NodeJS.ProcessEnv = process.env): string {
-  return path.join(env.ARIGAMI_GEMINI_DIR || path.join(HOME, '.gemini'), 'antigravity-cli', 'antigravity-oauth-token');
+  return path.join(geminiHomeOverride(env) || path.join(HOME, '.gemini'), 'antigravity-cli', 'antigravity-oauth-token');
+}
+
+/** `agy acp` argv; an overridden gemini home goes as --gemini-dir (only the acp subcommand takes it — measured). */
+export function agyAcpArgs(env: NodeJS.ProcessEnv = process.env, extra: string[] = []): string[] {
+  const home = geminiHomeOverride(env);
+  return ['acp', ...(home ? ['--gemini-dir', home] : []), ...extra];
 }
 
 export function agyLoggedIn(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -43,6 +54,9 @@ export function geminiReady(env: NodeJS.ProcessEnv = process.env): boolean {
 
 /** Effort is the tail of an ACP model id (gemini-4-neon-high); there is no separate effort setting. */
 export const GEMINI_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
+/** What a session with no pick runs on (the cockpit shows the same): Neon at high. */
+export const GEMINI_DEFAULT_MODEL = 'gemini-4-neon';
+export const GEMINI_DEFAULT_EFFORT = 'high';
 const EFFORT_TAIL = new RegExp(`-(${GEMINI_EFFORTS.join('|')})$`);
 
 export interface AcpModel {
@@ -68,10 +82,9 @@ export function splitModelId(id: string): { family: string; effort: string | nul
 
 const byEffort = (a: string, b: string) => GEMINI_EFFORTS.indexOf(a as any) - GEMINI_EFFORTS.indexOf(b as any);
 
-/** Pure: ACP `availableModels` → one row per family. `current` marks the account's default effort for its family. */
-export function modelRows(available: AcpModel[], current?: string | null, contextWindow: number | null = null): GeminiModelRow[] {
+/** Pure: ACP `availableModels` → one row per family, each defaulting to high. */
+export function modelRows(available: AcpModel[], contextWindow: number | null = null): GeminiModelRow[] {
   const rows = new Map<string, GeminiModelRow>();
-  const cur = current ? splitModelId(current) : null;
   for (const m of available || []) {
     if (!m || typeof m.modelId !== 'string') continue;
     const { family, effort } = splitModelId(m.modelId);
@@ -84,17 +97,27 @@ export function modelRows(available: AcpModel[], current?: string | null, contex
   }
   for (const row of rows.values()) {
     row.efforts.sort(byEffort);
-    row.defaultEffort = pickEffort(row.efforts, cur?.family === row.id ? cur.effort : null);
+    row.defaultEffort = pickEffort(row.efforts);
   }
   return [...rows.values()];
 }
 
-/** The level a family runs at when none was asked for: the account's own, else high, else the middle one. */
-function pickEffort(efforts: string[], preferred: string | null): string | null {
+/** Pure: the rows the cockpit's picker offers — Gemini families that have effort levels (no Orchestrator, no Claude/GPT through Google). */
+export function pickerRows(rows: GeminiModelRow[]): GeminiModelRow[] {
+  return (rows || []).filter((r) => r.id.startsWith('gemini-') && r.efforts.length > 0);
+}
+
+/** The level a family runs at when none was asked for: high, else the middle one. */
+function pickEffort(efforts: string[]): string | null {
   if (!efforts.length) return null;
-  if (preferred && efforts.includes(preferred)) return preferred;
-  if (efforts.includes('high')) return 'high';
+  if (efforts.includes(GEMINI_DEFAULT_EFFORT)) return GEMINI_DEFAULT_EFFORT;
   return efforts[Math.floor((efforts.length - 1) / 2)];
+}
+
+/** Pure: a family's levels when agy has not listed any yet — Neon and Hydrogen go up to xhigh, the rest to high. */
+export function fallbackEfforts(model: string | null | undefined): string[] {
+  const family = splitModelId(model || GEMINI_DEFAULT_MODEL).family;
+  return /-(neon|hydrogen)$/.test(family) ? ['low', 'medium', 'high', 'xhigh'] : ['low', 'medium', 'high'];
 }
 
 export interface ModelPick {
@@ -104,13 +127,12 @@ export interface ModelPick {
   error?: string;
 }
 
-/** Pure: Arigami's model (a family like gemini-4-neon, or a full id) + effort → the ACP model id, validated against the account's list; an explicit effort wins over the id's tail. */
+/** Pure: Arigami's model (a family like gemini-4-neon, or a full id; none = Neon) + effort (none = high) → the ACP model id, validated against the account's list; an explicit effort wins over the id's tail. */
 export function resolveModelId(model: string | null | undefined, effort: string | null | undefined, available: AcpModel[], current?: string | null): ModelPick {
   const ids = (available || []).map((m) => m?.modelId).filter((x): x is string => typeof x === 'string');
   const want = model && model !== 'default' ? String(model) : null;
   const level = effort && effort !== 'default' ? String(effort) : null;
-  if (!want && !level) return { id: null };
-  if (!ids.length) return { id: null, error: 'Antigravity reported no models for this account' };
+  if (!ids.length) return want || level ? { id: null, error: 'Antigravity reported no models for this account' } : { id: null };
   const split = ids.map(splitModelId);
   const families = [...new Set(split.map((x) => x.family))];
   let family: string | null = null;
@@ -121,15 +143,15 @@ export function resolveModelId(model: string | null | undefined, effort: string 
     else if (families.includes(sp.family)) [family, tail] = [sp.family, sp.effort];
     if (!family) return { id: null, error: `model "${want}" is not offered by Antigravity for this account (offered: ${families.join(', ')})` };
   } else {
-    family = splitModelId(current || '').family;
-    if (!families.includes(family)) return { id: null, error: `effort "${level}" needs a model — none is selected` };
+    // no pick: Neon when the account has it, else whatever agy is on
+    family = families.includes(GEMINI_DEFAULT_MODEL) ? GEMINI_DEFAULT_MODEL : splitModelId(current || '').family;
+    if (!families.includes(family)) return level ? { id: null, error: `effort "${level}" needs a model — none is selected` } : { id: null };
   }
   const efforts = split.filter((x) => x.family === family && x.effort).map((x) => x.effort as string).sort(byEffort);
   if (!efforts.length) return { id: family, ...(level ? { error: `${family} has no effort levels — "${level}" ignored` } : {}) };
   const asked = level || tail;
   if (asked && efforts.includes(asked)) return { id: `${family}-${asked}` };
-  const cur = splitModelId(current || '');
-  const fallback = pickEffort(efforts, cur.family === family ? cur.effort : null);
+  const fallback = pickEffort(efforts);
   return { id: `${family}-${fallback}`, ...(asked ? { error: `${family} is not offered at effort "${asked}" (offered: ${efforts.join(', ')}) — using ${fallback}` } : {}) };
 }
 
@@ -139,9 +161,9 @@ export function utilityModel(rows: GeminiModelRow[]): string | null {
   return row ? (row.efforts.length ? `${row.id}-${row.efforts[0]}` : row.id) : null;
 }
 
-/** Pure: the effort levels a model family is offered at. */
-export function effortsFor(model: string | null | undefined, available: AcpModel[], current?: string | null): string[] {
-  const family = splitModelId(model || current || '').family;
+/** Pure: the effort levels a model family (none = Neon) is offered at. */
+export function effortsFor(model: string | null | undefined, available: AcpModel[]): string[] {
+  const family = splitModelId(model || GEMINI_DEFAULT_MODEL).family;
   const out = (available || []).map((m) => splitModelId(m.modelId)).filter((x) => x.family === family && x.effort).map((x) => x.effort as string);
   return [...new Set(out)].sort(byEffort);
 }

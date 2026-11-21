@@ -9,6 +9,10 @@ import {
   modelRows,
   resolveModelId,
   effortsFor,
+  fallbackEfforts,
+  pickerRows,
+  agyAcpArgs,
+  agyTokenFile,
   utilityModel,
   acpMcpServers,
   aliasToolName,
@@ -84,18 +88,23 @@ test('models: availableModels become families with effort levels; model + effort
   const avail = session.models.availableModels;
   expect(splitModelId('gemini-4-neon-high')).toEqual({ family: 'gemini-4-neon', effort: 'high' });
   expect(splitModelId('gemini-pro-orchestrator-neon')).toEqual({ family: 'gemini-pro-orchestrator-neon', effort: null });
-  const rows = modelRows(avail, session.models.currentModelId, 1048576);
+  const rows = modelRows(avail, 1048576);
   const neon = rows.find((r) => r.id === 'gemini-4-neon')!;
   expect(neon).toMatchObject({ name: 'Gemini 4 Neon', efforts: ['low', 'medium', 'high', 'xhigh'], defaultEffort: 'high', contextWindow: 1048576 });
   expect(rows.find((r) => r.id === 'gemini-3.8-flash')!.efforts).toEqual(['low', 'medium', 'high']);
   expect(rows.find((r) => r.id === 'gemini-pro-orchestrator-neon')!.efforts).toEqual([]);
+  // the picker gets the four Gemini families only — no Orchestrator, no Claude/GPT through Google
+  expect(pickerRows(rows).map((r) => r.id)).toEqual(['gemini-4-neon', 'gemini-4-argon', 'gemini-4-hydrogen', 'gemini-3.8-flash']);
 
-  expect(resolveModelId(null, null, avail, 'gemini-4-neon-high')).toEqual({ id: null });
+  expect(resolveModelId(null, null, avail, 'gemini-3.8-flash-low')).toEqual({ id: 'gemini-4-neon-high' }); // no pick = Neon at high, whatever agy was on
+  expect(resolveModelId('default', 'default', avail)).toEqual({ id: 'gemini-4-neon-high' });
+  expect(resolveModelId(null, null, [])).toEqual({ id: null });
   expect(resolveModelId('gemini-3.8-flash', 'low', avail)).toEqual({ id: 'gemini-3.8-flash-low' });
   expect(resolveModelId('gemini-4-neon-high', null, avail)).toEqual({ id: 'gemini-4-neon-high' });
   expect(resolveModelId('gemini-4-neon-high', 'xhigh', avail)).toEqual({ id: 'gemini-4-neon-xhigh' }); // an explicit effort wins over the id's tail
   expect(resolveModelId('gemini-4-argon', null, avail).id).toBe('gemini-4-argon-high');
-  expect(resolveModelId(null, 'low', avail, 'gemini-4-neon-high')).toEqual({ id: 'gemini-4-neon-low' });
+  expect(resolveModelId(null, 'low', avail)).toEqual({ id: 'gemini-4-neon-low' });
+  expect(resolveModelId('gemini-4-hydrogen', 'xhigh', avail)).toEqual({ id: 'gemini-4-hydrogen-xhigh' });
   expect(resolveModelId('gemini-pro-orchestrator-neon', null, avail)).toEqual({ id: 'gemini-pro-orchestrator-neon' });
   const badEffort = resolveModelId('gemini-3.8-flash', 'xhigh', avail);
   expect(badEffort.id).toBe('gemini-3.8-flash-high');
@@ -106,7 +115,10 @@ test('models: availableModels become families with effort levels; model + effort
   expect(utilityModel(rows)).toBe('gemini-3.8-flash-low'); // what a one-shot runs on when no model is named
   expect(utilityModel([])).toBeNull();
   expect(effortsFor('gemini-4-hydrogen', avail)).toEqual(['low', 'medium', 'high', 'xhigh']);
-  expect(effortsFor(null, avail, 'gemini-3.8-flash-low')).toEqual(['low', 'medium', 'high']);
+  expect(effortsFor('gemini-3.8-flash', avail)).toEqual(['low', 'medium', 'high']);
+  expect(effortsFor(null, avail)).toEqual(['low', 'medium', 'high', 'xhigh']);
+  expect([fallbackEfforts('gemini-4-neon'), fallbackEfforts('gemini-4-hydrogen'), fallbackEfforts(null)]).toEqual(Array(3).fill(['low', 'medium', 'high', 'xhigh']));
+  expect([fallbackEfforts('gemini-4-argon'), fallbackEfforts('gemini-3.8-flash')]).toEqual(Array(2).fill(['low', 'medium', 'high']));
 });
 
 test('the real agent refuses an unknown model and an unknown mode (fixture)', () => {
@@ -322,6 +334,29 @@ test('/compact runs as the agent\'s own command and shows as system lines, with 
   expect(rec.find((r: any) => r.dir === '<' && r.msg.id === sent.msg.id).msg.result.stopReason).toBe('end_turn');
 });
 
+test('auto-compact: past the threshold agy\'s /compact runs once the turn ends, once per crossing, with no respawn', () => {
+  const up = (used: number) => `g.acpHandleEvent(s.id,{jsonrpc:'2.0',method:'session/update',params:{sessionId:'sid1',update:{sessionUpdate:'usage_update',used:${used},size:1000000}}});`;
+  const done = (id: number) => `g.acpHandleEvent(s.id,{jsonrpc:'2.0',id:${id},result:{stopReason:'end_turn'}});await tick();`;
+  const out = run(
+    'A.sessionId="sid1";' +
+      'const set=cl.setAutoCompact(s.id,80);' +
+      "g.acpWriteMessage(proc,{text:'one'});g.acpWriteMessage(proc,{text:'queued'});await tick();" +
+      up(850000) + up(860000) +
+      'const midTurn=wrote.length;' +
+      done(1) + // → /compact (id 2), ahead of the queued message
+      up(860000) + done(2) + // the compaction's own reading is still high: no second one
+      up(300000) + done(3) + // the queued turn, back under the line
+      "g.acpWriteMessage(proc,{text:'two'});await tick();" + up(900000) + done(4) + // crossed again → compacts again
+      'emit({set:{pct:set.autoCompactPct},tokens:st.getSession(s.id).claude.autoCompactTokens,midTurn,prompts:wrote.filter((w)=>w.method==="session/prompt").map((w)=>w.params.prompt[0].text),sys:chat().filter((e)=>e.kind==="system").map((e)=>e.text)});'
+  );
+  expect(out.set.pct).toBe(80);
+  expect(out.tokens).toBe(800000); // 80% of the window agy reports
+  expect(out.midTurn).toBe(1);
+  expect(out.prompts).toEqual(['one', '/compact', 'queued', 'two', '/compact']);
+  expect(out.sys[0]).toBe('⤷ compacting the context (auto, 850k ≥ 800k tokens)…'); // the reading that crossed the line
+  expect(out.sys.filter((t: string) => t === '⤷ context compacted')).toHaveLength(1); // the second compaction is still running
+});
+
 test('images go as ACP image blocks (the shape a real run accepted); other files are listed', () => {
   const out = run(
     "emit({p:g.buildPrompt('look',[{name:'a.png',path:'/x/a.png',isImage:true,type:'image/png',dataBase64:'QUJD'},{name:'notes.txt',path:'/x/notes.txt',isImage:false}]),empty:g.buildPrompt('',[])});"
@@ -368,7 +403,7 @@ test('handshake: initialize → session/new with the MCP servers and the system 
   expect(out.ready).toBe(true);
   expect(out.inSystem).toBe(true);
   expect(out.turn).not.toContain('memory snapshot'); // the bootstrap is the system prompt, not a prefix of the first message
-  expect(out.models).toContain('gemini-4-neon');
+  expect(out.models).toEqual(['gemini-4-neon', 'gemini-4-argon', 'gemini-4-hydrogen', 'gemini-3.8-flash']);
   expect(out.efforts).toEqual(['low', 'medium', 'high']);
 });
 
@@ -422,7 +457,11 @@ test('prepare fails loudly without agy or without a login; the spawn is `agy acp
       "emit({bin:b.bin,args:b.args,cwd:b.cwd,sid:b.env.ARIGAMI_SESSION_ID,engine:b.env.ARIGAMI_ENGINE,hasToken:!!b.env.ARIGAMI_TOKEN,leaks:['CLAUDE_CODE_OAUTH_TOKEN','ANTHROPIC_API_KEY','OPENAI_API_KEY','CODEX_HOME'].filter((k)=>k in b.env),id:g.geminiDriver.sessionId.from({id:2,result:{sessionId:'abc'}})});",
     { CLAUDE_CODE_OAUTH_TOKEN: 'x', OPENAI_API_KEY: 'y' }
   );
-  expect(ok).toMatchObject({ bin: fakeAgy, args: ['acp'], engine: 'gemini', hasToken: true, leaks: [], id: 'abc' });
+  expect(ok).toMatchObject({ bin: fakeAgy, args: ['acp', '--gemini-dir', path.join(dir, 'gemini')], engine: 'gemini', hasToken: true, leaks: [], id: 'abc' });
+  // the gemini home: ~/.gemini unless ARIGAMI_GEMINI_HOME (or the older ARIGAMI_GEMINI_DIR) says otherwise
+  expect(agyAcpArgs({} as any)).toEqual(['acp']);
+  expect(agyAcpArgs({ ARIGAMI_GEMINI_HOME: '/g/home', ARIGAMI_GEMINI_DIR: '/g/dir' } as any, ['--x'])).toEqual(['acp', '--gemini-dir', '/g/home', '--x']);
+  expect(agyTokenFile({ ARIGAMI_GEMINI_HOME: '/g/home' } as any)).toBe('/g/home/antigravity-cli/antigravity-oauth-token');
   expect(ok.sid).toMatch(/^sess_/);
   const missing = runInChild(PRELUDE + 'try{g.acpPrepare(s,{resume:false});emit({threw:false});}catch(e){emit({threw:e.message});}', env({ ARIGAMI_AGY_BIN: '/nonexistent/agy' }));
   if (!missing.ok) throw new Error(missing.error);

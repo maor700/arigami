@@ -2850,13 +2850,12 @@ export function setEffort(id, effort) {
 // slash command over stream-json stdin). null/0 disables it.
 export function setAutoCompact(id, pct) {
   if (isCodexSession(id) && !isCodexAppSession(id)) throw new Error('auto-compact is not available on codex exec sessions');
-  if (isGeminiSession(id)) throw new Error('auto-compact is not configurable on gemini sessions — use /compact');
   const p = pct == null ? null : Math.min(95, Math.max(50, Number(pct) || 0));
-  // P3-2: codex app-server watches thread/tokenUsage itself — no respawn needed.
-  const apply = isCodexAppSession(id) ? (patch) => { setClaude(id, patch); return getSession(id)?.claude; } : (patch) => restartWith(id, patch);
+  // P3-2: codex app-server watches thread/tokenUsage itself, gemini its usage_update — no respawn needed.
+  const apply = isCodexAppSession(id) || isGeminiSession(id) ? (patch) => { setClaude(id, patch); return getSession(id)?.claude; } : (patch) => restartWith(id, patch);
   if (!p) return apply({ autoCompactPct: null, autoCompactTokens: null });
   const s = getSession(id);
-  const window = s?.claude?.usage?.ctxWindow && isCodexSession(id) ? s.claude.usage.ctxWindow : resolveCtxWindow(s?.claude?.model).window;
+  const window = s?.claude?.usage?.ctxWindow && (isCodexSession(id) || isGeminiSession(id)) ? s.claude.usage.ctxWindow : resolveCtxWindow(s?.claude?.model).window;
   const tokens = Math.round(window * (p / 100));
   return apply({ autoCompactPct: p, autoCompactTokens: tokens });
 }

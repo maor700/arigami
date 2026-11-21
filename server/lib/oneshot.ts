@@ -24,7 +24,7 @@ import { tokenForSession, getActiveId, hasCredentials, codexAuthPathFor, claudeB
 import { claudeBin } from './claude-bin.js';
 import { cfg, defaultEngine } from './config.js';
 import { auth } from '../auth.js';
-import { requireAgy, agyLoggedIn, geminiReady, AGY_SIGNED_OUT, acpMcpServers, parseAgyPrint, agyPrintModel, utilityModel } from './gemini-cli.js';
+import { requireAgy, agyLoggedIn, geminiReady, AGY_SIGNED_OUT, acpMcpServers, parseAgyPrint, agyPrintModel, utilityModel, geminiHomeOverride } from './gemini-cli.js';
 
 const baseEnv = (): NodeJS.ProcessEnv => claudeBaseEnv();
 
@@ -261,10 +261,10 @@ async function runGeminiOnce(prompt: string, opts: OneShotOptions): Promise<stri
   const env = { ...rest, ARIGAMI_URL: cfg.hostBase, ARIGAMI_TOKEN: auth.hostToken, ...opts.env };
   // No gemini model named (or another engine's alias): a utility runs on the cheap family, not the account's default.
   const model = agyPrintModel(opts.model, opts.effort) || utilityModel((await import('../gemini-acp.js')).geminiModels());
-  // MCP servers cannot be handed to print mode — a run that needs them goes over ACP, like a session does.
-  if (opts.mcpServers && Object.keys(opts.mcpServers).length) {
+  // Print mode takes neither MCP servers nor another gemini home — such a run goes over ACP, like a session does.
+  if ((opts.mcpServers && Object.keys(opts.mcpServers).length) || geminiHomeOverride()) {
     const { acpOnce } = await import('../gemini-acp.js');
-    const mcpServers = acpMcpServers(opts.mcpServers, { ARIGAMI_TOKEN: String(env.ARIGAMI_TOKEN || '') }, opts.env || {});
+    const mcpServers = acpMcpServers(opts.mcpServers || {}, { ARIGAMI_TOKEN: String(env.ARIGAMI_TOKEN || '') }, opts.env || {});
     return acpOnce({ cwd, env, timeoutMs: opts.timeoutMs, tag: opts.tag || 'oneshot' }, async (c) => {
       const r = await c.rpc('session/new', { cwd, mcpServers });
       const sessionId = r.result?.sessionId;
