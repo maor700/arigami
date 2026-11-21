@@ -238,6 +238,8 @@ test('codex authed, claude absent → codex capability ok, claude rows optional;
     ['claude-auth', 'blocked', false],
     ['codex-cli', 'ok', true],
     ['codex-auth', 'ok', true],
+    ['gemini-cli', 'missing', false],
+    ['gemini-auth', 'blocked', false],
     ['git-auth', 'ok', null],
   ]);
   expect(o.caps).toEqual([['claude', false], ['codex', true]]);
