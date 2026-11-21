@@ -1,10 +1,9 @@
 // Gemini accounts: identity, plan tier and quota of the machine's `agy` login (accounts.js `gemini-home`).
 // The token file belongs to agy: read-only here, never logged, copied or handed to a session.
 import fs from 'node:fs';
-import path from 'node:path';
 import { execFile } from 'node:child_process';
-import { HOME } from './lib/platform.js';
-import { geminiTokenFile } from './lib/gemini-home.js';
+import { geminiTokenFile, geminiHomeOverride } from './lib/gemini-home.js';
+import { findAgy } from './lib/gemini-cli.js';
 
 const ENDPOINT = 'https://daily-cloudcode-pa.googleapis.com/v1internal';
 const TTL_MS = 5 * 60_000;
@@ -29,12 +28,7 @@ export interface GeminiUsage {
   limitReached?: boolean;
   fetchedAt?: number;
 }
-/** The agy binary: ARIGAMI_AGY_BIN, else its installer's ~/.local/bin, else PATH. */
-export function agyBin(): string {
-  if (process.env.ARIGAMI_AGY_BIN) return process.env.ARIGAMI_AGY_BIN;
-  const local = path.join(HOME, '.local', 'bin', process.platform === 'win32' ? 'agy.exe' : 'agy');
-  return fs.existsSync(local) ? local : 'agy';
-}
+const agyBin = (): string => findAgy() || 'agy';
 
 /** agy's login as the host needs it; null when signed out or unreadable. */
 export function readGeminiLogin(file = geminiTokenFile()): { token: string; email: string | null; expiresAt: number | null } | null {
@@ -127,8 +121,8 @@ export async function geminiVersion(force = false): Promise<string | null> {
   return versionCache.value;
 }
 
-/** One cheap agy run (`agy models`: no model call) — what makes agy renew its own lapsed token. */
-const renewViaCli = (): Promise<unknown> => run(['models'], 20_000);
+/** One cheap agy run (`agy models`: no model call) makes agy renew its own lapsed token; it cannot be pointed at another gemini home, so none there. */
+const renewViaCli = async (): Promise<unknown> => (geminiHomeOverride() ? null : run(['models'], 20_000));
 
 interface Deps { file?: string; fetchImpl?: Fetch; now?: () => number; refreshLogin?: () => Promise<unknown> }
 

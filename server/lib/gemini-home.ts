@@ -3,13 +3,26 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { HOME } from './platform.js';
 
-/** The REAL gemini home — where `agy` on the host keeps its Google login. */
-export function geminiRealHome(): string {
-  return process.env.ARIGAMI_GEMINI_HOME || process.env.ARIGAMI_GEMINI_DIR || path.join(HOME, '.gemini');
+/** A gemini home other than ~/.gemini: ARIGAMI_GEMINI_HOME (ARIGAMI_GEMINI_DIR is the same knob), or null. */
+export function geminiHomeOverride(env: NodeJS.ProcessEnv = process.env): string | null {
+  return env.ARIGAMI_GEMINI_HOME || env.ARIGAMI_GEMINI_DIR || null;
 }
 
-/** agy's OAuth token file. */
-export const geminiTokenFile = (): string => path.join(geminiRealHome(), 'antigravity-cli', 'antigravity-oauth-token');
+/** The REAL gemini home — where `agy` on the host keeps its Google login. */
+export function geminiRealHome(env: NodeJS.ProcessEnv = process.env): string {
+  return geminiHomeOverride(env) || path.join(HOME, '.gemini');
+}
+
+/** agy's OAuth token file (agy refreshes it itself). */
+export function geminiTokenFile(env: NodeJS.ProcessEnv = process.env): string {
+  return path.join(geminiRealHome(env), 'antigravity-cli', 'antigravity-oauth-token');
+}
 
 /** True when this machine has its own `agy` login the host can borrow. */
-export const hasLocalGeminiLogin = (): boolean => fs.existsSync(geminiTokenFile());
+export function hasLocalGeminiLogin(env: NodeJS.ProcessEnv = process.env): boolean {
+  try {
+    return fs.statSync(geminiTokenFile(env)).size > 0;
+  } catch {
+    return false;
+  }
+}

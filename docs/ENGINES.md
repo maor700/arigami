@@ -48,7 +48,7 @@ The thread id is observed, not assigned, on both transports.
 
 ## What works on Gemini
 
-The `gemini` engine is Google's Antigravity CLI (`agy`) in ACP mode: one long-lived `agy acp` per session, newline-delimited JSON-RPC over stdio (`server/gemini-acp.ts`). It uses agy's own Google login (`~/.gemini/antigravity-cli/`; `ARIGAMI_GEMINI_HOME` — or the older `ARIGAMI_GEMINI_DIR` — points agy at another home via `agy acp --gemini-dir`) — the driver injects no token. Missing CLI or missing login fails the spawn with a sentence that says which.
+The `gemini` engine is Google's Antigravity CLI (`agy`) in ACP mode: one long-lived `agy acp` per session, newline-delimited JSON-RPC over stdio (`server/gemini-acp.ts`). It uses agy's own Google login (`~/.gemini/antigravity-cli/`; `ARIGAMI_GEMINI_HOME` — or the older `ARIGAMI_GEMINI_DIR` — points agy at another home via `agy acp --gemini-dir`) — the driver injects no token; in Arigami that login is the `gemini-home` account a gemini session is pinned to (Accounts section). Missing CLI or missing login fails the spawn with a sentence that says which.
 
 Verified live 2026-11-22 (agy 1.5.14, gemini-3.8-flash), through the real driver against a real `agy acp`: a turn with a shell command and a file write, an approval card answered deny, kill + resume of the same conversation, interrupt; and by direct ACP runs: thinking, MCP tools through the gateway, image input, `/compact`, model switching. Fixtures: `test/fixtures/gemini-acp/`. **Not yet run inside the cockpit** — that needs a host restart.
 
