@@ -285,6 +285,7 @@ Settings › Host › Gemini CLI (`GET /__api/host/gemini`); the email is the to
 The access token lives about an hour and only agy renews it. When it has lapsed the last reading stays (with none, the
 card says usage shows up after the next run). The host runs `agy models` to let agy renew it only while someone is
 looking (Accounts or Settings › Host opened in the last 15 minutes), at most once an hour; the usage poll alone never runs agy.
+Measured 2026-11-22 (agy 1.5.14): one `agy models` run on a lapsed token rewrote the file with a fresh hour.
 An exhausted bucket is inferred from a missing `remainingFraction` (proto3 drops zeros) — not reproduced here.
 
 Cockpit: the model picker lists the families `GET /__api/models` carries as `gemini` (`GEMINI_MODELS` in
