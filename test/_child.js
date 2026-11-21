@@ -18,7 +18,8 @@ export function runInChild(body, env = {}) {
     body +
     '})();process.stdout.write(JSON.stringify({ok:true,out:__out}));}' +
     'catch(e){process.stdout.write(JSON.stringify({ok:false,error:String(e&&e.message||e)}));}';
-  const r = spawnSync('bun', ['-e', script], {
+  // --no-env-file: a checkout's own .env (the live one sets ARIGAMI_DEFAULT_CWD, ARIGAMI_BIND…) must not reach the child.
+  const r = spawnSync('bun', ['--no-env-file', '-e', script], {
     cwd: ROOT,
     env: { ...process.env, ...env },
     encoding: 'utf8',
