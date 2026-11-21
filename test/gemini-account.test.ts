@@ -202,7 +202,7 @@ test("the machine's agy login is seeded as a gemini-home account: active for gem
       'emit({types:l.accounts.map(x=>x.provider+":"+x.type),activeIds:l.activeIds,gActive:g.active,pickGemini:a.pickSessionAccount("gemini")===g.id,pickClaude:a.pickSessionAccount("claude"),' +
       'token:a.resolveToken(g.id),forSession:a.tokenForSession(g.id)&&a.tokenForSession(g.id).account.id,has:a.hasCredentials("gemini"),next:a.nextAvailable("acc_tok"),again:a.adoptLocalLogins(),count:a.listAccounts().accounts.length,' +
       'stale:a.sanitizeAccountsForExport({activeIds:{gemini:g.id},accounts:[{id:g.id,provider:"gemini",type:"gemini-home",pool:true}]})});',
-    { ARIGAMI_DIR: dir, HOME: dir, ARIGAMI_CODEX_HOME: path.join(dir, 'no-codex-here'), ARIGAMI_GEMINI_DIR: home }
+    { ARIGAMI_DIR: dir, HOME: dir, ARIGAMI_CODEX_HOME: path.join(dir, 'no-codex-here'), ARIGAMI_GEMINI_HOME: home }
   );
   expect(r.ok).toBe(true);
   const o = r.out[0];

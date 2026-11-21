@@ -5,7 +5,7 @@ import { HOME } from './platform.js';
 
 /** The REAL gemini home — where `agy` on the host keeps its Google login. */
 export function geminiRealHome(): string {
-  return process.env.ARIGAMI_GEMINI_DIR || path.join(HOME, '.gemini');
+  return process.env.ARIGAMI_GEMINI_HOME || process.env.ARIGAMI_GEMINI_DIR || path.join(HOME, '.gemini');
 }
 
 /** agy's OAuth token file. */

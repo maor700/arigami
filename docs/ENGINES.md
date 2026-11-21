@@ -74,7 +74,7 @@ Verified live 2026-11-22 (agy 1.5.14, gemini-3.8-flash), through the real driver
 4. **A denied tool ends the turn.** agy stops instead of letting the model answer (measured).
 5. **MCP tool results are not in the stream.** ACP reports that an MCP call finished, not what it returned — the card shows the call with an empty result.
 6. **Extensions' mods do not run tool hooks.** `prompt.submit` runs in the host as for codex; there is no Pre/PostToolUse adapter for agy.
-7. **No quota recovery, no model ladder, no account pool.** A quota error is a plain error line. The Gemini quota is one shared 5-hour bucket per Google account, including one-shots. Accounts and quota display are separate work.
+7. **No quota recovery, no model ladder, no account pool.** A quota error is a plain error line. The Gemini quota is one shared 5-hour bucket per Google account, including one-shots; the cockpit shows it (Accounts section).
 8. **Compaction is agy's summary, not Arigami's.** What `/compact` keeps is agy's decision; nothing is parked for a climb back.
 9. **Remote MCP grants need the gateway.** Host-held grants work; with `ARIGAMI_MCP_GATEWAY=0` only stdio servers are passed, and that path was not run. Grants made with `claude mcp login` and claude.ai connectors are Claude's.
 10. **agy keeps one host-wide cache of MCP tool schemas per server name** (`~/.gemini/antigravity-cli/mcp/<server>/`). No secrets, but two sessions with different tool visibility write the same files; calls are still refused by the host.
@@ -267,7 +267,7 @@ scrape); the older `/__api/accounts/oauth/*` routes are unchanged for the `conne
 
 Provider `gemini` feeds the `gemini` engine (Google's Antigravity CLI, `agy`). One account type:
 
-- **`gemini-home`** — the machine's own `agy` Google login in `~/.gemini` (`ARIGAMI_GEMINI_DIR` overrides), seeded like
+- **`gemini-home`** — the machine's own `agy` Google login in `~/.gemini` (`ARIGAMI_GEMINI_HOME` overrides; `ARIGAMI_GEMINI_DIR` is an alias), seeded like
   `codex-home`: a live pointer, not removable from the cockpit, `gemini-home-stale` in a backup. A login made after boot is
   adopted on the next `GET /__api/accounts`. There is no add flow: sign in with `agy` on the host.
 
