@@ -15,7 +15,8 @@ import { ARIGAMI_DIR } from './lib/instance.js';
 import { docsDir } from './lib/resource-root.js';
 
 export type When = 'first-turn' | 'every-turn';
-export type Engine = 'claude' | 'codex';
+export type Engine = 'claude' | 'codex' | 'gemini';
+const isEngine = (e: unknown): e is Engine => e === 'claude' || e === 'codex' || e === 'gemini';
 
 export interface BuiltinBlock {
   id: string;
@@ -177,7 +178,7 @@ export interface BlockView {
 
 function engineList(v: string | undefined): Engine[] | null {
   if (!v) return null;
-  const list = v.split(/[\s,]+/).filter((e): e is Engine => e === 'claude' || e === 'codex');
+  const list = v.split(/[\s,]+/).filter(isEngine);
   return list.length ? list : null;
 }
 
@@ -321,7 +322,7 @@ export function cleanLayer(input: unknown): Layer | null {
     else if (v && typeof v === 'object' && typeof (v as any).text === 'string' && (v as any).text.trim()) {
       const e: { text: string; when?: When; engines?: Engine[] } = { text: (v as any).text.replace(/\r\n/g, '\n').slice(0, MAX_LAYER_TEXT) };
       if ((v as any).when === 'every-turn' || (v as any).when === 'first-turn') e.when = (v as any).when;
-      const engines = Array.isArray((v as any).engines) ? (v as any).engines.filter((x: unknown): x is Engine => x === 'claude' || x === 'codex') : [];
+      const engines = Array.isArray((v as any).engines) ? (v as any).engines.filter(isEngine) : [];
       if (engines.length) e.engines = engines;
       out[id] = e;
     }

@@ -21,6 +21,7 @@ import { killAll, kickAutoPlayAll } from './claude.js';
 // implemented: codex" for every session that asked for it.
 import './codex.js';
 import './codex-app.js'; // re-registers 'codex' on app-server unless cfg.codexTransport is 'exec'
+import './gemini-acp.js'; // registers 'gemini' (agy acp)
 import { migrateLegacyMcpRegistration, autoStartBridge, stopBridge } from './whatsapp-bridge.js';
 import { sweepOrphans, HOST_ID } from './lib/children.js';
 import { claimHost, releaseHost } from './lib/hostlock.js';

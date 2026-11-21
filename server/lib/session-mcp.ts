@@ -62,7 +62,7 @@ export function recordSpawn(sessionId: string, servers: Loaded[]): void {
 }
 
 export interface Facts {
-  engine: 'claude' | 'codex';
+  engine: 'claude' | 'codex' | 'gemini';
   loaded: Loaded[] | null;
   /** session.claude.mcp.servers — init / probe / traffic / engine verdicts */
   health: Record<string, { status?: string; statusText?: string; source?: string; at?: number }>;
@@ -122,7 +122,7 @@ export function rows(f: Facts): Row[] {
   for (const l of f.loaded || []) {
     const h = f.health[l.name];
     if (l.via === 'gateway' && engineRefused(l.name)) {
-      const who = f.engine === 'codex' ? 'Codex' : 'Claude';
+      const who = f.engine === 'codex' ? 'Codex' : f.engine === 'gemini' ? 'Gemini' : 'Claude';
       push({
         ...l,
         status: 'needs-reconnect',

@@ -19,9 +19,9 @@ the Rail's Team section sits **below** the sessions/folders section; **no per-ag
 skills** — agents reference shared skills by name. (UX1 later made the home chat the **home** tab of
 the agent surface instead of a rail row — see the last section.)
 
-**Engine.** An agent carries an `engine` (`claude` | `codex`, absent = `cfg.defaultEngine`); its sessions run on
-that CLI and "Claude" below means whichever engine the session runs. A3 allowlists, budgets and the ledger
-hold on both; differences (no `--disallowedTools` on codex, cost `null`) are in §Engine and docs/ENGINES.md.
+**Engine.** An agent carries an `engine` (`claude` | `codex` | `gemini`, absent = `cfg.defaultEngine`); its sessions run on
+that CLI and "Claude" below means whichever engine the session runs. Budgets and the ledger hold on all three; A3
+allowlists are weaker on gemini (checked at approval requests only). Differences are in §Engine and docs/ENGINES.md.
 
 **Outbound (system principle, 2026-11-04).** When the owner asks, the agent initiates and operates the communication
 modules — email, WhatsApp, Slack, messages, and the sessions it creates/tasks for that — and never deflects with
@@ -34,7 +34,7 @@ The wording the agent reads is the `host-rules` and `identity` blocks in `server
 ```
 agent.json   { slug, name, emoji, color, engine?, model?, skills: [names], tools?, domains?,
                budget?: {tokensPerDay}, homeSessionId?, createdAt, updatedAt }
-             engine: 'claude' | 'codex' (absent = claude); `model` belongs to that engine's catalog
+             engine: 'claude' | 'codex' | 'gemini' (absent = the host default); `model` belongs to that engine's catalog
 persona.md   ≤ ~20 lines "who you are + limits" — injected into the first turn of every
              session born from the agent (a <system-reminder> block, like the memory snapshot)
 memory/      MEMORY.md + journal/ — the agent's memory namespace (FTS scope agent:<slug>)
@@ -83,7 +83,7 @@ virtual path `agents/<slug>/…`).
 
 ### Engine
 
-- `engine?: 'claude' | 'codex'` on the record (REST, `create_agent`/`update_agent`, the agent page's
+- `engine?: 'claude' | 'codex' | 'gemini'` on the record (REST, `create_agent`/`update_agent`, the agent page's
   Advanced settings and the AgentCard draft — the model picker there lists that engine's catalog).
 - Resolution (`agents.engineForSpawn`, inside `applyAgentToSession`, used by every spawn-from-agent
   path): explicit caller value → agent's engine → parent's (children) → `cfg.defaultEngine`; `''` counts as not given.

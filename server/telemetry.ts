@@ -249,7 +249,8 @@ let factsProvider: () => Promise<Facts> = async () => {
     const st = await import('./state.js');
     const all = st.listSessions({ archived: true });
     sessions = all.length;
-    for (const s of all) engines[s.engine === 'codex' ? 'codex' : 'claude']++;
+    // gemini sessions count in `sessions` only: the wire format's engines are claude + codex.
+    for (const s of all) if (s.engine !== 'gemini') engines[s.engine === 'codex' ? 'codex' : 'claude']++;
   } catch {
     /* CLI / tests without state */
   }

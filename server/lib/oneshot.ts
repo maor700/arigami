@@ -14,7 +14,7 @@
 // same way a session does, just against the ACTIVE account instead of a
 // per-session assignment (there is no session).
 //
-// runOneShot() picks the engine: claude = `claude -p`, codex = `codex exec --ephemeral`.
+// runOneShot() picks the engine: claude = `claude -p`, codex = `codex exec --ephemeral`, gemini = `agy -p` (ACP when it needs MCP servers).
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -24,6 +24,7 @@ import { tokenForSession, getActiveId, hasCredentials, codexAuthPathFor, claudeB
 import { claudeBin } from './claude-bin.js';
 import { cfg, defaultEngine } from './config.js';
 import { auth } from '../auth.js';
+import { requireAgy, agyLoggedIn, geminiReady, AGY_SIGNED_OUT, acpMcpServers, parseAgyPrint, agyPrintModel, utilityModel } from './gemini-cli.js';
 
 const baseEnv = (): NodeJS.ProcessEnv => claudeBaseEnv();
 
@@ -58,12 +59,12 @@ async function refreshActiveToken(opts: OneShotOptions): Promise<boolean> {
   }
 }
 
-export type OneShotEngine = 'claude' | 'codex';
+export type OneShotEngine = 'claude' | 'codex' | 'gemini';
 
 export interface OneShotOptions {
   engine?: OneShotEngine; // default: 'claude'
-  model?: string; // claude default 'sonnet'; codex: only gpt/codex/o* names pass, else codex's default
-  effort?: string; // codex model_reasoning_effort — default 'low'
+  model?: string; // claude default 'sonnet'; codex: only gpt/codex/o* names pass, else codex's default; gemini: only gemini-* ids pass
+  effort?: string; // codex model_reasoning_effort — default 'low'; gemini: the id's effort tail
   json?: object; // JSON Schema for the final message (codex --output-schema; claude relies on the prompt)
   account?: string | null; // account id to run as (pinned session account); default the active one
   env?: Record<string, string>; // extra env, e.g. a session's ARIGAMI_SESSION_ID/TOKEN
@@ -100,6 +101,7 @@ export async function runClaudeOneShot(prompt: string, opts: OneShotOptions = {}
 /** One headless completion on `opts.engine`; resolves the final message text. */
 export async function runOneShot(prompt: string, opts: OneShotOptions = {}): Promise<string> {
   if (opts.engine === 'codex') return runCodexOnce(prompt, opts);
+  if (opts.engine === 'gemini') return runGeminiOnce(prompt, opts);
   try {
     return await runOnce(prompt, opts);
   } catch (e: any) {
@@ -246,19 +248,89 @@ async function runCodexOnce(prompt: string, opts: OneShotOptions): Promise<strin
   }
 }
 
+// ---- gemini -----------------------------------------------------------------
+
+// One argv string tops out at 128 KB on Linux; a longer prompt goes through a scratch file.
+const AGY_ARG_MAX = 100_000;
+
+async function runGeminiOnce(prompt: string, opts: OneShotOptions): Promise<string> {
+  const bin = requireAgy();
+  if (!agyLoggedIn()) throw new Error(`gemini: ${AGY_SIGNED_OUT}`);
+  const cwd = opts.cwd || process.cwd();
+  const { CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_API_KEY, OPENAI_API_KEY, CODEX_HOME, ...rest } = process.env;
+  const env = { ...rest, ARIGAMI_URL: cfg.hostBase, ARIGAMI_TOKEN: auth.hostToken, ...opts.env };
+  // No gemini model named (or another engine's alias): a utility runs on the cheap family, not the account's default.
+  const model = agyPrintModel(opts.model, opts.effort) || utilityModel((await import('../gemini-acp.js')).geminiModels());
+  // MCP servers cannot be handed to print mode — a run that needs them goes over ACP, like a session does.
+  if (opts.mcpServers && Object.keys(opts.mcpServers).length) {
+    const { acpOnce } = await import('../gemini-acp.js');
+    const mcpServers = acpMcpServers(opts.mcpServers, { ARIGAMI_TOKEN: String(env.ARIGAMI_TOKEN || '') }, opts.env || {});
+    return acpOnce({ cwd, env, timeoutMs: opts.timeoutMs, tag: opts.tag || 'oneshot' }, async (c) => {
+      const r = await c.rpc('session/new', { cwd, mcpServers });
+      const sessionId = r.result?.sessionId;
+      if (r.error || !sessionId) throw new Error(`gemini: ${r.error?.message || 'no session'}`);
+      if (model) await c.rpc('session/set_model', { sessionId, modelId: model });
+      let text = '';
+      c.onUpdate((u) => {
+        if (u.sessionUpdate === 'agent_message_chunk' && typeof u.content?.text === 'string') text += u.content.text;
+        else if (u.sessionUpdate === 'tool_call') text = ''; // keep the final message only
+      });
+      const done = await c.rpc('session/prompt', { sessionId, prompt: [{ type: 'text', text: prompt }] });
+      if (done.error) throw new Error(`gemini: ${done.error.message}`);
+      return text;
+    });
+  }
+  let scratchFile: string | null = null;
+  let arg = prompt;
+  if (Buffer.byteLength(prompt) > AGY_ARG_MAX) {
+    const root = path.join(cfg.configDir || os.homedir(), 'oneshot-gemini');
+    fs.mkdirSync(root, { recursive: true });
+    scratchFile = path.join(fs.mkdtempSync(path.join(root, `${(opts.tag || 'oneshot').replace(/[^\w-]/g, '_')}-`)), 'prompt.md');
+    fs.writeFileSync(scratchFile, prompt);
+    arg = `Read the file ${scratchFile} — it is your full prompt. Follow it exactly and reply with nothing but what it asks for.`;
+  }
+  const args = ['--output-format', 'json', '--dangerously-skip-permissions', ...(model ? ['--model', model] : []), `-p=${arg}`];
+  try {
+    return await new Promise<string>((resolve, reject) => {
+      const child = spawn(bin, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
+      supervise(child, opts.tag || 'oneshot');
+      let out = '';
+      let err = '';
+      child.stdout.on('data', (d) => { out += d; });
+      child.stderr.on('data', (d) => { err = (err + d).slice(-STDERR_CAP); });
+      const guard = setTimeout(() => killTree(child.pid), opts.timeoutMs || 3 * 60 * 1000);
+      child.on('error', (e) => { clearTimeout(guard); reject(e); });
+      child.on('close', (code) => {
+        clearTimeout(guard);
+        try {
+          const text = parseAgyPrint(out);
+          if (code) throw new Error(err.trim().split('\n')[0] || `exit ${code}`);
+          resolve(text);
+        } catch (e) {
+          console.error(`[oneshot] agy exited ${code}: ${(e as Error).message}\n${err}`);
+          reject(new Error(`agy exited ${code}: ${(e as Error).message.slice(0, 500)}`));
+        }
+      });
+    });
+  } finally {
+    if (scratchFile) fs.rmSync(path.dirname(scratchFile), { recursive: true, force: true });
+  }
+}
+
 // ---- engine routing ---------------------------------------------------------
 
-/** Engine for a host-level utility: the default engine when it has an account, else the other one that does. */
+const ready = (e: OneShotEngine): boolean => (e === 'gemini' ? geminiReady() : hasCredentials(e));
+
+/** Engine for a host-level utility: the default engine when it is signed in, else the first one that is. */
 export function hostEngine(): OneShotEngine {
   const d = defaultEngine();
-  const other: OneShotEngine = d === 'codex' ? 'claude' : 'codex';
   try {
-    if (!hasCredentials(d) && hasCredentials(other)) return other;
+    if (!ready(d)) return (['claude', 'codex', 'gemini'] as const).find((e) => e !== d && ready(e)) || d;
   } catch { /* accounts not loaded */ }
   return d;
 }
 
 /** Engine for a utility about a session: the session's own engine. */
 export function sessionEngine(s: { engine?: string | null } | null | undefined): OneShotEngine {
-  return s?.engine === 'codex' ? 'codex' : 'claude';
+  return s?.engine === 'codex' || s?.engine === 'gemini' ? s.engine : 'claude';
 }

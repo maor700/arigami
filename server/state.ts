@@ -8,7 +8,9 @@ import { cfg, ensureConfigFile, defaultEngine } from './lib/config.js';
 import { migrateFile, stamp, SchemaVersionError } from './lib/schema-version.js';
 import { STATE_SCHEMA } from './lib/state-schemas.js';
 import { pickSessionAccount } from './accounts.js';
-import { providerForEngine } from './lib/providers.js';
+import { providerForEngine, PROVIDER_IDS, PROVIDERS } from './lib/providers.js';
+import { isEngineId } from './lib/engine-driver.js';
+import type { EngineId } from './lib/engine-driver.js';
 import * as funnel from './funnel.js';
 
 export { cfg, ensureConfigFile };
@@ -331,8 +333,8 @@ export interface Session {
   activeTabId: string;
   artifacts?: Artifact[];
   claude: ClaudeState;
-  // Agent-engine CLI driving this session — 'claude' (default) or 'codex'; read by pickEngine() (lib/engine-driver.ts).
-  engine?: 'claude' | 'codex';
+  // Agent-engine CLI driving this session — 'claude' (default), 'codex' or 'gemini'; read by pickEngine() (lib/engine-driver.ts).
+  engine?: EngineId;
   bg: unknown[];
   pendingPrompts?: PendingPrompt[];
   promptAutoPlay?: boolean;
@@ -658,11 +660,11 @@ export function createSession({
   model?: string | null;
   effort?: string | null;
   color?: string | null; // A1: a session born from an agent takes the agent's color
-  engine?: string | null; // 'claude' | 'codex'; unset/unknown = cfg.defaultEngine — see Session.engine
+  engine?: string | null; // 'claude' | 'codex' | 'gemini'; unset/unknown = cfg.defaultEngine — see Session.engine
   folderName?: string | null; // trimmed exact name; create if missing
   folderId?: string | null; // generic creation-time project-folder assignment (any caller) — same field the make-project/dispatch paths patch in after the fact
 } = {}): Session {
-  const eng = engine === 'codex' || engine === 'claude' ? engine : defaultEngine();
+  const eng = isEngineId(engine) ? engine : defaultEngine();
   funnel.firstTime('session.first'); // K5 funnel — once per instance
   // pm.first_tree: a master's SECOND child makes it a tree (≥2 children).
   const master = metadata?.master;
@@ -714,7 +716,8 @@ export function createSession({
       // rate-limited/quarantined, so a new session doesn't start dead-on-arrival.
       // Per PROVIDER: a codex session is pinned to a codex login, never to a
       // Claude token it could not use (server/lib/providers.ts).
-      accountId: pickSessionAccount(providerForEngine(eng)) || null,
+      // An engine with no account provider (gemini: agy's own Google login) is pinned to none.
+      accountId: (PROVIDER_IDS.some((p) => PROVIDERS[p].engine === eng) && pickSessionAccount(providerForEngine(eng))) || null,
       // Seed the session's model from the caller's pick, falling back to the
       // configured default (cfg.defaultModel, 'opus' unless set); 'default'
       // means "no --model choice", so the CLI picks. The per-session dropdown can still override later.

@@ -127,8 +127,8 @@ export async function createArigamiServer(env = process.env) {
         cwd: { type: 'string' },
         prompt: { type: 'string', description: 'First message to send to the new session. Merged in after `skill`\'s own instructions if both are given.' },
         skill: { type: 'string', description: 'Name of a bundled skill (from GET /__api/skills) for the session to run, e.g. for ticket work' },
-        engine: { type: 'string', enum: ['claude', 'codex'], description: 'Which agent-engine CLI drives the new session. Default: the `agent`\'s engine, else (with `kind`) your own engine, else the host default engine.' },
-        model: { type: 'string', description: 'Model value for the chosen `engine` (claude: a `--model` alias or full id; codex: e.g. gpt-5.6-terra); omit for that engine\'s default' },
+        engine: { type: 'string', enum: ['claude', 'codex', 'gemini'], description: 'Which agent-engine CLI drives the new session. Default: the `agent`\'s engine, else (with `kind`) your own engine, else the host default engine.' },
+        model: { type: 'string', description: 'Model value for the chosen `engine` (claude: a `--model` alias or full id; codex: e.g. gpt-5.6-terra; gemini: a family like gemini-4-neon or a full id like gemini-4-neon-high); omit for that engine\'s default' },
         effort: { type: 'string', description: 'Reasoning effort (low | medium | high | xhigh | max, plus whatever the model adds). claude: `--effort` (low…max). codex: the `model_reasoning_effort` config key, and its ladder is per-model — gpt-5.6-terra adds `ultra`, gpt-5.5 stops at `xhigh`. Omit for the model\'s own default.' },
         permission_mode: { type: 'string', enum: ['default', 'acceptEdits', 'plan', 'bypassPermissions'] },
         metadata: { type: 'object' },
@@ -302,7 +302,7 @@ export async function createArigamiServer(env = process.env) {
         deliver_whatsapp: { type: 'string', description: 'create: JID — accepted but not yet sent in this version' },
         deliver_master: { type: 'string', description: 'create: session id to wake with the result' },
         autonomous: { type: 'boolean', description: 'create: isolated runs only — bypassPermissions + no-questions directive' },
-        engine: { type: 'string', enum: ['claude', 'codex'], description: 'create: CLI the isolated runs use; omit for the agent\'s engine, else the host default' },
+        engine: { type: 'string', enum: ['claude', 'codex', 'gemini'], description: 'create: CLI the isolated runs use; omit for the agent\'s engine, else the host default' },
         agent: { type: 'string', description: 'create: agent slug the isolated runs are born from (persona, memory, connections, browser profile — same as create_session({agent})). Defaults to YOUR agent when you run as one; pass "" for a plain run. Unknown slug → error.' },
         ...SID_PROP,
       }, ['action']),
@@ -1366,7 +1366,7 @@ export async function createArigamiServer(env = process.env) {
         slug: { type: 'string', description: 'lowercase letters/digits/hyphens; derived from name when omitted (pass one for Hebrew names)' },
         emoji: { type: 'string' },
         color: { type: 'string', description: '#rrggbb (host picks a free palette color when omitted)' },
-        engine: { type: 'string', enum: ['claude', 'codex'], description: 'CLI the agent\'s sessions run on; omit for the host default engine' },
+        engine: { type: 'string', enum: ['claude', 'codex', 'gemini'], description: 'CLI the agent\'s sessions run on; omit for the host default engine' },
         model: { type: 'string', description: 'Model for the agent\'s engine (claude alias/id, or a codex catalog slug); omit for the engine default' },
         persona: { type: 'string' },
         skills: { type: 'array', items: { type: 'string' }, description: 'Names of shared skills the agent should use' },
@@ -1397,7 +1397,7 @@ export async function createArigamiServer(env = process.env) {
         name: { type: 'string' },
         emoji: { type: 'string' },
         color: { type: 'string' },
-        engine: { type: ['string', 'null'], enum: ['claude', 'codex', null], description: 'CLI the agent\'s sessions run on; null = host default engine' },
+        engine: { type: ['string', 'null'], enum: ['claude', 'codex', 'gemini', null], description: 'CLI the agent\'s sessions run on; null = host default engine' },
         model: { type: ['string', 'null'], description: 'Model for the agent\'s engine; null = engine default' },
         persona: { type: 'string' },
         skills: { type: 'array', items: { type: 'string' } },
@@ -1453,7 +1453,7 @@ export async function createArigamiServer(env = process.env) {
   // hidden one is refused here too (the PreToolUse hook is the outer layer).
   let hiddenTools = null; // Set<string> | null (null = unrestricted / not yet known)
   // P2-3: codex never asks for permission, so a permission_prompt card would wait 30 minutes for nobody.
-  const ENGINE_HIDDEN = new Set(env.ARIGAMI_ENGINE === 'codex' ? ['permission_prompt'] : []);
+  const ENGINE_HIDDEN = new Set(env.ARIGAMI_ENGINE === 'codex' || env.ARIGAMI_ENGINE === 'gemini' ? ['permission_prompt'] : []);
   // sign_in runs the login ladder in the host; the steps it used to be made of are its internals now, not the model's
   // to pick between. save_browser_logins stays for an AGENT session (its own identity, not the owner's).
   const LOGIN_INTERNAL = new Set(['browser_logins', 'request_login', 'request_credentials', 'sso_login', 'sso_look', 'sso_click', 'sso_navigate', 'sso_done', 'save_login', ...(env.ARIGAMI_AGENT ? [] : ['save_browser_logins'])]);

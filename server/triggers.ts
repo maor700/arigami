@@ -570,9 +570,9 @@ export function setQueueSettings(patch: Partial<QueueSettings>): QueueSettings {
 }
 
 // ---- trigger CRUD ---------------------------------------------------------
-/** 'claude'/'codex' → itself; '' → '' (host default); anything else → undefined. */
+/** 'claude'/'codex'/'gemini' → itself; '' → '' (host default); anything else → undefined. */
 function triggerEngine(v: unknown): string | undefined {
-  return v === 'claude' || v === 'codex' || v === '' ? v : undefined;
+  return v === 'claude' || v === 'codex' || v === 'gemini' || v === '' ? v : undefined;
 }
 
 export async function createTrigger(input: {

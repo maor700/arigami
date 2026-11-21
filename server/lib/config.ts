@@ -7,6 +7,12 @@ import { HOME } from './platform.js';
 import { ARIGAMI_DIR, AT_DEFAULT_DIR, DEFAULT_ARIGAMI_DIR, IS_DEFAULT_INSTANCE, PORT_SHIFT } from './instance.js';
 import { migrateFile, stamp, SchemaVersionError } from './schema-version.js';
 import { CONFIG_SCHEMA } from './state-schemas.js';
+import { ENGINE_IDS, isEngineId } from './engine-driver.js';
+import type { EngineId } from './engine-driver.js';
+
+type EngineName = EngineId;
+const ENGINE_NAMES = ENGINE_IDS;
+const asEngine = (v: unknown): EngineName => (isEngineId(v) ? v : 'claude');
 export const tilde = (p: string | undefined): string => {
   return p && p.startsWith('~')
     ? path.join(HOME, p.slice(1))
@@ -293,7 +299,7 @@ export interface Config {
   // null/'' = 'high'; 'default' = the CLI's own default.
   defaultEffort: string | null;
   // Engine a new session runs on when neither the caller, its agent nor its parent names one; unknown = claude.
-  defaultEngine: 'claude' | 'codex';
+  defaultEngine: EngineName;
   // RES1 — the host-wide model ladder. When every pooled account has hit its
   // limit, the supervisor drops one rung of this chain instead of stopping, and
   // climbs back once the top rung's quota resets. An agent or a session may
@@ -648,7 +654,7 @@ export const cfg: Config = {
   publicUrl: String(merged.publicUrl || '').replace(/\/+$/, ''),
   defaultModel: merged.defaultModel || DEFAULTS.defaultModel,
   defaultEffort: merged.defaultEffort === 'default' ? null : merged.defaultEffort || DEFAULTS.defaultEffort,
-  defaultEngine: merged.defaultEngine === 'codex' ? 'codex' : 'claude',
+  defaultEngine: asEngine(merged.defaultEngine),
   codexTransport: merged.codexTransport === 'exec' ? 'exec' : 'app-server',
   codexApprovals: merged.codexApprovals === 'on-request' || merged.codexApprovals === 'untrusted' ? merged.codexApprovals : 'never',
   trustProxy: resolveTrustProxy(merged),
@@ -747,32 +753,32 @@ export function updateHostConfig(patch: Partial<HostConfig>): HostConfig {
 }
 
 // Whether an engine is signed in on this host (registered by onboarding.ts, which owns the probes).
-let engineReady: ((e: 'claude' | 'codex') => boolean) | null = null;
-export function setEngineReadiness(fn: ((e: 'claude' | 'codex') => boolean) | null): void {
+let engineReady: ((e: EngineName) => boolean) | null = null;
+export function setEngineReadiness(fn: ((e: EngineName) => boolean) | null): void {
   engineReady = fn;
 }
 
 /**
- * The host default engine; anything but 'codex' reads as claude. A user who
- * connected only ONE engine must not get sessions on the other (a Codex-only
+ * The host default engine; an unknown value reads as claude. A user who
+ * connected only ONE engine must not get sessions on another (a Codex-only
  * host would otherwise spawn `claude` and hit "Not logged in"): when the
- * configured default is not connected but the other engine is, the other wins.
+ * configured default is not connected, the first connected engine wins.
  */
-export function defaultEngine(): 'claude' | 'codex' {
-  const want = cfg.defaultEngine === 'codex' ? 'codex' : 'claude';
+export function defaultEngine(): EngineName {
+  const want = asEngine(cfg.defaultEngine);
   if (!engineReady) return want;
-  const other = want === 'codex' ? 'claude' : 'codex';
   try {
-    return !engineReady(want) && engineReady(other) ? other : want;
+    if (engineReady(want)) return want;
+    return ENGINE_NAMES.find((e) => e !== want && engineReady!(e)) || want;
   } catch {
     return want;
   }
 }
 
 // Persist cfg.defaultEngine (Settings › Host); an unknown value falls back to claude.
-export function updateDefaultEngine(engine: unknown): 'claude' | 'codex' {
+export function updateDefaultEngine(engine: unknown): EngineName {
   ensureConfigFile();
-  const next = engine === 'codex' ? 'codex' : 'claude';
+  const next = asEngine(engine);
   writeConfigFile({ ...(loadFile() as Record<string, unknown>), defaultEngine: next });
   cfg.defaultEngine = next;
   return next;

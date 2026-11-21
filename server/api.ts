@@ -2537,10 +2537,10 @@ async function sessionMcpRows(s: any) {
   const codexGrants = mcpConn.readCodexMcpGrants();
   const snapshot = Array.isArray(s.claude?.capabilities?.mcpServers) ? s.claude.capabilities.mcpServers : [];
   return sm.rows({
-    engine: s.engine === 'codex' ? 'codex' : 'claude',
+    engine: s.engine === 'codex' || s.engine === 'gemini' ? s.engine : 'claude',
     loaded: s.claude?.mcpLoaded?.servers || null,
     health: s.claude?.mcp?.servers || {},
-    snapshot: s.engine === 'codex' ? [] : snapshot,
+    snapshot: s.engine === 'codex' || s.engine === 'gemini' ? [] : snapshot,
     hostGrant: (name) => {
       const g = grants.getGrant(name);
       return g && (g.owner === 'global' || g.owner === owner) ? { live: grants.isLive(name) } : null;
@@ -2548,7 +2548,7 @@ async function sessionMcpRows(s: any) {
     composioKey: !!composioKey(),
     extensionLoaded: (name) => extensions.getExtension(name)?.state === 'loaded',
     codexGrantLive: (name) => codexGrants.get(name) === true,
-    cliTwin: (name) => s.engine !== 'codex' && mcpConn.cliRegistrations(name).length > 0,
+    cliTwin: (name) => (s.engine || 'claude') === 'claude' && mcpConn.cliRegistrations(name).length > 0,
     hostCanLogin: (name) => {
       if (!gatewayEnabled()) return false;
       const { slug } = mcpCat.parseGrantName(name);
@@ -4710,7 +4710,8 @@ export async function handle(
       const pb = await import('./prompt-blocks.js');
       if (p === '/__api/prompts' && m === 'GET') return json(res, { blocks: pb.listBlocks() });
       if (p === '/__api/prompts/preview' && m === 'GET') {
-        const engine = u.searchParams.get('engine') === 'codex' ? 'codex' : 'claude';
+        const qe = u.searchParams.get('engine');
+        const engine = qe === 'codex' || qe === 'gemini' ? qe : 'claude';
         const agent = u.searchParams.get('agent') || null;
         const session = u.searchParams.get('session') || null;
         return json(res, claude.firstTurnPreview({ engine, agent, session }));
@@ -4724,7 +4725,7 @@ export async function handle(
             enabled: typeof body?.enabled === 'boolean' ? body.enabled : undefined,
             title: typeof body?.title === 'string' ? body.title : undefined,
             when: body?.when === 'every-turn' || body?.when === 'first-turn' ? body.when : undefined,
-            engines: Array.isArray(body?.engines) ? body.engines.filter((e: unknown) => e === 'claude' || e === 'codex') : undefined,
+            engines: Array.isArray(body?.engines) ? body.engines.filter((e: unknown) => e === 'claude' || e === 'codex' || e === 'gemini') : undefined,
           });
           (await import('./extensions.js')).autoCommit(`instructions: ${id}`);
           return json(res, { ok: true, block });
@@ -5869,6 +5870,8 @@ export async function handle(
         // a codex login switch must never restart the claude sessions.
         let repointed = 0;
         for (const s of state.listSessions({ archived: true })) {
+          // An engine no provider serves (gemini: agy's own login) has no Arigami account to follow.
+          if (!pr.PROVIDER_IDS.some((id: any) => (pr.PROVIDERS as any)[id].engine === (s.engine || 'claude'))) continue;
           if (pr.providerForEngine(s.engine) !== provider) continue;
           const aid = (s.claude as any)?.accountId ?? null;
           if (aid === newId) continue;
@@ -6023,13 +6026,20 @@ export async function handle(
         const s = (await (await import('./lib/claude-update.js')).claudeUpdater()).status();
         cliUpdate = { installed: s.installed, latest: s.latest, updateAvailable: s.updateAvailable, checkedAt: s.checkedAt };
       } catch {}
-      return json(res, { ...list, codex, codexVersion: await codexVersion(), cliUpdate });
+      // Gemini's families come from Antigravity (session/new availableModels, cached); empty when agy is not installed or signed in.
+      const gem = await import('./gemini-acp.js');
+      const gemini = (await import('./lib/gemini-cli.js')).geminiReady()
+        ? await Promise.race([gem.refreshGeminiModels(), new Promise<ReturnType<typeof gem.geminiModels>>((r) => setTimeout(() => r(gem.geminiModels()), 3000))])
+        : [];
+      return json(res, { ...list, codex, codexVersion: await codexVersion(), gemini, geminiVersion: gemini.length ? await gem.agyVersion() : null, cliUpdate });
     }
     if (p === '/__api/models/refresh' && m === 'POST') {
       const { getModels, withBest } = await import('./models.js');
       const { refreshCodexModels, codexVersion } = await import('./codex.js');
-      const [list, codex] = await Promise.all([(getModels as any)(true), refreshCodexModels({ force: true })]);
-      return json(res, { ...withBest(list), codex, codexVersion: await codexVersion() });
+      const gem = await import('./gemini-acp.js');
+      const ready = (await import('./lib/gemini-cli.js')).geminiReady();
+      const [list, codex, gemini] = await Promise.all([(getModels as any)(true), refreshCodexModels({ force: true }), ready ? gem.refreshGeminiModels({ force: true }) : Promise.resolve([])]);
+      return json(res, { ...withBest(list), codex, codexVersion: await codexVersion(), gemini, geminiVersion: ready ? await gem.agyVersion() : null });
     }
     // C3 §7.8: Tailscale Funnel for ONLY /__api/webhooks (public internet →
     // the self-authenticating webhook routes; nothing else leaves the tailnet).

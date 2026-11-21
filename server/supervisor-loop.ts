@@ -343,6 +343,11 @@ async function run(s: Session, d: Decision): Promise<void> {
         incident(id, d, 'skipped', { engine: 'codex' });
         return;
       }
+      if (s.engine === 'gemini') {
+        receipt(id, '⤷ Gemini is not signed in (or its login expired) — run `agy` once on the host and log in with Google');
+        incident(id, d, 'skipped', { engine: 'gemini' });
+        return;
+      }
       const ok = await claude.recoverAuth(id);
       incident(id, d, ok ? 'ok' : 'failed');
       return;

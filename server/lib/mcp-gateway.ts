@@ -171,7 +171,7 @@ async function arigamiServer(session: any, token: string) {
     ARIGAMI_TOKEN: token,
     ARIGAMI_SESSION_ID: session.id,
     ...(typeof md.agent === 'string' && md.agent ? { ARIGAMI_AGENT: md.agent } : {}),
-    ...(session.engine === 'codex' ? { ARIGAMI_ENGINE: 'codex' } : {}),
+    ...(session.engine === 'codex' || session.engine === 'gemini' ? { ARIGAMI_ENGINE: session.engine } : {}),
   });
 }
 
