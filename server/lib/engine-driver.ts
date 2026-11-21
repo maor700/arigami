@@ -4,12 +4,7 @@
 
 import type { Session } from '../state.js';
 
-export const ENGINE_IDS = ['claude', 'codex', 'gemini'] as const;
-export type EngineId = (typeof ENGINE_IDS)[number];
-
-export function isEngineId(v: unknown): v is EngineId {
-  return typeof v === 'string' && (ENGINE_IDS as readonly string[]).includes(v);
-}
+export type EngineId = 'claude' | 'codex' | 'gemini';
 
 /** [bin, args, env, cwd] for spawn() — pure data, buildSpawn never itself spawns. */
 export interface BuiltSpawn {
@@ -77,6 +72,12 @@ export interface EngineDriver {
 // Codex-shape notes (handled in codex.ts handleEvent):
 // Codex reports {server, tool} as separate fields, not a flat name — handleEvent has to compose mcp__<server>__<tool> itself.
 // Codex's item.started/item.completed are two events sharing one item.id — handleEvent must correlate across calls, not assume 1 event = 1 tool call.
+
+export const ENGINE_IDS: readonly EngineId[] = ['claude', 'codex', 'gemini'];
+
+export function isEngineId(v: unknown): v is EngineId {
+  return typeof v === 'string' && (ENGINE_IDS as readonly string[]).includes(v);
+}
 
 const registry = new Map<EngineId, EngineDriver>();
 

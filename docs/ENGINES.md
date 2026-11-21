@@ -48,7 +48,7 @@ The thread id is observed, not assigned, on both transports.
 
 ## What works on Gemini
 
-The `gemini` engine is Google's Antigravity CLI (`agy`) in ACP mode: one long-lived `agy acp` per session, newline-delimited JSON-RPC over stdio (`server/gemini-acp.ts`). It uses agy's own Google login (`~/.gemini/antigravity-cli/`) — no API key, no Arigami account. Missing CLI or missing login fails the spawn with a sentence that says which.
+The `gemini` engine is Google's Antigravity CLI (`agy`) in ACP mode: one long-lived `agy acp` per session, newline-delimited JSON-RPC over stdio (`server/gemini-acp.ts`). It uses agy's own Google login (`~/.gemini/antigravity-cli/`; `ARIGAMI_GEMINI_HOME` — or the older `ARIGAMI_GEMINI_DIR` — points agy at another home via `agy acp --gemini-dir`) — the driver injects no token. Missing CLI or missing login fails the spawn with a sentence that says which.
 
 Verified live 2026-11-22 (agy 1.5.14, gemini-3.8-flash), through the real driver against a real `agy acp`: a turn with a shell command and a file write, an approval card answered deny, kill + resume of the same conversation, interrupt; and by direct ACP runs: thinking, MCP tools through the gateway, image input, `/compact`, model switching. Fixtures: `test/fixtures/gemini-acp/`. **Not yet run inside the cockpit** — that needs a host restart.
 
@@ -60,11 +60,11 @@ Verified live 2026-11-22 (agy 1.5.14, gemini-3.8-flash), through the real driver
 - **Context.** `usage_update` gives used tokens and the window (1,048,576) — the context meter is exact.
 - **Approvals.** `permissions.kind === 'rpc-request'`. Under `bypassPermissions` the driver answers every `session/request_permission` with allow; in ask mode it is the chat permission card (allow / deny, no answer in 30 minutes → cancelled). `acceptEdits` and `plan` are agy's own `accept-edits` and `plan` modes. A mode change applies to the next request with no respawn.
 - **Stop.** Interrupt is `session/cancel`; open cards are closed; queued messages are dropped.
-- **Model and effort.** Arigami's model (a family or a full id) + effort → one ACP model id, checked against `availableModels`. A model or level the account is not offered is an error line in the chat and the session keeps running on what it had. A change applies live, with no respawn.
-- **`/compact`** is agy's own command, sent as a prompt; the chat shows "compacting" / "compacted".
+- **Model and effort.** The session's model is a family (`gemini-4-neon`, `-argon`, `-hydrogen`, `gemini-3.8-flash`; none = Neon) and the effort a level (none = high); the ACP model id is `<family>-<effort>`, checked against `availableModels`. Neon and Hydrogen go low…xhigh, Argon and Flash low…high. A model or level the account is not offered is an error line in the chat and the session keeps running on what it had. A change applies live, with no respawn. The picker's list (`GET /__api/models` → `gemini`) is those families only — the Orchestrator and Claude/GPT-through-Google ids agy also lists are left out.
+- **`/compact`** is agy's own command, sent as a prompt; the chat shows "compacting" / "compacted". **Auto-compact** (`POST /autocompact`, no respawn): when `usage_update` passes the chosen % of the window agy reports, the same `/compact` runs once the turn ends — once per crossing, so a compaction that does not bring the context back under the line is not repeated. The threshold logic is unit-tested; a real crossing (≥ 50% of 1M tokens) was not reproduced.
 - **Images** go as ACP image blocks; other attachments are listed by path.
 - **Skills.** agy has no plugin directories, so `/arigami:<skill> …` is rewritten to "read `<pack>/<skill>/SKILL.md` and follow it", and the system prompt says where the packs are. Not verified live.
-- **One-shots.** `agy -p --output-format json` (`runOneShot`, engine `gemini`); a run that needs MCP servers (explain / review / summary) goes over ACP like a session. Both verified live. With no gemini model named they run on the flash family at its lowest effort (from the cached list), else agy's default.
+- **One-shots.** `agy -p --output-format json` (`runOneShot`, engine `gemini`); a run that needs MCP servers (explain / review / summary), or any run under an overridden gemini home, goes over ACP like a session. Both verified live. With no gemini model named they run on the flash family at its lowest effort (from the cached list), else agy's default.
 
 ### Gemini limitations
 
@@ -75,7 +75,7 @@ Verified live 2026-11-22 (agy 1.5.14, gemini-3.8-flash), through the real driver
 5. **MCP tool results are not in the stream.** ACP reports that an MCP call finished, not what it returned — the card shows the call with an empty result.
 6. **Extensions' mods do not run tool hooks.** `prompt.submit` runs in the host as for codex; there is no Pre/PostToolUse adapter for agy.
 7. **No quota recovery, no model ladder, no account pool.** A quota error is a plain error line. The Gemini quota is one shared 5-hour bucket per Google account, including one-shots. Accounts and quota display are separate work.
-8. **Auto-compact is agy's own.** The threshold is not configurable (`POST /autocompact` → 400); `/compact` works.
+8. **Compaction is agy's summary, not Arigami's.** What `/compact` keeps is agy's decision; nothing is parked for a climb back.
 9. **Remote MCP grants need the gateway.** Host-held grants work; with `ARIGAMI_MCP_GATEWAY=0` only stdio servers are passed, and that path was not run. Grants made with `claude mcp login` and claude.ai connectors are Claude's.
 10. **agy keeps one host-wide cache of MCP tool schemas per server name** (`~/.gemini/antigravity-cli/mcp/<server>/`). No secrets, but two sessions with different tool visibility write the same files; calls are still refused by the host.
 11. **Conversations live in agy's own history** (`~/.gemini/antigravity-cli/conversations`), shared with every other use of `agy` on the machine; deleting a session does not delete them. One-shots add entries too.

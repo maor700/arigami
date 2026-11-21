@@ -33,10 +33,14 @@ import {
   commandOutput,
   resolveModelId,
   effortsFor,
+  fallbackEfforts,
+  splitModelId,
+  GEMINI_DEFAULT_MODEL,
+  pickerRows,
+  agyAcpArgs,
   modelRows,
   skillPrompt,
   skillsNote,
-  GEMINI_EFFORTS,
 } from './lib/gemini-cli.js';
 import * as extensions from './extensions.js';
 import type { AcpMcpServer, AcpModel, GeminiModelRow, ToolName } from './lib/gemini-cli.js';
@@ -64,6 +68,10 @@ interface AcpState {
   /** prompts that arrived while one was running — the next turn */
   after: any[][];
   compacting: boolean;
+  /** why a compaction is owed once the session is idle (auto-compact) */
+  compactDue: string | null;
+  /** auto-compact already fired for this crossing of the threshold */
+  autoCompacted: boolean;
   turnStartedAt: number;
   text: string;
   thought: string;
@@ -82,7 +90,7 @@ const states = new Map<string, AcpState>();
 
 function fresh(): AcpState {
   return {
-    proc: null, seq: 0, pending: new Map(), sessionId: null, ready: false, queue: [], running: false, after: [], compacting: false,
+    proc: null, seq: 0, pending: new Map(), sessionId: null, ready: false, queue: [], running: false, after: [], compacting: false, compactDue: null, autoCompacted: false,
     turnStartedAt: 0, text: '', thought: '', tools: new Map(), servers: [], models: [], modelId: null, modeId: null, requests: new Map(), window: null,
   };
 }
@@ -197,12 +205,12 @@ const modelsFile = (): string => path.join(cfg.configDir!, 'gemini-models.json')
 
 function noteModels(models: { availableModels?: AcpModel[]; currentModelId?: string } | undefined, window: number | null): void {
   if (!Array.isArray(models?.availableModels) || !models!.availableModels!.length) return;
-  const rows = modelRows(models!.availableModels!, models!.currentModelId, window || modelCache?.rows[0]?.contextWindow || null);
+  const rows = pickerRows(modelRows(models!.availableModels!, window || modelCache?.rows[0]?.contextWindow || null));
   modelCache = { rows, at: Date.now() };
   try { fs.writeFileSync(modelsFile(), JSON.stringify({ at: modelCache.at, rows })); } catch { /* a cache */ }
 }
 
-/** The model families Antigravity offers this account (from the last session or probe; survives a restart). */
+/** The Gemini families Antigravity offers this account, as the picker lists them (from the last session or probe; survives a restart). */
 export function geminiModels(): GeminiModelRow[] {
   if (!modelCache) {
     try {
@@ -262,7 +270,7 @@ interface AcpClient {
 /** Run `fn` against a throwaway `agy acp` (permissions auto-approved), initialized; the process is killed afterwards. */
 export async function acpOnce<T>(opts: { cwd: string; env?: NodeJS.ProcessEnv; timeoutMs?: number; tag?: string }, fn: (c: AcpClient) => Promise<T>): Promise<T> {
   const bin = requireAgy();
-  const child = spawn(bin, ['acp', '--dangerously-skip-permissions'], { cwd: opts.cwd, env: opts.env || geminiEnv(), stdio: ['pipe', 'pipe', 'pipe'] });
+  const child = spawn(bin, agyAcpArgs(process.env, ['--dangerously-skip-permissions']), { cwd: opts.cwd, env: opts.env || geminiEnv(), stdio: ['pipe', 'pipe', 'pipe'] });
   supervise(child, opts.tag || 'gemini-acp');
   const pending = new Map<number, (r: any) => void>();
   const listeners: Array<(u: any) => void> = [];
@@ -424,6 +432,7 @@ function acpHandshake(p: any): void {
 
 const hadTurn = (id: string): boolean => (getChat(id, 0) || []).some((e: any) => e.kind === 'user');
 
+const COMPACT = [{ type: 'text', text: '/compact' }];
 const isCompact = (input: any[]): boolean => input.length === 1 && /^\/compact\s*$/.test(String(input[0]?.text || ''));
 
 function startPrompt(id: string, st: AcpState, input: any[]): void {
@@ -432,7 +441,8 @@ function startPrompt(id: string, st: AcpState, input: any[]): void {
   st.turnStartedAt = Date.now();
   st.compacting = isCompact(input);
   setClaude(id, { state: 'working' });
-  if (st.compacting) appendChat(id, { kind: 'system', text: '⤷ compacting the context…' });
+  if (st.compacting) appendChat(id, { kind: 'system', text: `⤷ compacting the context${st.compactDue ? ` (${st.compactDue})` : ''}…` });
+  if (st.compacting) st.compactDue = null;
   // Model, effort and mode can change between turns with no respawn.
   applyModel(id, st)
     .then(() => applyMode(id, st))
@@ -516,7 +526,8 @@ function onPromptDone(id: string, st: AcpState, r: { result?: any; error?: any }
   if (r.result?.usage) noteTurnUsage(id, mapAcpUsage(r.result.usage));
   if (!wasCompaction) recordTurn(id, { duration_ms: durationMs, total_cost_usd: null });
   if (st.running) return; // recordTurn's budget warning already started the next turn; queued input follows it
-  if (st.after.length) startPrompt(id, st, st.after.splice(0).flat());
+  if (st.compactDue) startPrompt(id, st, COMPACT); // auto-compact runs between turns, before anything queued
+  else if (st.after.length) startPrompt(id, st, st.after.splice(0).flat());
   else onTurnEnd(id);
 }
 
@@ -616,6 +627,24 @@ function onUsage(id: string, st: AcpState, u: any): void {
   if (!used) return;
   // agy reports the window itself; the row is keyed the way updateUsage looks it up.
   updateUsage(id, { input_tokens: used }, size ? [{ id: String(getSession(id)?.claude?.model || ''), contextWindow: size }] : null);
+  autoCompact(id, st, used, size);
+}
+
+/** Auto-compact: past autoCompactPct of the window agy reports, run its /compact once — now if idle, else when the turn ends. */
+function autoCompact(id: string, st: AcpState, used: number, size: number): void {
+  const pct = Number(getSession(id)?.claude?.autoCompactPct) || 0;
+  if (!pct || !size) return;
+  const limit = Math.round(size * (pct / 100));
+  if (getSession(id)?.claude?.autoCompactTokens !== limit) setClaude(id, { autoCompactTokens: limit });
+  if (used < limit) {
+    st.autoCompacted = false;
+    return;
+  }
+  // Once per crossing: a compaction that does not bring the context back under the line is not repeated.
+  if (st.autoCompacted || st.compacting || st.compactDue) return;
+  st.autoCompacted = true;
+  st.compactDue = `auto, ${Math.round(used / 1000)}k ≥ ${Math.round(limit / 1000)}k tokens`;
+  if (st.ready && !st.running) startPrompt(id, st, COMPACT);
 }
 
 /** ACP responses, agent requests and session/update notifications → the chat kinds. */
@@ -702,7 +731,7 @@ function acpBuildSpawn(s: Session, _opts: { resume: boolean; sessionId: string |
     ...(screenHandle?.display ? { DISPLAY: String(screenHandle.display) } : {}),
   };
   // The session id, MCP servers, model and mode all travel in the handshake, not on argv.
-  return { bin: requireAgy(), args: ['acp'], env, cwd: cwdOf(s) };
+  return { bin: requireAgy(), args: agyAcpArgs(), env, cwd: cwdOf(s) };
 }
 
 const geminiDriver: EngineDriver = {
@@ -729,10 +758,12 @@ const geminiDriver: EngineDriver = {
   modelArgs: () => [], // session/set_model carries the model; effort is the tail of its id
   effortLevels: (s: Session) => {
     const st = states.get(s.id);
-    const live = st?.models.length ? effortsFor(s.claude?.modelChoice, st.models, st.modelId) : [];
+    const model = s.claude?.modelChoice || null;
+    const live = st?.models.length ? effortsFor(model, st.models) : [];
     if (live.length) return live;
-    const row = geminiModels().find((r) => r.id === s.claude?.modelChoice || s.claude?.modelChoice?.startsWith(r.id + '-'));
-    return row?.efforts.length ? row.efforts : GEMINI_EFFORTS.filter((e) => e !== 'max');
+    const family = splitModelId(model || GEMINI_DEFAULT_MODEL).family;
+    const row = geminiModels().find((r) => r.id === family);
+    return row?.efforts.length ? row.efforts : fallbackEfforts(model);
   },
 };
 
