@@ -150,11 +150,11 @@ test('memory namespace: agent writes land in agents/<slug>/memory, shared search
 
 // ---- ENGINE: an agent runs on an engine; every spawn path resolves it the same way ----
 
-test('engine: validated (claude | codex | null), stored only when set, removable on update', () => {
+test('engine: validated (claude | codex | gemini | null), stored only when set, removable on update', () => {
   const dir = tmp();
   const r = runInChild(
     "const a=await import('./server/agents.ts');" +
-      "const bad=a.createAgent({name:'Bad',slug:'bad',engine:'gemini'});" +
+      "const bad=a.createAgent({name:'Bad',slug:'bad',engine:'llama'});" +
       "const c=a.createAgent({name:'Astra',slug:'astra',engine:'codex',model:'gpt-6-astra'});" +
       "const plain=a.createAgent({name:'Plain',slug:'plain'});" +
       "const explicitClaude=a.createAgent({name:'C',slug:'c',engine:'claude'});" +
@@ -195,7 +195,7 @@ test('engineForSpawn: explicit caller value wins, else the agent, else the host 
       "  bothAbsent:a.engineForSpawn(undefined,none)," +
       "  noAgent:a.engineForSpawn(undefined,null)," +
       "  agentClaude:a.engineForSpawn(undefined,claude)," +
-      "  junkExplicit:a.engineForSpawn('gemini',codex)," +
+      "  junkExplicit:a.engineForSpawn('llama',codex)," +
       '});',
     env(dir)
   );

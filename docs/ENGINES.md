@@ -1,13 +1,13 @@
 # Agent Engines (engines)
 
 **Engine** is the CLI that actually runs the session's turn. Until now there was only one — `claude`.
-Today there are two: `claude` and `codex` (OpenAI's CLI). The choice is made once,
+Today there are three: `claude`, `codex` (OpenAI's CLI) and `gemini` (Google's Antigravity CLI, `agy`). The choice is made once,
 at session creation, and is stored in `session.engine`.
 
 - The seam: `server/lib/engine-driver.ts` (`EngineDriver`, `registerEngine`, `pickEngine`)
-- The implementations: `server/claude.js`, `server/codex-app.ts` (codex over `codex app-server`, default) and `server/codex.ts` (codex over `codex exec`, fallback)
+- The implementations: `server/claude.js`, `server/codex-app.ts` (codex over `codex app-server`, default), `server/codex.ts` (codex over `codex exec`, fallback) and `server/gemini-acp.ts` (gemini over `agy acp`; pure helpers in `server/lib/gemini-cli.ts`)
 - Cockpit side: `web/src/lib/engines.js`
-- Tests: `test/codex-app.test.ts`, `test/codex-engine.test.ts`, `test/engine-ui-wiring.test.js`, `test/engine-ui-web.test.js`
+- Tests: `test/codex-app.test.ts`, `test/codex-engine.test.ts`, `test/gemini-acp.test.ts`, `test/engine-ui-wiring.test.js`, `test/engine-ui-web.test.js`
 
 ## How it's chosen
 
@@ -20,11 +20,16 @@ of the others: the model list and the effort levels are per-engine, not a shared
   login, 5-min cache; its `models_cache.json` only while that call is in flight; no hardcoded rows). Effort isn't a flag but a config
   key, `model_reasoning_effort`, and the scale is a property of the **model**:
   gpt-5.6-terra adds `ultra` above `max`, and gpt-5.5 stops at `xhigh`.
+- **gemini** — the list is what Antigravity offers the signed-in account (`session/new` → `availableModels`,
+  cached in `$ARIGAMI_DIR/gemini-models.json`; `GET /__api/models` → `gemini`, same row shape as codex). Effort is the
+  tail of the model id (`gemini-4-neon-high`), so the model is a family (`gemini-4-neon`) and the levels are the
+  family's own.
 
 Resolution (`agents.engineForSpawn` + `state.createSession`): explicit `engine` → the agent's engine →
 the parent's engine (children spawned with a master) → `cfg.defaultEngine` (Settings › Host, `POST
 /__api/config/default-engine`) → `claude`. An unknown `defaultEngine` reads as claude. Cron, the Brain,
 the PM controller and agent homes without an engine all land on the default; the launcher's toggle starts on it.
+When the default engine is not signed in, the first one that is (claude, codex, gemini) is used instead.
 
 An engine with no registered driver fails loudly at spawn, and does not silently fall back to claude.
 
@@ -41,7 +46,44 @@ Verified live: the session comes up in the cockpit, receives a message, calls Ar
 
 The thread id is observed, not assigned, on both transports.
 
-## Limitations — what doesn't work, explicitly
+## What works on Gemini
+
+The `gemini` engine is Google's Antigravity CLI (`agy`) in ACP mode: one long-lived `agy acp` per session, newline-delimited JSON-RPC over stdio (`server/gemini-acp.ts`). It uses agy's own Google login (`~/.gemini/antigravity-cli/`) — no API key, no Arigami account. Missing CLI or missing login fails the spawn with a sentence that says which.
+
+Verified live 2026-11-22 (agy 1.5.14, gemini-3.8-flash), through the real driver against a real `agy acp`: a turn with a shell command and a file write, an approval card answered deny, kill + resume of the same conversation, interrupt; and by direct ACP runs: thinking, MCP tools through the gateway, image input, `/compact`, model switching. Fixtures: `test/fixtures/gemini-acp/`. **Not yet run inside the cockpit** — that needs a host restart.
+
+- **Handshake.** `initialize` → `session/new` (or `session/resume` with the stored id; the id is observed) → `session/set_model` → `session/set_mode`. A conversation agy no longer has starts over and says so in the chat.
+- **MCP.** The same set a claude session gets (arigami, extensions, Composio, host-held grants), sent in `session/new` as http entries with `Authorization: Bearer <session token>` — in memory, on stdin, never in a file or argv. Tool names arrive as `mcp_<server>_<tool>` and are shown and policy-checked as `mcp__<server>__<tool>`.
+- **System prompt.** The first-turn blocks, the persona and the memory snapshot go as `_meta.antigravity.systemPrompt.append` instead of a prefix on the first message. agy keeps it with the conversation (measured), so a resume sends none.
+- **Messages.** `session/prompt` per message. A message sent mid-turn waits and becomes the next turn: a second `session/prompt` makes agy end the running one at once and leaves its command without a final status (measured, `second-prompt-flash.jsonl`).
+- **Stream.** Text deltas stream as partial assistant text; thinking shows as thinking; `tool_call` / `tool_call_update` become tool cards under Claude's names (`run_command` → Bash, `write_file` → Write, `read_file` → Read, …); Arigami's own tools stay out of the transcript, as on the other engines.
+- **Context.** `usage_update` gives used tokens and the window (1,048,576) — the context meter is exact.
+- **Approvals.** `permissions.kind === 'rpc-request'`. Under `bypassPermissions` the driver answers every `session/request_permission` with allow; in ask mode it is the chat permission card (allow / deny, no answer in 30 minutes → cancelled). `acceptEdits` and `plan` are agy's own `accept-edits` and `plan` modes. A mode change applies to the next request with no respawn.
+- **Stop.** Interrupt is `session/cancel`; open cards are closed; queued messages are dropped.
+- **Model and effort.** Arigami's model (a family or a full id) + effort → one ACP model id, checked against `availableModels`. A model or level the account is not offered is an error line in the chat and the session keeps running on what it had. A change applies live, with no respawn.
+- **`/compact`** is agy's own command, sent as a prompt; the chat shows "compacting" / "compacted".
+- **Images** go as ACP image blocks; other attachments are listed by path.
+- **Skills.** agy has no plugin directories, so `/arigami:<skill> …` is rewritten to "read `<pack>/<skill>/SKILL.md` and follow it", and the system prompt says where the packs are. Not verified live.
+- **One-shots.** `agy -p --output-format json` (`runOneShot`, engine `gemini`); a run that needs MCP servers (explain / review / summary) goes over ACP like a session. Both verified live. With no gemini model named they run on the flash family at its lowest effort (from the cached list), else agy's default.
+
+### Gemini limitations
+
+1. **No sandbox, and the approval is the only gate.** agy runs with the session's env and the host's files. `agy acp --sandbox` exists and was not tried.
+2. **File edits and reads inside the workspace are never asked about**, in any mode (measured: a `write_file` ran with no permission request in ask mode). Only commands and MCP tools ask.
+3. **A3 allowlists are enforced at the permission request, not by a hook.** A restricted agent's request is checked against its allowlist in every mode and denied before any card; servers the allowlist never reaches are not loaded. What never asks (limit 2) is never checked — keep a restricted agent that must not touch files off this engine. The model is told only "denied", not why; the reason is a line in the chat.
+4. **A denied tool ends the turn.** agy stops instead of letting the model answer (measured).
+5. **MCP tool results are not in the stream.** ACP reports that an MCP call finished, not what it returned — the card shows the call with an empty result.
+6. **Extensions' mods do not run tool hooks.** `prompt.submit` runs in the host as for codex; there is no Pre/PostToolUse adapter for agy.
+7. **No quota recovery, no model ladder, no account pool.** A quota error is a plain error line. The Gemini quota is one shared 5-hour bucket per Google account, including one-shots. Accounts and quota display are separate work.
+8. **Auto-compact is agy's own.** The threshold is not configurable (`POST /autocompact` → 400); `/compact` works.
+9. **Remote MCP grants need the gateway.** Host-held grants work; with `ARIGAMI_MCP_GATEWAY=0` only stdio servers are passed, and that path was not run. Grants made with `claude mcp login` and claude.ai connectors are Claude's.
+10. **agy keeps one host-wide cache of MCP tool schemas per server name** (`~/.gemini/antigravity-cli/mcp/<server>/`). No secrets, but two sessions with different tool visibility write the same files; calls are still refused by the host.
+11. **Conversations live in agy's own history** (`~/.gemini/antigravity-cli/conversations`), shared with every other use of `agy` on the machine; deleting a session does not delete them. One-shots add entries too.
+12. **Cost is `null`**, tokens only. Telemetry counts gemini sessions in the total but not per engine.
+13. **Sub-agent sessions are ignored.** Updates for another ACP session id are dropped, so `/swarm`, `/teamwork` and the like show nothing of their workers.
+14. **Not in the Docker image**, no auto-install, no CLI updater.
+
+## Limitations — what doesn't work on Codex, explicitly
 
 This list is the reason this document exists. Do not soften it.
 
@@ -169,8 +211,8 @@ nothing.
 
 ## Host utilities (one-shots)
 
-`runOneShot(prompt, {engine})` in `server/lib/oneshot.ts`: claude = `claude -p`, codex = `codex exec --ephemeral -o` in a scratch `$ARIGAMI_DIR/oneshot-codex/` home.
-Explain/review/summary run on the session's engine; memory episodes, LEARN1, skills analyze, the wizard health ping and the voice fallback run on `hostEngine()`: the default engine (`defaultEngine()`, claude unless set) when it has a connected account, else the engine that has one — by design, so a codex-only host with no default set runs them on codex. The LADDER1 digest and token verify stay claude-only.
+`runOneShot(prompt, {engine})` in `server/lib/oneshot.ts`: claude = `claude -p`, codex = `codex exec --ephemeral -o` in a scratch `$ARIGAMI_DIR/oneshot-codex/` home, gemini = `agy -p --output-format json` (ACP when the run needs MCP servers).
+Explain/review/summary run on the session's engine; memory episodes, LEARN1, skills analyze, the wizard health ping and the voice fallback run on `hostEngine()`: the default engine (`defaultEngine()`, claude unless set) when it is signed in, else the first engine that is — by design, so a codex-only host with no default set runs them on codex. The LADDER1 digest and token verify stay claude-only.
 
 ## Accounts are per provider
 

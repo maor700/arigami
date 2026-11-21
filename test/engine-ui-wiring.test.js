@@ -155,7 +155,7 @@ test('the create_session MCP tool forwards the engine (dispatch children include
   const src = fs.readFileSync(path.join(import.meta.dir, '../mcp/host-mcp.js'), 'utf8');
   // Schema exposes it as a closed choice, so a typo is a tool error, not a
   // session silently on the default engine.
-  expect(src).toMatch(/engine:\s*\{\s*type:\s*'string',\s*enum:\s*\['claude',\s*'codex'\]/);
+  expect(src).toMatch(/engine:\s*\{\s*type:\s*'string',\s*enum:\s*\['claude',\s*'codex',\s*'gemini'\]/);
   // ...and it actually reaches the POST body.
   expect(src).toContain("...(a.engine ? { engine: a.engine } : {})");
 });

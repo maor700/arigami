@@ -1,4 +1,4 @@
-// P2-3: the host MCP server's tools/list hides permission_prompt from a codex session only.
+// P2-3: the host MCP server's tools/list hides permission_prompt from engines that ask over their own RPC (codex, gemini).
 import { test, expect } from 'bun:test';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
@@ -39,5 +39,6 @@ test('permission_prompt is absent for a codex session and present for claude', a
   const codex = await toolNames('codex');
   expect(codex).toContain('set_status');
   expect(codex).not.toContain('permission_prompt');
+  expect(await toolNames('gemini')).not.toContain('permission_prompt'); // gemini asks over ACP too
   expect(await toolNames(null)).toContain('permission_prompt');
 }, 60000);

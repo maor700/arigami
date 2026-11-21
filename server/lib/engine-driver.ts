@@ -1,10 +1,15 @@
 // The agent-engine seam: pickEngine(session) returns the EngineDriver for its process — same pattern as screen-driver.ts's pickDriver().
-// Two engines register via registerEngine(): 'claude' (claude.js) and 'codex' (codex.ts) — see docs/ENGINES.md.
+// Three engines register via registerEngine(): 'claude' (claude.js), 'codex' (codex.ts / codex-app.ts) and 'gemini' (gemini-acp.ts) — see docs/ENGINES.md.
 // This file has zero imports from claude.js on purpose (registry pattern, not a direct import) so claude.js -> engine-driver.ts stays one-way, never a cycle.
 
 import type { Session } from '../state.js';
 
-export type EngineId = 'claude' | 'codex';
+export const ENGINE_IDS = ['claude', 'codex', 'gemini'] as const;
+export type EngineId = (typeof ENGINE_IDS)[number];
+
+export function isEngineId(v: unknown): v is EngineId {
+  return typeof v === 'string' && (ENGINE_IDS as readonly string[]).includes(v);
+}
 
 /** [bin, args, env, cwd] for spawn() — pure data, buildSpawn never itself spawns. */
 export interface BuiltSpawn {
@@ -22,7 +27,7 @@ export type EngineSessionIdPolicy =
 /** How a live tool call gets approved, if at all. */
 export type EnginePermissions =
   | { kind: 'mcp-tool'; tool: string } // claude: mcp__arigami__permission_prompt
-  | { kind: 'rpc-request' } // app-server-style approval RPC — unimplemented
+  | { kind: 'rpc-request' } // the engine asks over its own RPC (codex app-server, gemini ACP)
   | { kind: 'none' };
 
 export interface EngineDriver {
@@ -57,6 +62,8 @@ export interface EngineDriver {
    * implements neither falls back to interrupt() in claude.js doing nothing.
    */
   interrupt?(proc: unknown): void;
+  /** Model/effort changed on a live session: the engine applies it with no respawn (gemini). Absent = respawn with resume. */
+  liveSettings?(sessionId: string): void;
   sessionId: EngineSessionIdPolicy;
   permissions: EnginePermissions;
   /** Extra argv so this session's process sees the shared MCP server dict (claude: --mcp-config inline JSON). */

@@ -110,7 +110,7 @@ afterAll(() => {
 
 test('config: POST /__api/config/default-engine sets it, GET /__api/config shows it, junk falls back to claude', async () => {
   expect((await api('GET', '/__api/config')).json.defaultEngine).toBe('claude');
-  const junk = await api('POST', '/__api/config/default-engine', { engine: 'gemini' });
+  const junk = await api('POST', '/__api/config/default-engine', { engine: 'llama' });
   expect(junk.json.defaultEngine).toBe('claude');
   const r = await api('POST', '/__api/config/default-engine', { engine: 'codex' });
   expect(r.status).toBe(200);

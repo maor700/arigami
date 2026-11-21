@@ -35,8 +35,8 @@ export const ACTION_KIND_RE = /^[a-z0-9][a-z0-9:._-]{0,39}$/;
 const EMOJI_DEFAULT = '🤖';
 
 // Which CLI the agent's sessions run on (= Session.engine); absent = cfg.defaultEngine.
-export type AgentEngine = 'claude' | 'codex';
-export const AGENT_ENGINES: readonly AgentEngine[] = ['claude', 'codex'];
+export type AgentEngine = 'claude' | 'codex' | 'gemini';
+export const AGENT_ENGINES: readonly AgentEngine[] = ['claude', 'codex', 'gemini'];
 
 /** valid → the engine; ''/null/undefined → null (default); anything else → undefined (invalid). */
 export function normalizeAgentEngine(v: unknown): AgentEngine | null | undefined {
@@ -386,6 +386,7 @@ export function personaBlock(slug: string): string {
   const lines: string[] = [];
   lines.push(`You are running as the agent "${a.name}" ${a.emoji} (slug: ${a.slug}) — one of the human's team of agents in Arigami. Stay in this role for the whole session.`);
   if (a.engine === 'codex') lines.push(`Your engine is Codex (OpenAI)${a.model ? `, model ${a.model}` : ''}; Arigami's host tools, memory and skills are the same as on any other engine.`);
+  if (a.engine === 'gemini') lines.push(`Your engine is Gemini (Google Antigravity)${a.model ? `, model ${a.model}` : ''}; Arigami's host tools and memory are the same as on any other engine.`);
   if (a.persona.trim()) lines.push('', '## Persona', a.persona.trim());
   if (a.skills.length)
     lines.push('', `## Skills you should use (shared skills, invoke as /arigami:<name> or /arigami-user:<name>): ${a.skills.join(', ')}`);

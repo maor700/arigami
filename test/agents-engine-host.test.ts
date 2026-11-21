@@ -108,7 +108,7 @@ afterAll(() => {
 });
 
 test('REST: an agent is created with engine codex + a codex model; the record and the list carry it; a bad engine is refused', async () => {
-  const bad = await api('POST', '/__api/agents', { name: 'Bad', slug: 'bad', engine: 'gemini' });
+  const bad = await api('POST', '/__api/agents', { name: 'Bad', slug: 'bad', engine: 'llama' });
   expect(bad.status).toBe(400);
   expect(bad.json.error).toContain('invalid engine');
   const r = await api('POST', '/__api/agents', { name: 'Astra', slug: 'astra', emoji: '🛰️', engine: 'codex', model: 'gpt-6-astra', tools: ['desktop', 'web'] });

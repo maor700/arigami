@@ -14,6 +14,7 @@ import { isWin, which, shellArgs, toPosixPath, HOME, chromeCandidates } from './
 import { supervise } from './lib/children.js';
 import { gitAuthEnv, gitEnvFor } from './lib/git-auth.js';
 import { cfg, setEngineReadiness } from './lib/config.js';
+import { geminiReady } from './lib/gemini-cli.js';
 import { syncComposioKey } from './lib/mcp-servers.js';
 import { hasCredentials, hasLocalCodexLogin } from './accounts.js';
 import * as funnel from './funnel.js';
@@ -1022,7 +1023,7 @@ export type OnboardingMode = 'minimal' | 'full';
 export const MINIMAL_REQUIRED: readonly WizardStepId[] = ['pair', 'claude', 'codex'];
 
 export interface HealthCheck {
-  id: 'claude' | 'codex' | 'desktop' | 'chrome' | 'whatsapp';
+  id: 'claude' | 'codex' | 'gemini' | 'desktop' | 'chrome' | 'whatsapp';
   ok: boolean;
   required: boolean;
   detail: string;
@@ -1179,7 +1180,7 @@ export const defaultProbes: WizardProbes = {
  */
 export function registerEngineReadiness(probes: Pick<WizardProbes, 'claudeCli' | 'claudeAuth' | 'codexCli' | 'codexAuth'> = defaultProbes): void {
   if (process.env.ARIGAMI_ENGINE_AUTOPICK === '0') return; // opt-out (test hosts)
-  setEngineReadiness((e) => (e === 'codex' ? probes.codexCli() && probes.codexAuth() : probes.claudeCli() && probes.claudeAuth()));
+  setEngineReadiness((e) => (e === 'gemini' ? geminiReady() : e === 'codex' ? probes.codexCli() && probes.codexAuth() : probes.claudeCli() && probes.claudeAuth()));
 }
 
 // --- the machine ---------------------------------------------------------------
@@ -1466,7 +1467,7 @@ let healthRunning = false;
 export interface HealthDeps {
   claudePing?: () => Promise<string>;
   codexPing?: () => Promise<string>;
-  engine?: () => 'claude' | 'codex';
+  engine?: () => 'claude' | 'codex' | 'gemini';
   desktopDisplay?: () => string | null; // ':99' when a desktop is configured
   chromeVersion?: () => string | null;
   whatsapp?: () => string;
@@ -1508,9 +1509,10 @@ export function desktopUpSync(display: string): boolean {
 export const desktopUp = (display: string): boolean => desktopUpSync(display);
 
 /** The engine the health check pings: the default engine when connected, else claude, else codex. */
-export function healthEngine(p: Pick<WizardProbes, 'claudeCli' | 'claudeAuth' | 'codexCli' | 'codexAuth'> = defaultProbes): 'claude' | 'codex' {
+export function healthEngine(p: Pick<WizardProbes, 'claudeCli' | 'claudeAuth' | 'codexCli' | 'codexAuth'> = defaultProbes, gemini: () => boolean = geminiReady): 'claude' | 'codex' | 'gemini' {
   const ok = { claude: p.claudeCli() && p.claudeAuth(), codex: p.codexCli() && p.codexAuth() };
   const d = (cfg as any).defaultEngine;
+  if (d === 'gemini' && gemini()) return 'gemini';
   if ((d === 'claude' || d === 'codex') && ok[d as 'claude' | 'codex']) return d;
   return ok.claude || !ok.codex ? 'claude' : 'codex';
 }
@@ -1526,7 +1528,7 @@ export async function runHealth(deps: HealthDeps = {}): Promise<HealthResult> {
       const os = await import('./lib/oneshot.js');
       return os.runOneShot('Reply with exactly the single word: pong', { engine: eng, timeoutMs: 90_000, tag: 'wizard-health' });
     };
-    const ping = (eng === 'codex' ? deps.codexPing : deps.claudePing) ?? oneShot;
+    const ping = (eng === 'gemini' ? undefined : eng === 'codex' ? deps.codexPing : deps.claudePing) ?? oneShot;
     try {
       const out = (await ping()).trim();
       checks.push({ id: eng, ok: true, required: true, detail: out.slice(0, 80) || 'ok' });

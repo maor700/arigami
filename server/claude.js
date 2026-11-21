@@ -168,6 +168,11 @@ const hostGrantServers = (slug) => {
 // every session. A3's allowlist controls them through the `ext:<name>` family;
 // a host with no extensions produces the exact same config it did before.
 export function mcpConfigFor(s) {
+  return JSON.stringify({ mcpServers: mcpServersFor(s) });
+}
+
+/** The same set as an object; `claudeGrants:false` leaves out grants only Claude Code's own credential store can use (gemini). */
+export function mcpServersFor(s, { claudeGrants = true } = {}) {
   const slug = typeof s?.metadata?.agent === 'string' && s.metadata.agent ? s.metadata.agent : null;
   let ext = {};
   try {
@@ -176,14 +181,14 @@ export function mcpConfigFor(s) {
     ext = {}; // a broken extension must never stop a session from starting
   }
   let own = {};
-  if (slug) {
+  if (slug && claudeGrants) {
     try {
       own = injectedServersFor(`agent:${slug}`);
     } catch {
       own = {}; // a missing/foreign connections.json must never stop a session
     }
   }
-  return JSON.stringify({ mcpServers: { ...hostServers(), ...viaGateway(ext), ...composioServer(slug), ...own, ...hostGrantServers(slug) } });
+  return { ...hostServers(), ...viaGateway(ext), ...composioServer(slug), ...own, ...hostGrantServers(slug) };
 }
 
 // engine-driver.ts's EngineDriver members for claude, pulled out of spawnProc()'s old inline argv (same flags/order).
@@ -946,7 +951,7 @@ export async function checkMcp(id, force = false) {
   const p = (async () => {
     try {
       // Codex loads only its config.toml: Claude's own servers are not its servers.
-      if (s.engine === 'codex') return getSession(id)?.claude?.mcp || null;
+      if (s.engine === 'codex' || s.engine === 'gemini') return getSession(id)?.claude?.mcp || null;
       const { runClaude, parseList } = await import('./mcp-auth.js');
       const cwd = untildify(s.metadata?.worktree || s.cwd) || HOME;
       const out = await runClaude(['mcp', 'list'], 25_000, cwd, { ...baseEnv(), ...accountEnv(s) });
@@ -1142,6 +1147,11 @@ export function chainFor(id) {
 /** Where the session sits in its chain right now + how far it can still fall. */
 // The RES1 ladder, account switch and auth refresh are claude-shaped; a codex session never enters them.
 export const isCodexSession = (id) => getSession(id)?.engine === 'codex';
+export const isGeminiSession = (id) => getSession(id)?.engine === 'gemini';
+/** The engine answers approvals over its own RPC and takes a mode change live (codex app-server, gemini). */
+const hasRpcPermissions = (id) => {
+  try { return pickEngine(getSession(id)).permissions.kind === 'rpc-request'; } catch { return false; }
+};
 /** P3-1: a codex session on the app-server driver (approvals, compaction, live turns). */
 export const isCodexAppSession = (id) => {
   try { return isCodexSession(id) && pickEngine(getSession(id)).permissions.kind === 'rpc-request'; } catch { return false; }
@@ -1165,6 +1175,7 @@ export function codexChainFor(id) {
 export function ladderState(id) {
   const s = getSession(id);
   if (s?.engine === 'codex') return codexLadder(codexChainFor(id), s.claude);
+  if (s?.engine === 'gemini') return { chain: [], rung: 0, model: s.claude?.modelChoice || null, rungsLeft: 0, restoreAt: null }; // no ladder on gemini
   const chain = chainFor(id);
   const stored = Number.isFinite(s?.claude?.modelRung) ? Number(s.claude.modelRung) : rungOf(chain, s?.claude?.modelChoice);
   const rung = stored > 0 ? Math.min(stored, chain.length - 1) : 0;
@@ -1181,7 +1192,7 @@ const ladderCooldown = new Set(); // guards against a downgrade cascade per sess
  */
 /** @param {string} id @param {{resetAt?: string|null, why?: string}} [opts] */
 export function downgradeModel(id, { resetAt = null, why = 'quota' } = {}) {
-  if (isCodexSession(id)) return { ok: false, reason: 'engine' };
+  if (isCodexSession(id) || isGeminiSession(id)) return { ok: false, reason: 'engine' };
   const { chain, rung } = ladderState(id);
   const nxt = nextRung(chain, rung);
   if (!nxt) return { ok: false, reason: 'bottom' };
@@ -1416,6 +1427,7 @@ async function compactAndRespawn(id, { from, to, plan, patch, lastMsg }) {
  */
 export function restoreModel(id) {
   if (isCodexSession(id)) return restoreCodexModel(id);
+  if (isGeminiSession(id)) return null;
   const { chain, rung } = ladderState(id);
   if (rung <= 0) return null;
   const top = chain[0];
@@ -1557,9 +1569,11 @@ export function lastTurnError(id) {
       if (AUTH_RE.test(t)) return 'auth';
       // A model that cannot run right now is remedied exactly like an exhausted
       // account pool — one rung down the chain.
-      if (getSession(id)?.engine === 'codex') { if (CODEX_LIMIT_RE.test(t)) return 'limit'; }
+      const eng = getSession(id)?.engine;
+      if (eng === 'codex') { if (CODEX_LIMIT_RE.test(t)) return 'limit'; }
+      else if (eng === 'gemini') { /* no quota recovery on gemini — a limit stays a plain error */ }
       else if (LIMIT_RE.test(t) || MODEL_UNAVAILABLE_RE.test(t)) return 'limit';
-      if (/(?:claude|codex) (?:exited|failed to start)/i.test(t)) return 'proc-dead';
+      if (/(?:claude|codex|gemini) (?:exited|failed to start)/i.test(t)) return 'proc-dead';
       return 'other';
     }
   }
@@ -1567,7 +1581,7 @@ export function lastTurnError(id) {
 }
 
 function tryAutoSwitch(id, text) {
-  if (switchingSessions.has(id) || isCodexSession(id)) return;
+  if (switchingSessions.has(id) || isCodexSession(id) || isGeminiSession(id)) return;
   const s = getSession(id);
   const curId = s?.claude?.accountId || getActiveId();
   const resetAt = parseResetAt(text);
@@ -1654,14 +1668,14 @@ async function openClaudeSetupCard(id, why) {
  * respawn actually happened.
  */
 export async function recoverAuth(id) {
-  if (isCodexSession(id)) return false;
+  if (isCodexSession(id) || isGeminiSession(id)) return false;
   const before = getSession(id)?.claude?.state;
   await tryAuthRecover(id, 'unauthorized');
   return getSession(id)?.claude?.state !== before || isRunning(id);
 }
 
 async function tryAuthRecover(id, text) {
-  if (authRecovering.has(id) || isCodexSession(id)) return;
+  if (authRecovering.has(id) || isCodexSession(id) || isGeminiSession(id)) return;
   const s = getSession(id);
   const accountId = s?.claude?.accountId || getActiveId();
   // F8: the session was spawned before a Claude account existed (fresh
@@ -2147,9 +2161,9 @@ let capabilitiesHintCacheGlobal = null;
 /** The line for one engine: `claude` and `codex` are engine logins, so a session only sees its own. */
 function formatCapabilitiesHint(owner, entry, engine = 'claude') {
   if (!entry) return '';
-  const other = engine === 'codex' ? 'claude' : 'codex';
-  const connected = entry.connected.filter((id) => id !== other);
-  const missing = entry.missing.filter((id) => id !== other);
+  const others = ['claude', 'codex', 'gemini'].filter((e) => e !== engine);
+  const connected = entry.connected.filter((id) => !others.includes(id));
+  const missing = entry.missing.filter((id) => !others.includes(id));
   return (
     (connected.length ? `Connected now${owner !== 'global' ? ` for ${owner}` : ''}: ${connected.join(', ')}. ` : '') +
     (missing.length
@@ -2179,7 +2193,8 @@ refreshCapabilitiesHint().catch(() => {});
   if (t.unref) t.unref();
 }
 
-function memoryBootstrapPrefix(p) {
+/** The first-turn blocks + persona + memory snapshot; gemini passes them as its system prompt (p.bootstrapInSystem). */
+export function memoryBootstrapPrefix(p) {
   // links, login, host rules, …, the owner's own, identity — after the agent's and the session's layers
   const blocks = promptBlocks.render('first-turn', blockCtx(p), layeredBlocks(p?.agent, p?.id ? getSession(p.id)?.metadata : p?.metadata));
   // A1: a session born from an agent gets the agent's persona block and boots
@@ -2234,7 +2249,7 @@ export function composeTurnText(p, text) {
   // A slash command (/compact, /context…) only runs when it is the very first thing in the message: any prefix turns it into plain text the model answers.
   // The one-shot preamble/bootstrap stay queued for the next real message.
   if (/^\/[a-z][\w:-]*(\s|$)/i.test(txt)) return txt;
-  if (!p.resume && !p.sent.length) txt = memoryBootstrapPrefix(p) + txt;
+  if (!p.resume && !p.sent.length && !p.bootstrapInSystem) txt = memoryBootstrapPrefix(p) + txt;
   // LADDER1: one-shot preamble in front of the next message only, never persisted in the chat log.
   if (p.preamble) {
     txt = p.preamble + txt;
@@ -2783,9 +2798,19 @@ function restartWith(id, patch) {
   return getSession(id)?.claude;
 }
 
+/** A model/effort change: live when the engine can (EngineDriver.liveSettings), else a respawn with resume. */
+function applySetting(id, patch) {
+  let live;
+  try { live = pickEngine(getSession(id)).liveSettings; } catch {}
+  if (typeof live !== 'function') return restartWith(id, patch);
+  setClaude(id, patch);
+  live(id);
+  return getSession(id)?.claude;
+}
+
 export function setPermissionMode(id, mode) {
   // Codex app-server sends approvalPolicy per turn — no respawn.
-  if (isCodexAppSession(id)) { setClaude(id, { permissionMode: mode }); mergeCaps(id, { permissionMode: mode }); return getSession(id)?.claude; }
+  if (hasRpcPermissions(id)) { setClaude(id, { permissionMode: mode }); mergeCaps(id, { permissionMode: mode }); return getSession(id)?.claude; }
   return restartWith(id, { permissionMode: mode });
 }
 
@@ -2797,7 +2822,7 @@ export function setModel(id, model, { chain } = {}) {
   const choice = !model || model === 'default' ? null : String(model);
   // RES1: an explicit pick is the new TOP rung — reset the ladder so a session
   // the supervisor had downgraded doesn't climb back over the human's choice.
-  return restartWith(id, {
+  return applySetting(id, {
     modelChoice: choice,
     modelRung: 0,
     modelRestoreAt: null,
@@ -2816,7 +2841,7 @@ export function setEffort(id, effort) {
   const allowed = s ? pickEngine(s).effortLevels(s) : EFFORT_LEVELS;
   if (level && !allowed.includes(level))
     throw new Error(`invalid effort level for ${s?.claude?.modelChoice || s?.engine || 'claude'}: ${level} (allowed: ${allowed.join(', ')})`);
-  return restartWith(id, { effort: level });
+  return applySetting(id, { effort: level });
 }
 
 // Auto-compact threshold as a % of the session's current model context window,
@@ -2825,6 +2850,7 @@ export function setEffort(id, effort) {
 // slash command over stream-json stdin). null/0 disables it.
 export function setAutoCompact(id, pct) {
   if (isCodexSession(id) && !isCodexAppSession(id)) throw new Error('auto-compact is not available on codex exec sessions');
+  if (isGeminiSession(id)) throw new Error('auto-compact is not configurable on gemini sessions — use /compact');
   const p = pct == null ? null : Math.min(95, Math.max(50, Number(pct) || 0));
   // P3-2: codex app-server watches thread/tokenUsage itself — no respawn needed.
   const apply = isCodexAppSession(id) ? (patch) => { setClaude(id, patch); return getSession(id)?.claude; } : (patch) => restartWith(id, patch);
