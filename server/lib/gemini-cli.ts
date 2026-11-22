@@ -275,7 +275,9 @@ export function skillPrompt(text: string, roots: Record<string, string | null | 
 /** The system-prompt line that tells the agent where Arigami's skills are. */
 export function skillsNote(roots: Record<string, string | null | undefined>): string {
   const dirs = Object.entries(roots).filter(([, d]) => d).map(([k, d]) => `/${k}:<name> → ${d}/<name>/SKILL.md`);
-  return dirs.length ? `<system-reminder>\nArigami skills are files, not slash commands, on this engine: when asked to run a skill, read its SKILL.md and follow it (${dirs.join('; ')}).\n</system-reminder>\n\n` : '';
+  return dirs.length
+    ? `<system-reminder>\nArigami's skills are among your skills under their bare names: "arigami:<name>", "arigami-user:<name>" or "/arigami:<name>" all mean the skill <name>. If one is not listed, read its SKILL.md and follow it (${dirs.join('; ')}).\n</system-reminder>\n\n`
+    : '';
 }
 
 // ---- print mode (one-shots) ---------------------------------------------------------
@@ -293,4 +295,70 @@ export function parseAgyPrint(stdout: string): string {
 export function agyPrintModel(model?: string, effort?: string): string | null {
   if (!model || !/^gemini-[a-z0-9.-]+$/.test(model)) return null;
   return effort && !/-(low|medium|high|xhigh|max)$/.test(model) ? `${model}-${effort}` : model;
+}
+
+// ---- the session's own customization dir (agy acp --add-dir) ---------------------------
+
+/** Pure: `.agents/hooks.json` — agy runs `command` before every tool call (and after, when `post`). */
+export function hooksJson(command: string, opts: { post?: boolean } = {}): string {
+  const entry = [{ matcher: '*', hooks: [{ type: 'command', command, timeout: 30 }] }];
+  return JSON.stringify({ arigami: { PreToolUse: entry, ...(opts.post ? { PostToolUse: entry } : {}) } }, null, 2) + '\n';
+}
+
+const EDIT_TOOLS = new Set(['Write', 'Edit', 'NotebookEdit']);
+
+/**
+ * Pure: what the pre-tool hook answers for an allowed call. `ask` is agy's own default (commands and MCP tools
+ * raise a permission request, workspace edits do not); `force_ask` always raises one; `allow` raises none.
+ */
+export function hookDecision(permissionMode: string | null | undefined, tool: string): 'allow' | 'ask' | 'force_ask' {
+  const mode = permissionMode || 'bypassPermissions';
+  if (mode === 'bypassPermissions') return 'allow';
+  if (mode === 'acceptEdits') return EDIT_TOOLS.has(tool) ? 'allow' : 'ask';
+  if (mode === 'plan') return 'ask';
+  return EDIT_TOOLS.has(tool) ? 'force_ask' : 'ask'; // ask mode: an edit gets a card like any command
+}
+
+/** Pure: +/- line counts of ACP diff blocks ({path, oldText?, newText}) — lines that are in one text and not the other. */
+export function acpDiffCounts(content: unknown): { additions: number; deletions: number } | null {
+  let additions = 0;
+  let deletions = 0;
+  let any = false;
+  for (const c of Array.isArray(content) ? content : []) {
+    if (c?.type !== 'diff') continue;
+    any = true;
+    const lines = (t: unknown) => (typeof t === 'string' && t ? t.replace(/\n$/, '').split('\n') : []);
+    const left = new Map<string, number>();
+    for (const l of lines(c.oldText)) left.set(l, (left.get(l) || 0) + 1);
+    for (const l of lines(c.newText)) {
+      const n = left.get(l) || 0;
+      if (n > 0) left.set(l, n - 1);
+      else additions++;
+    }
+    for (const n of left.values()) deletions += n;
+  }
+  return any ? { additions, deletions } : null;
+}
+
+const READ_TOOLS = new Set(['Read', 'Glob', 'Grep']);
+
+/** Pure: a read-only call whose every path argument sits under one of `roots` (Arigami's skill packs and docs) — never worth a card. */
+export function readsOnlyUnder(tool: string, args: unknown, roots: Array<string | null | undefined>): boolean {
+  if (!READ_TOOLS.has(tool) || !args || typeof args !== 'object') return false;
+  const paths = Object.values(args as Record<string, unknown>).filter((v): v is string => typeof v === 'string' && path.isAbsolute(v));
+  const dirs = roots.filter((r): r is string => !!r).map((r) => path.resolve(r));
+  return paths.length > 0 && paths.every((p) => dirs.some((d) => path.resolve(p) === d || path.resolve(p).startsWith(d + path.sep)));
+}
+
+/** Pure: a stub SKILL.md agy discovers as a native skill; it sends the agent to the real file (agy follows no symlinks). */
+export function skillStub(name: string, description: string, realDir: string): string {
+  const desc = String(description || `Arigami skill ${name}`).replace(/\s+/g, ' ').trim().slice(0, 900);
+  return `---\nname: ${name}\ndescription: ${JSON.stringify(desc)}\n---\nThis is an Arigami skill. Read ${path.join(realDir, 'SKILL.md')} now and follow it exactly; any path it mentions is relative to ${realDir}.\n`;
+}
+
+/** Pure: the files agy keeps for one conversation under its app-data dir (measured: removing them leaves no trace in session/list). */
+export function agyConversationPaths(geminiHome: string, conversationId: string): string[] {
+  if (!/^[0-9a-f-]{36}$/i.test(conversationId)) return [];
+  const root = path.join(geminiHome, 'antigravity-cli');
+  return [path.join(root, 'conversations', `${conversationId}.db`), path.join(root, 'brain', conversationId), path.join(root, 'annotations', `${conversationId}.pbtxt`), path.join(root, 'presence', `${conversationId}.lock`)];
 }

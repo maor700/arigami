@@ -32,6 +32,7 @@ import { ensureUserPlugin, USER_SKILLS_DIR } from './skills.js';
 import { injectedServersFor } from './mcp-connections.js';
 import { effectiveChain, rungOf, nextRung, rungsLeft } from './supervisor.js';
 import { codexChain, codexLadder, codexCatalogIds, codexCatalogWindows, CODEX_LIMIT_RE } from './lib/codex-quota.js';
+import { geminiChain, geminiLadder, geminiCatalogIds, looksLikeGeminiLimit } from './lib/gemini-quota.js';
 import { resolveCtxWindow } from './lib/ctx-window.js';
 import { pickDriver } from './lib/screen-driver.js';
 import { pickEngine, registerEngine } from './lib/engine-driver.js';
@@ -1172,10 +1173,25 @@ export function codexChainFor(id) {
   });
 }
 
+/** A gemini session's chain — model families from cfg.geminiModelChain, filtered to what the account is offered. */
+export function geminiChainFor(id) {
+  const s = getSession(id);
+  const slug = typeof s?.metadata?.agent === 'string' && s.metadata.agent ? s.metadata.agent : null;
+  const agent = slug ? getAgent(slug) : null;
+  const own = agent?.engine === 'gemini' ? agent : null;
+  return geminiChain({
+    sessionChain: s?.claude?.modelChain,
+    agentChain: own?.modelChain,
+    configChain: cfg.geminiModelChain,
+    catalog: geminiCatalogIds(),
+    modelChoice: s?.claude?.modelDowngradedFrom || s?.claude?.modelChoice || own?.model || 'gemini-4-neon',
+  });
+}
+
 export function ladderState(id) {
   const s = getSession(id);
   if (s?.engine === 'codex') return codexLadder(codexChainFor(id), s.claude);
-  if (s?.engine === 'gemini') return { chain: [], rung: 0, model: s.claude?.modelChoice || null, rungsLeft: 0, restoreAt: null }; // no ladder on gemini
+  if (s?.engine === 'gemini') return geminiLadder(geminiChainFor(id), s.claude);
   const chain = chainFor(id);
   const stored = Number.isFinite(s?.claude?.modelRung) ? Number(s.claude.modelRung) : rungOf(chain, s?.claude?.modelChoice);
   const rung = stored > 0 ? Math.min(stored, chain.length - 1) : 0;
@@ -1427,7 +1443,7 @@ async function compactAndRespawn(id, { from, to, plan, patch, lastMsg }) {
  */
 export function restoreModel(id) {
   if (isCodexSession(id)) return restoreCodexModel(id);
-  if (isGeminiSession(id)) return null;
+  if (isGeminiSession(id)) return restoreGeminiModel(id);
   const { chain, rung } = ladderState(id);
   if (rung <= 0) return null;
   const top = chain[0];
@@ -1533,6 +1549,51 @@ export function restoreCodexModel(id) {
   return top;
 }
 
+// ---- the gemini model ladder (live: session/set_model, no respawn, every rung has the same 1M window) ----
+const geminiLadderCooldown = new Set();
+
+/** Move a gemini session to a lower rung (the next one, or `to`) and replay `lastMsg`; same result shape as downgradeModel. */
+/** @param {string} id @param {{resetAt?: string|null, why?: string, lastMsg?: string|null, to?: {model: string, rung: number}|null}} [opts] */
+export function downgradeGeminiModel(id, { resetAt = null, why = 'the model is not available', lastMsg = null, to = null } = {}) {
+  if (!isGeminiSession(id)) return { ok: false, reason: 'engine' };
+  const { chain, rung } = ladderState(id);
+  const nxt = to && to.rung > rung && chain[to.rung] === to.model ? to : nextRung(chain, rung);
+  if (!nxt) return { ok: false, reason: 'bottom' };
+  if (geminiLadderCooldown.has(id)) return { ok: false, reason: 'cooling' };
+  geminiLadderCooldown.add(id);
+  const cd = setTimeout(() => geminiLadderCooldown.delete(id), 30_000);
+  if (cd.unref) cd.unref();
+  const cur = getSession(id)?.claude || {};
+  const from = chain[rung] || cur.modelChoice || 'default';
+  const msg = lastMsg ?? lastUserMessage(id);
+  const restoreAt = resetAt || new Date(Date.now() + Math.max(0.01, cfg.supervisor?.modelBackoffMin ?? 60) * 60_000).toISOString();
+  appendChat(id, { kind: 'system', text: `⤷ ${from} stopped (${why}) — switched to ${nxt.model} and continuing · back on ${chain[0] || from} ${localTime(restoreAt)}` });
+  // The effort is the top rung's: a rung that lacks the level runs at its own default until the climb back.
+  const levels = pickEngine(getSession(id)).effortLevels({ ...getSession(id), claude: { ...cur, modelChoice: nxt.model } });
+  const keepEffort = !cur.effort || levels.includes(cur.effort);
+  applySetting(id, {
+    modelChoice: nxt.model,
+    modelRung: nxt.rung,
+    modelRestoreAt: restoreAt,
+    modelDowngradedFrom: chain[0] || from,
+    ...(keepEffort ? {} : { effort: null, effortDowngradedFrom: cur.effortDowngradedFrom || cur.effort }),
+  });
+  const t = setTimeout(() => { try { if (msg) sendMessage(id, msg); } catch {} }, 900);
+  if (t.unref) t.unref();
+  return { ok: true, model: nxt.model, from };
+}
+
+/** Climb a gemini session back to its top rung (and its effort); no replay unless a turn was in flight. */
+export function restoreGeminiModel(id) {
+  const { chain, rung } = ladderState(id);
+  if (rung <= 0) return null;
+  const top = chain[0];
+  const cur = getSession(id)?.claude || {};
+  appendChat(id, { kind: 'system', text: `⤷ back on ${top}` });
+  applySetting(id, { modelChoice: top, modelRung: 0, modelRestoreAt: null, modelDowngradedFrom: null, ...(cur.effortDowngradedFrom ? { effort: cur.effortDowngradedFrom, effortDowngradedFrom: null } : {}) });
+  return top;
+}
+
 /** P2-6 incidents from codex-recovery.ts, same neck as the claude ones. */
 export const recordCodexIncident = (id, action, detail, outcome = 'ok', reason = 'quota') => recordIncident(id, action, detail, outcome, reason);
 
@@ -1571,7 +1632,7 @@ export function lastTurnError(id) {
       // account pool — one rung down the chain.
       const eng = getSession(id)?.engine;
       if (eng === 'codex') { if (CODEX_LIMIT_RE.test(t)) return 'limit'; }
-      else if (eng === 'gemini') { /* no quota recovery on gemini — a limit stays a plain error */ }
+      else if (eng === 'gemini') { if (looksLikeGeminiLimit(t)) return 'limit'; }
       else if (LIMIT_RE.test(t) || MODEL_UNAVAILABLE_RE.test(t)) return 'limit';
       if (/(?:claude|codex|gemini) (?:exited|failed to start)/i.test(t)) return 'proc-dead';
       return 'other';

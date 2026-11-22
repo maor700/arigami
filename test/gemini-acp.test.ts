@@ -217,6 +217,7 @@ test('a real turn: command + file write + message map onto the chat kinds; bypas
   expect(of(events, 'assistant-text')[0].text).toContain('Ran the command and created');
   expect(claude.state).toBe('idle');
   expect(claude.usage).toMatchObject({ ctxTokens: 8986, ctxWindow: 1048576, ctxAssumed: false });
+  expect(claude.turnDiff).toMatchObject({ additions: 1, deletions: 0 }); // the write's diff block → the Changes tab reloads
 });
 
 test('thinking, MCP tools and a read: Arigami\'s own tools stay out of the transcript, the others get mcp__ names', () => {
@@ -457,7 +458,9 @@ test('prepare fails loudly without agy or without a login; the spawn is `agy acp
       "emit({bin:b.bin,args:b.args,cwd:b.cwd,sid:b.env.ARIGAMI_SESSION_ID,engine:b.env.ARIGAMI_ENGINE,hasToken:!!b.env.ARIGAMI_TOKEN,leaks:['CLAUDE_CODE_OAUTH_TOKEN','ANTHROPIC_API_KEY','OPENAI_API_KEY','CODEX_HOME'].filter((k)=>k in b.env),id:g.geminiDriver.sessionId.from({id:2,result:{sessionId:'abc'}})});",
     { CLAUDE_CODE_OAUTH_TOKEN: 'x', OPENAI_API_KEY: 'y' }
   );
-  expect(ok).toMatchObject({ bin: fakeAgy, args: ['acp', '--gemini-dir', path.join(dir, 'gemini')], engine: 'gemini', hasToken: true, leaks: [], id: 'abc' });
+  expect(ok).toMatchObject({ bin: fakeAgy, engine: 'gemini', hasToken: true, leaks: [], id: 'abc' });
+  // the gemini home override, then the session's own hooks + skills dir
+  expect(ok.args).toEqual(['acp', '--gemini-dir', path.join(dir, 'gemini'), '--add-dir', path.join(dir, 'gemini', ok.sid)]);
   // the gemini home: ~/.gemini unless ARIGAMI_GEMINI_HOME (or the older ARIGAMI_GEMINI_DIR) says otherwise
   expect(agyAcpArgs({} as any)).toEqual(['acp']);
   expect(agyAcpArgs({ ARIGAMI_GEMINI_HOME: '/g/home', ARIGAMI_GEMINI_DIR: '/g/dir' } as any, ['--x'])).toEqual(['acp', '--gemini-dir', '/g/home', '--x']);
@@ -495,14 +498,14 @@ test('gemini is a first-class engine id: registry, agents, default engine, one-s
   });
 });
 
-test('claude-only recovery never touches a gemini session', async () => {
+test('claude\'s own recovery never touches a gemini session; it has its own ladder', async () => {
   const out = run(
     "cl.appendChat(s.id,{kind:'error',text:'gemini: usage limit reached, 429'});" +
       'emit({down:cl.downgradeModel(s.id),restore:cl.restoreModel(s.id),ladder:cl.ladderState(s.id),err:cl.lastTurnError(s.id),recover:await cl.recoverAuth(s.id)});'
   );
   expect(out.down).toEqual({ ok: false, reason: 'engine' });
-  expect(out.restore).toBeNull();
-  expect(out.ladder.rungsLeft).toBe(0);
-  expect(out.err).toBe('other');
+  expect(out.restore).toBeNull(); // on its top rung: nothing to climb back to
+  expect(out.ladder).toMatchObject({ chain: ['gemini-4-neon', 'gemini-4-argon', 'gemini-3.8-flash'], rung: 0, rungsLeft: 2 });
+  expect(out.err).toBe('limit');
   expect(out.recover).toBe(false);
 });

@@ -26,6 +26,7 @@ const APPROVED_DOMAINS = new Set([
   'login.microsoftonline.com', 'login.live.com', 'account.microsoft.com', 'myaccount.microsoft.com', 'appleid.apple.com', 'account.apple.com',
   'claude.ai', 'claude.com', 'platform.claude.com', 'console.anthropic.com',
   'auth.openai.com', 'openai.com', 'chatgpt.com',
+  'antigravity.google', // where Google lands after agy's own sign-in (connect-gemini)
   'backend.composio.dev', 'composio.dev',
   'login.tailscale.com', 'tailscale.com',
   'github.com',

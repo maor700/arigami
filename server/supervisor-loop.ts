@@ -105,7 +105,7 @@ export function thresholds(now = Date.now()): Thresholds {
 // ---- building the view ------------------------------------------------------
 
 /** True when every pooled account of `provider` is quarantined/unusable right now. */
-function accountsAllLimited(provider: 'claude' | 'codex' = 'claude'): boolean {
+function accountsAllLimited(provider: 'claude' | 'codex' | 'gemini' = 'claude'): boolean {
   const pool = (listAccounts().accounts as any[]).filter((a) => a.pool && (a.provider || 'claude') === provider);
   if (!pool.length) return false;
   return pool.every((a) => !a.available);
@@ -178,7 +178,7 @@ export function viewOf(s: Session, now = Date.now(), hasLiveChildren = false): S
   const waitingOn = (md.waitingOn as SessionView['waitingOn']) || null;
   const know = waitingOn ? childKnows(waitingOn) : null;
   const budget = slug ? budgetState(slug) : null;
-  const provider = s.engine === 'codex' ? 'codex' : 'claude';
+  const provider = s.engine === 'codex' || s.engine === 'gemini' ? s.engine : 'claude';
   return {
     id: s.id,
     title: s.title,
@@ -353,7 +353,7 @@ async function run(s: Session, d: Decision): Promise<void> {
       return;
     }
     case 'model-down': {
-      const provider = s.engine === 'codex' ? 'codex' : 'claude';
+      const provider = s.engine === 'codex' || s.engine === 'gemini' ? s.engine : 'claude';
       // Climb back when the earliest quarantined account frees up, if we know.
       const soonest = (listAccounts().accounts as any[])
         .filter((a) => a.pool && a.quarantineUntil && (a.provider || 'claude') === provider)
@@ -362,8 +362,10 @@ async function run(s: Session, d: Decision): Promise<void> {
       const r =
         provider === 'codex'
           ? claude.downgradeCodexModel(id, { resetAt: soonest || null })
-          : claude.downgradeModel(id, { resetAt: soonest || null, why: 'all accounts limited' });
-      if (r.ok) incident(id, d, 'ok', { from: r.from, to: r.model, ...(provider === 'codex' ? { engine: 'codex' } : {}) });
+          : provider === 'gemini'
+            ? claude.downgradeGeminiModel(id, { resetAt: soonest || null })
+            : claude.downgradeModel(id, { resetAt: soonest || null, why: 'all accounts limited' });
+      if (r.ok) incident(id, d, 'ok', { from: r.from, to: r.model, ...(provider !== 'claude' ? { engine: provider } : {}) });
       else if (r.reason === 'bottom') incident(id, d, 'failed', { reason: 'bottom-rung' });
       return;
     }

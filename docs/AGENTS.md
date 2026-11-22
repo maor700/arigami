@@ -20,8 +20,8 @@ skills** — agents reference shared skills by name. (UX1 later made the home ch
 the agent surface instead of a rail row — see the last section.)
 
 **Engine.** An agent carries an `engine` (`claude` | `codex` | `gemini`, absent = `cfg.defaultEngine`); its sessions run on
-that CLI and "Claude" below means whichever engine the session runs. Budgets and the ledger hold on all three; A3
-allowlists are weaker on gemini (checked at approval requests only). Differences are in §Engine and docs/ENGINES.md.
+that CLI and "Claude" below means whichever engine the session runs. Budgets, the ledger and A3 allowlists hold on all
+three (gemini: through agy's pre-tool hook, file edits included). Differences are in §Engine and docs/ENGINES.md.
 
 **Outbound (system principle, 2026-11-04).** When the owner asks, the agent initiates and operates the communication
 modules — email, WhatsApp, Slack, messages, and the sessions it creates/tasks for that — and never deflects with
