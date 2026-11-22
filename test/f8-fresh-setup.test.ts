@@ -104,7 +104,7 @@ afterAll(() => { try { host?.kill('SIGTERM'); } catch {} });
 test('fresh install: wizard is minimal, onboarding.json records mode:minimal, Run-full-setup flips it', async () => {
   const w = (await api('GET', '/__api/onboarding/wizard')).json;
   expect(w.mode).toBe('minimal');
-  expect(w.required).toEqual(['pair', 'claude', 'codex']);
+  expect(w.required).toEqual(['pair', 'claude', 'codex', 'gemini']);
   expect(w.done).toBe(false);
   const file = JSON.parse(fs.readFileSync(path.join(dir, 'onboarding.json'), 'utf8'));
   expect(file.mode).toBe('minimal');

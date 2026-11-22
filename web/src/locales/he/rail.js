@@ -32,6 +32,7 @@ export const strings = {
   'rail.ladderRunningOn': 'רץ על {model}',
   'rail.ladderResetsAt': 'מכסת {model} מתאפסת ב-{time}',
   'rail.ladderCompacted': 'ההקשר קוצר כדי להיכנס לחלון הקטן',
+  'rail.ladderEffort': 'למודל הזה אין רמת מאמץ {effort} — היא תחזור יחד עם המודל',
   'rail.ladderTitle': 'הסשן רץ על מודל חלש יותר עד שהמכסה של {model} תחזור',
   'rail.model.haiku': 'הייקו',
   'rail.model.sonnet': 'סונט',

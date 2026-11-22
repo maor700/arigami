@@ -189,3 +189,23 @@ test('a model ladder on gemini needs no new UI: the badge names the rung, Health
   expect(engines.engineChains(null)).toEqual([]);
   expect(src('components/settings/Health.jsx')).toMatch(/engineChains\(snap\)\.map/);
 });
+
+test('the driver contract: the ladder is drawn from the wire fields it publishes, the parked effort is explained, agy commands list with their argument hints', async () => {
+  const { default: LadderBadge } = await import(web('components/LadderBadge.jsx'));
+  // state.toWireSession derives claude.ladder from modelRung / modelChoice / modelDowngradedFrom / modelRestoreAt
+  const session = { engine: 'gemini', claude: { modelRung: 1, modelChoice: 'gemini-4-argon', modelDowngradedFrom: 'gemini-4-neon', model: 'gemini-4-argon-high', effortDowngradedFrom: 'xhigh',
+    ladder: { running: 'gemini-4-argon', configured: 'gemini-4-neon', resetAt: null, compacted: false } } };
+  const html = render(h(LadderBadge, { session }));
+  expect(html).toContain('running on Gemini 4 Argon');
+  expect(html).toMatch(/title="[^"]*Gemini 4 Neon[^"]*this model has no Extra high effort/);
+  expect(render(h(LadderBadge, { session: { ...session, claude: { ...session.claude, effortDowngradedFrom: null } } }))).not.toContain('effort —');
+  for (const lang of ['en', 'he']) expect(src(`locales/${lang}/rail.js`)).toContain("'rail.ladderEffort'");
+
+  // session.claude.capabilities.commands = [{name, description, argumentHint}] — listed before any thread id exists
+  const caps = { commands: [{ name: 'goal', description: 'Set a goal', argumentHint: '<text>' }, { name: 'compact', description: 'Compact the context', argumentHint: '' }] };
+  const panel = render(h(SlashCommands.CapabilitiesPanel, { capabilities: caps, session: { id: 's', engine: 'gemini', claude: { state: 'idle' } }, initialTab: 'commands', onClose() {} }));
+  expect(panel).toContain('goal');
+  expect(panel).toContain('&lt;text&gt;');
+  expect(panel).toContain('Compact the context');
+  expect(src('components/SlashCommands.jsx')).toMatch(/codex \? !!\(session\?\.claude\?\.sessionId \|\| caps\.commands\?\.length\)/);
+});

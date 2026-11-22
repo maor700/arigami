@@ -8,7 +8,7 @@
 // the climb back. Quiet by design: no toast, no pulse; the chat gets one system
 // line at the switch and one at the climb back.
 import { useT } from '../lib/i18n.js';
-import { modelDisplayName } from '../lib/engines.js';
+import { modelDisplayName, effortLabelFor } from '../lib/engines.js';
 import { Icon } from '../lib/icons.js';
 import { faStairs } from '@fortawesome/free-solid-svg-icons';
 
@@ -70,7 +70,10 @@ export default function LadderBadge({ session, compact = false, className = '' }
   const ladder = session?.claude?.ladder;
   if (!ladder) return null;
   const txt = ladderText(ladder, t);
-  const title = [txt.full, t('rail.ladderTitle', { model: configuredName(ladder.configured) }), ladder.compacted ? t('rail.ladderCompacted') : '']
+  // the rung may lack the effort the human picked (gemini: Argon has no xhigh) — the driver parks it in effortDowngradedFrom
+  const parked = session.claude.effortDowngradedFrom;
+  const effort = parked ? t('rail.ladderEffort', { effort: effortLabelFor(session.engine, ladder.configured, parked) }) : '';
+  const title = [txt.full, t('rail.ladderTitle', { model: configuredName(ladder.configured) }), ladder.compacted ? t('rail.ladderCompacted') : '', effort]
     .filter(Boolean)
     .join(' · ');
   return (
