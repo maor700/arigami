@@ -1,6 +1,6 @@
 # Connecting services just-in-time (`connect-*` playbooks)
 
-Arigami starts with the minimum — pairing and one engine account (Claude or Codex). Everything
+Arigami starts with the minimum — pairing and one engine account (Claude, Codex or Gemini). Everything
 else (Linear/Notion/Sentry over their own MCP servers, Gmail via Composio,
 GitHub, Tailscale remote access, a repo, WhatsApp…)
 is connected **from inside the chat, the moment a task needs it**. This
@@ -42,6 +42,7 @@ human can flip it. Nothing runs automatically without that click.
 | `composio:<toolkit>` | `connect-composio` | fetch the Composio redirect URL, open it, pick the identity account, "unverified app → Advanced → continue", Allow, poll until ACTIVE | provider login page (Slack/Notion/Linear), any password/2FA, redirect outside the allowlist |
 | `claude` | `connect-claude` | mint the PKCE authorize URL, click Authorize when claude.ai is signed in, read the code from the callback URL, POST it for exchange | claude.ai login (password / email code) |
 | `codex` | `connect-codex` | start `codex login` on the host, open the ChatGPT authorize URL, approve with the signed-in account, the loopback callback lands on the host by itself | OpenAI login (password / 2FA / email code) |
+| `gemini` | `connect-gemini` | start the Antigravity CLI's Google sign-in on the host, open the Google authorize URL, approve with the signed-in account, hand the callback address back — the host types the code into agy, which writes its own token file | Google login (password / 2FA / phone approval) |
 | `remote` | `connect-tailscale` | `tailscale login` URL, SSO with the identity's provider (in the owner's Chrome, `sign_in({site, url})`), Connect device, enable `serve` via REST | 2FA, a provider the identity is not, `sudo`, tailnet without HTTPS certs, admin approval |
 | `git` | `connect-github` | `gh auth login --web` under the host pty-bridge, open the device page, type the one-time device code, Authorize, poll gh | GitHub login page, org SSO |
 | `whatsapp` | — (manual only) | — | the QR is scanned by the human on the phone; the card shows it |
@@ -80,7 +81,7 @@ Microsoft / Apple") is finished in the owner's own Chrome on the shared desktop,
    `myaccount.google.com`, `google.com`, the other identity providers' sign-in and account pages
    (`login.microsoftonline.com`, `login.live.com`, `account.microsoft.com`, `myaccount.microsoft.com`,
    `appleid.apple.com`, `account.apple.com`), `claude.ai`, `claude.com`,
-   `platform.claude.com`, `console.anthropic.com`, `auth.openai.com`, `openai.com`, `chatgpt.com`, `backend.composio.dev`,
+   `platform.claude.com`, `console.anthropic.com`, `auth.openai.com`, `openai.com`, `chatgpt.com`, `antigravity.google`, `backend.composio.dev`,
    `composio.dev`, `login.tailscale.com`, `tailscale.com`, `github.com`, plus the
    provider domain of a non-Google Composio toolkit (`slack.com`, `linear.app`,
    `notion.so`), and — for `connect-mcp` — the vendor domains of

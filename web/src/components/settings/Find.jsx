@@ -21,7 +21,7 @@ export const SETTINGS_INDEX = [
   ['memory.title', 'appearance', 'memory', 'memory learning brain'],
   ['brain.heartbeatTitle', 'appearance', 'heartbeat', 'heartbeat schedule'],
   ['telemetry.title', 'appearance', 'telemetry', 'telemetry usage analytics privacy'],
-  ['settings.connections.claude', 'connections', 'claude', 'claude codex account login engine'],
+  ['settings.connections.claude', 'connections', 'claude', 'claude codex gemini agy google account login engine'],
   ['settings.connections.channels', 'connections', 'channels', 'whatsapp slack channels'],
   ['host.backup', 'host', 'backup', 'backup restore export'],
   ['machine.title', 'host', 'resources', 'machine resources cpu memory disk'],

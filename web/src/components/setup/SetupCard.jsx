@@ -21,7 +21,7 @@ import { stepFor } from './index.js';
 import { capTitle, capFamily, consentKeys, manualFor } from './registry.js';
 import AutoConnect, { EvidenceLink } from './AutoConnect.jsx';
 import ConnectStep from './ConnectStep.jsx';
-import EngineConnect from './EngineConnect.jsx';
+import EngineConnect, { ENGINE_CAP_IDS } from './EngineConnect.jsx';
 import { api } from '../../lib/api.js';
 import { serverText } from '../../lib/server-text.js';
 import { Pill, ErrorBox } from './shared.jsx';
@@ -112,8 +112,8 @@ function SetupCardView({ props: { sessionId, event } }) {
   const identity = event.identity || null;
   const autoAllowed = !!autoCapable && !!identity;
   const title = capTitle(t, capability);
-  // Claude and Codex are two equal choices: the card for either one offers both.
-  const isEngine = capFamily(capability) === 'claude' || capFamily(capability) === 'codex';
+  // The engines are equal choices: the card for any one offers them all.
+  const isEngine = ENGINE_CAP_IDS.includes(capFamily(capability));
   // A2: a card raised by a session born from an agent connects the AGENT (its
   // identity / Composio account) — say so, by the agent's name.
   const { agents } = useStore();
@@ -205,13 +205,14 @@ function SetupCardView({ props: { sessionId, event } }) {
         </div>
       )}
 
-      {phase === 'done' && engineDone === 'codex' && capability === 'claude' && (
-        <div dir="auto" className="mt-2 flex flex-wrap items-center gap-2 rounded-md border border-hair bg-muted px-3 py-2 text-xs text-fg">
-          <span>{t('setup.engine.switched')}</span>
+      {/* the card asked for one engine and the human connected another: this session cannot use it, a new one can */}
+      {phase === 'done' && engineDone && isEngine && engineDone !== capability && (
+        <div dir="auto" data-engine-switched={engineDone} className="mt-2 flex flex-wrap items-center gap-2 rounded-md border border-hair bg-muted px-3 py-2 text-xs text-fg">
+          <span>{t('setup.engine.switched', { name: capTitle(t, engineDone), from: capTitle(t, capability) })}</span>
           <Btn variant="primary" disabled={busy} onClick={() => call(async () => {
-            const s = await api.post('/sessions', { title: 'Codex', engine: 'codex', permissionMode: 'bypassPermissions' });
+            const s = await api.post('/sessions', { title: capTitle(t, engineDone), engine: engineDone, permissionMode: 'bypassPermissions' });
             if (s?.id) window.location.hash = `#/session/${s.id}`;
-          })}>{busy ? t('setup.engine.starting') : t('setup.engine.newCodex')}</Btn>
+          })}>{busy ? t('setup.engine.starting') : t('setup.engine.newSession', { name: capTitle(t, engineDone) })}</Btn>
         </div>
       )}
 

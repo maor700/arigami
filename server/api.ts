@@ -2318,6 +2318,7 @@ async function disconnectCapability(capability: string, owner: caps.Owner = caps
     updateScreenConfig({ enabled: false });
     return { ok: true };
   }
+  if (capability === 'gemini') throw new Error('Gemini is the Antigravity CLI\'s own login — sign out with agy on the host');
   if (capability === 'claude' || capability === 'codex') throw new Error(`disconnect ${capability === 'claude' ? 'Claude' : 'Codex'} from the Accounts view`);
   if (capability.startsWith('repo:')) throw new Error('remove repositories from Setup → repositories');
   throw new Error(`${capability} has nothing to disconnect`);
@@ -2789,6 +2790,18 @@ async function applyManualSetup(capability: string, body: any, req: IncomingMess
     else if (action === 'cancel') return { ...cx.cancelLogin(id), ok: true };
     else if (action === 'code' || body?.code) { const r = await cx.submitCallback(id, String(body?.code || '')); return { ...r, state: r.ok ? 'awaiting' : 'error' }; }
     else throw new Error('codex: pass {token} or {action:"start"} / {action:"code", id, code}');
+  } else if (capability === 'gemini') {
+    const gl = await import('./gemini-login.js');
+    const id = String(body?.id || '');
+    if (action === 'start' || action === 'oauth-start') {
+      let st: any = gl.startGeminiLogin();
+      for (let i = 0; i < 80 && st.state === 'starting'; i++) { await new Promise((r) => setTimeout(r, 250)); st = gl.geminiLoginStatus(st.id); } // agy prints the link a few seconds in
+      return { ok: true, ...st };
+    }
+    else if (action === 'poll') { const st = gl.geminiLoginStatus(id); return { ok: st.state === 'done', ...st }; }
+    else if (action === 'cancel') return { ...gl.cancelGeminiLogin(id), ok: true };
+    else if (action === 'code' || body?.code) { const r = gl.submitGeminiCode(id, body?.code); return { ...r, state: r.ok ? 'awaiting' : 'error' }; }
+    else throw new Error('gemini: pass {action:"start"} / {action:"code", id, code}');
   } else if (capability === 'git') {
     const gl = await import('./git-login.js');
     if (body?.token) out = ob.setGitToken(String(body.token), body?.host ? String(body.host) : undefined);
@@ -5810,7 +5823,7 @@ export async function handle(
       const body = (await readBody(req)) as any;
       try {
         const provider = pr.normalizeProvider(body?.provider);
-        if (!pr.PROVIDERS[provider].methods.length) throw new Error(`${pr.PROVIDERS[provider].label} runs on this machine's own login — sign in with its CLI on the host`);
+        if (!pr.PROVIDERS[provider].methods.some((x) => x.id === 'paste')) throw new Error(`${pr.PROVIDERS[provider].label} has no key to paste — use its browser sign-in`);
         if (provider === 'codex') {
           const cx = await import('./codex-account.js');
           return json(res, await cx.addApiKeyAccount({ label: body?.label, key: body?.token }));
@@ -5828,7 +5841,8 @@ export async function handle(
       const pr = await import('./lib/providers.js');
       const body = (await readBody(req)) as any;
       const provider = pr.normalizeProvider(body?.provider);
-      if (!pr.PROVIDERS[provider].methods.length) return badRequest(res, `${pr.PROVIDERS[provider].label} runs on this machine's own login — sign in with its CLI on the host`);
+      if (!pr.PROVIDERS[provider].methods.some((x) => x.id === 'browser')) return badRequest(res, `${pr.PROVIDERS[provider].label} has no browser sign-in`);
+      if (provider === 'gemini') return json(res, (await import('./gemini-login.js')).startGeminiLogin());
       if (provider === 'codex') {
         const cx = await import('./codex-account.js');
         return json(res, cx.startBrowserLogin({ label: body?.label }));
@@ -5839,6 +5853,7 @@ export async function handle(
     if (p === '/__api/accounts/login/status' && m === 'GET') {
       const id = u.searchParams.get('id') || '';
       if (id.startsWith('cdx_')) return json(res, (await import('./codex-account.js')).loginStatus(id));
+      if (id.startsWith('agy_')) return json(res, (await import('./gemini-login.js')).geminiLoginStatus(id));
       if (id.startsWith('auth_')) return json(res, ((await import('./accounts-auth.js')) as any).authStatus(id));
       return json(res, { provider: 'claude', ...((await import('./oauth-login.js')) as any).loginStatus(id) });
     }
@@ -5846,6 +5861,7 @@ export async function handle(
       const body = (await readBody(req)) as any;
       const id = String(body?.id || '');
       if (id.startsWith('cdx_')) return json(res, await (await import('./codex-account.js')).submitCallback(id, body?.code));
+      if (id.startsWith('agy_')) return json(res, (await import('./gemini-login.js')).submitGeminiCode(id, body?.code));
       if (id.startsWith('auth_')) return json(res, ((await import('./accounts-auth.js')) as any).submitCode(id, body?.code));
       return json(res, await ((await import('./oauth-login.js')) as any).submitCode(id, body?.code));
     }
@@ -5853,6 +5869,7 @@ export async function handle(
       const body = (await readBody(req)) as any;
       const id = String(body?.id || '');
       if (id.startsWith('cdx_')) return json(res, (await import('./codex-account.js')).cancelLogin(id));
+      if (id.startsWith('agy_')) return json(res, (await import('./gemini-login.js')).cancelGeminiLogin(id));
       if (id.startsWith('auth_')) return json(res, ((await import('./accounts-auth.js')) as any).cancelAuth(id));
       return json(res, ((await import('./oauth-login.js')) as any).cancelLogin(id));
     }

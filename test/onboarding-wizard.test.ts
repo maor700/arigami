@@ -23,7 +23,7 @@ const env = (dir: string, extra: Record<string, string> = {}) => ({
 
 // Probes that make NOTHING pass — the "fresh container" baseline.
 const NONE =
-  "const probes={hasAdmin:()=>false,claudeCli:()=>true,claudeAuth:()=>false,codexCli:()=>true,codexAuth:()=>false,gitAuth:()=>false," +
+  "const probes={hasAdmin:()=>false,claudeCli:()=>true,claudeAuth:()=>false,codexCli:()=>true,codexAuth:()=>false,geminiCli:()=>true,geminiAuth:()=>false,gitAuth:()=>false," +
   "profileApplied:()=>null,pendingProfile:()=>null,integrations:()=>({composio:false,whatsapp:'disconnected',tailscale:false})," +
   "repos:()=>[],health:()=>undefined,unattended:()=>false,telemetry:()=>({enabled:false,reason:'config'})};";
 
@@ -41,7 +41,7 @@ test('fresh instance: every step todo, current=pair, not done; one funnel event 
   );
   expect(r.ok).toBe(true);
   const { v1, v2 } = r.out[0];
-  expect(v1.steps.map((s: any) => s.id)).toEqual(['pair', 'claude', 'codex', 'git', 'profile', 'integrations', 'repo', 'telemetry', 'health']);
+  expect(v1.steps.map((s: any) => s.id)).toEqual(['pair', 'claude', 'codex', 'gemini', 'git', 'profile', 'integrations', 'repo', 'telemetry', 'health']);
   expect(v1.current).toBe('pair');
   expect(v1.done).toBe(false);
   expect(v1.steps.every((s: any) => s.status === 'todo')).toBe(true);
@@ -51,12 +51,12 @@ test('fresh instance: every step todo, current=pair, not done; one funnel event 
   // Second read = same view, and NO new events (emitted once per transition).
   expect(v2.steps.map((s: any) => s.status)).toEqual(v1.steps.map((s: any) => s.status));
   const ev = readFunnel(dir);
-  expect(ev.filter((e) => e.name === 'onboarding.step').length).toBe(9);
+  expect(ev.filter((e) => e.name === 'onboarding.step').length).toBe(10);
   expect(ev.every((e) => typeof e.at === 'string' && e.step && e.status)).toBe(true);
   // onboarding.json persisted with the emitted map.
   const file = JSON.parse(fs.readFileSync(path.join(dir, 'onboarding.json'), 'utf8'));
   expect(file.version).toBe(1);
-  expect(Object.keys(file.emitted).length).toBe(9);
+  expect(Object.keys(file.emitted).length).toBe(10);
 });
 
 test('probe-ok wins, skip/complete records persist, done flips exactly once', () => {
@@ -259,7 +259,7 @@ test('doctor output lists the same steps in order', () => {
     env(fresh())
   );
   const lines = r.out[0].txt.split('\n');
-  expect(lines.slice(0, 9).map((l: string) => l.trim().split(/\s+/)[1])).toEqual(['pair', 'claude', 'codex', 'git', 'profile', 'integrations', 'repo', 'telemetry', 'health']);
-  expect(lines[9]).toContain('mode: full');
-  expect(lines[10]).toContain('current step → pair');
+  expect(lines.slice(0, 10).map((l: string) => l.trim().split(/\s+/)[1])).toEqual(['pair', 'claude', 'codex', 'gemini', 'git', 'profile', 'integrations', 'repo', 'telemetry', 'health']);
+  expect(lines[10]).toContain('mode: full');
+  expect(lines[11]).toContain('current step → pair');
 });

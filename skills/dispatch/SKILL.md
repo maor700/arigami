@@ -244,7 +244,7 @@ When you see one:
    chat (and a push) where the human chooses **automatic** or **manual**. It blocks.
 2. `{state:"auto"}` → the human asked *you* to connect it: run the matching
    playbook — `skills/connect-<provider>/SKILL.md` (`connect-identity`,
-   `connect-composio`, `connect-mcp`, `connect-claude`, `connect-codex`, `connect-tailscale`,
+   `connect-composio`, `connect-mcp`, `connect-claude`, `connect-codex`, `connect-gemini`, `connect-tailscale`,
    `connect-github`) —
    and finish with `report_setup({capability, ok, evidence?})`. Then call the
    original tool again.

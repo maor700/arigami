@@ -78,7 +78,7 @@ export const PROVIDERS: Record<ProviderId, AccountProvider> = {
     engine: 'gemini',
     localType: 'gemini-home',
     types: ['gemini-home'],
-    methods: [], // the machine's own `agy` login only — server/gemini-account.ts
+    methods: [{ id: 'browser', type: 'gemini-home' }], // agy's own Google sign-in, driven by the host — server/gemini-login.ts
     pasteHint: '',
     pastePattern: '',
   },

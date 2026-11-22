@@ -19,7 +19,7 @@ const env = (dir: string, extra: Record<string, string> = {}) => ({
 
 // Probes where NOTHING is connected — the fresh-install baseline.
 const NONE =
-  "const probes={identity:()=>null,claude:()=>({cli:true,authed:false}),codex:()=>({cli:true,authed:false}),git:()=>({authed:false,gh:false})," +
+  "const probes={identity:()=>null,claude:()=>({cli:true,authed:false}),codex:()=>({cli:true,authed:false}),gemini:()=>({cli:true,authed:false}),git:()=>({authed:false,gh:false})," +
   "repos:()=>[{name:'app',present:false,dir:'/x/app',source:'https://example.invalid/app.git'}]," +
   "whatsapp:()=>({status:'disconnected',qr:null,user:null}),desktop:()=>({enabled:false,display:null,up:false})," +
   "push:()=>false,remote:()=>({available:false,reason:'Tailscale is not installed'}),container:()=>false,telemetry:()=>({enabled:false,reason:'config'})," +
@@ -27,7 +27,7 @@ const NONE =
 // Everything connected.
 const ALL =
   "const probes={identity:()=>({email:'a@b.c',provider:'google',connectedAt:'t',chromeProfile:'base',providers:{}})," +
-  "claude:()=>({cli:true,authed:true}),codex:()=>({cli:true,authed:true}),git:()=>({authed:true,gh:true})," +
+  "claude:()=>({cli:true,authed:true}),codex:()=>({cli:true,authed:true}),gemini:()=>({cli:true,authed:true}),git:()=>({authed:true,gh:true})," +
   "repos:()=>[{name:'app',present:true,dir:'/x/app',source:'https://example.invalid/app.git'}]," +
   "whatsapp:()=>({status:'connected',qr:null,user:'me'}),desktop:()=>({enabled:true,display:':99',up:true})," +
   "push:()=>true,remote:()=>({available:true,loggedIn:true,serving:true,httpsUrl:'https://h/__host/'}),telemetry:()=>({enabled:true,reason:'config'})," +
@@ -36,7 +36,7 @@ const ALL =
 test('registry: every spec id resolves; statics + repos + known toolkits are listed with manual.kind/autoCapable/playbook', () => {
   const r = runInChild(
     `const c=await import('./server/capabilities.js');${NONE}` +
-      "const ids=['identity','claude','codex','git','repo:app','whatsapp','composio:gmail','desktop','push','remote','telemetry'];" +
+      "const ids=['identity','claude','codex','gemini','git','repo:app','whatsapp','composio:gmail','desktop','push','remote','telemetry'];" +
       'const resolved=ids.map(id=>{const cap=c.getCapability(id,probes);return cap&&{id:cap.id,kind:cap.manual.kind,auto:cap.autoCapable,playbook:cap.playbook||null};});' +
       'const all=c.listCapabilities(probes).map(x=>x.id);' +
       "emit({resolved,all,bad:[c.getCapability('nope'),c.getCapability('composio:../x'),c.isCapabilityId('repo:a b')]});",
@@ -44,18 +44,19 @@ test('registry: every spec id resolves; statics + repos + known toolkits are lis
   );
   if (!r.ok) throw new Error(r.error);
   const { resolved, all, bad } = r.out[0];
-  expect(resolved.map((x: any) => x.id)).toEqual(['identity', 'claude', 'codex', 'git', 'repo:app', 'whatsapp', 'composio:gmail', 'desktop', 'push', 'remote', 'telemetry']);
+  expect(resolved.map((x: any) => x.id)).toEqual(['identity', 'claude', 'codex', 'gemini', 'git', 'repo:app', 'whatsapp', 'composio:gmail', 'desktop', 'push', 'remote', 'telemetry']);
   const byId = Object.fromEntries(resolved.map((x: any) => [x.id, x]));
   expect(byId.identity).toEqual({ id: 'identity', kind: 'takeover', auto: false, playbook: 'connect-identity' });
   expect(byId.claude).toEqual({ id: 'claude', kind: 'oauth', auto: true, playbook: 'connect-claude' });
   expect(byId.codex).toEqual({ id: 'codex', kind: 'oauth', auto: true, playbook: 'connect-codex' });
+  expect(byId.gemini).toEqual({ id: 'gemini', kind: 'oauth', auto: true, playbook: 'connect-gemini' });
   expect(byId.git).toEqual({ id: 'git', kind: 'token', auto: true, playbook: 'connect-github' });
   expect(byId['repo:app'].kind).toBe('repo');
   expect(byId.whatsapp).toEqual({ id: 'whatsapp', kind: 'qr', auto: false, playbook: null });
   expect(byId['composio:gmail']).toEqual({ id: 'composio:gmail', kind: 'oauth', auto: true, playbook: 'connect-composio' });
   expect(byId.remote).toEqual({ id: 'remote', kind: 'toggle', auto: true, playbook: 'connect-tailscale' });
   for (const id of ['desktop', 'push', 'telemetry']) expect(byId[id].kind).toBe('toggle');
-  expect(all.slice(0, 9)).toEqual(['identity', 'claude', 'codex', 'git', 'whatsapp', 'desktop', 'push', 'remote', 'telemetry']);
+  expect(all.slice(0, 10)).toEqual(['identity', 'claude', 'codex', 'gemini', 'git', 'whatsapp', 'desktop', 'push', 'remote', 'telemetry']);
   expect(all).toContain('repo:app');
   expect(all).toContain('composio:gmail');
   expect(bad).toEqual([null, null, false]);
@@ -215,14 +216,14 @@ test('minimal mode (default): pair+claude ok → wizard done, current=null, opti
   if (!r.ok) throw new Error(r.error);
   const o = r.out[0];
   expect(o.mode).toBe('minimal');
-  expect(o.required).toEqual(['pair', 'claude', 'codex']);
+  expect(o.required).toEqual(['pair', 'claude', 'codex', 'gemini']);
   expect(o.done).toBe(true);
   expect(o.current).toBeNull();
   expect(o.todo).toContain('git'); // optional, not blocking
   expect(o.fullMode).toBe('full');
   expect(o.fullDone).toBe(false);
   expect(o.fullCurrent).toBe('git');
-  expect(o.fullRequired).toBe(9);
+  expect(o.fullRequired).toBe(10);
   expect(o.backDone).toBe(true);
   expect(o.events.filter((n: string) => n === 'onboarding.done').length).toBe(2); // done → not done → done again
 });

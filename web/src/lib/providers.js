@@ -32,7 +32,7 @@ export const PROVIDERS = {
     label: 'Gemini',
     engine: 'gemini',
     localType: 'gemini-home',
-    methods: [], // the machine's own `agy` login only
+    methods: [{ id: 'browser', type: 'gemini-home' }], // agy's own Google sign-in, driven by the host
     pasteHint: '',
     pastePattern: '',
     dot: '#4285f4',

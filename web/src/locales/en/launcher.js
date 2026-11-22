@@ -380,6 +380,16 @@ export const strings = {
   'launcher.account.codexVerifying': 'Signed in — reading the account…',
   'launcher.account.codexStarting': 'Starting codex login…',
   'launcher.account.codexDone': 'Codex account added',
+  'launcher.account.geminiBrowser': '🔓 Sign in with Google',
+  'launcher.account.geminiAddBody': 'Gemini runs on this machine’s Antigravity CLI (agy) and its one Google login. Sign in with Google here — the CLI keeps the login, nothing is stored in Arigami.',
+  'launcher.account.geminiStep1': 'Open the sign-in page',
+  'launcher.account.geminiStep1b': ' and approve with the Google account you want Gemini to run on.',
+  'launcher.account.geminiStep2': 'Google then shows an authorization code. Copy it and paste it below.',
+  'launcher.account.geminiCodePlaceholder': 'Authorization code (4/0A…)',
+  'launcher.account.geminiStarting': 'Starting the Antigravity CLI sign-in…',
+  'launcher.account.geminiVerifying': 'Code sent — waiting for the CLI to finish signing in…',
+  'launcher.account.geminiDone': 'Gemini is signed in',
+  'launcher.account.signInAgain': 'Sign in again',
   'launcher.account.codexPasteTitle': 'Paste an OpenAI API key',
   'launcher.account.codexPasteBody':
     'An API key from platform.openai.com. It is checked against the API before it is stored, and usage is billed per request to that key — not to a ChatGPT plan.',
@@ -463,7 +473,7 @@ export const strings = {
   'launcher.mcp.checkNow': 'Check now',
   'launcher.mcp.statusHint':
     'The servers this session’s {engine} was started with, each checked where it is really served: by Arigami, by the engine’s own config, or by a live tool call. Reconnect restarts the session’s {engine} process, which also picks up services connected since it started.',
-  'launcher.firstRun.needEngineTitle': 'Connect Claude or Codex first',
-  'launcher.firstRun.needEngineBody': 'Arigami answers through Claude or Codex — connect whichever you have (one is enough). It takes about a minute.',
-  'launcher.firstRun.needEngineBtn': 'Connect Claude or Codex',
+  'launcher.firstRun.needEngineTitle': 'Connect Claude, Codex or Gemini first',
+  'launcher.firstRun.needEngineBody': 'Arigami answers through Claude, Codex or Gemini — connect whichever you have (one is enough). It takes about a minute.',
+  'launcher.firstRun.needEngineBtn': 'Connect an AI engine',
 };

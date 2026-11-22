@@ -6,6 +6,7 @@ import { api } from '../../lib/api.js';
 import { useT } from '../../lib/i18n.js';
 import { confirmDialog } from '../../lib/confirm.js';
 import { toast, toastError } from '../../lib/toast.js';
+import { engineOptions } from '../../lib/engines.js';
 import { Section, Toggle, BTN_SM, BTN_PRIMARY, BTN_DANGER, INPUT, Segmented } from './shared.jsx';
 
 const TEXTAREA = 'thin-scroll w-full min-h-[160px] rounded-md border border-input bg-background p-2 font-mono text-xs leading-relaxed text-foreground outline-none focus:border-ring';
@@ -133,7 +134,7 @@ function Preview() {
     <div className="mt-3 space-y-2">
       <div className="flex flex-wrap items-center gap-2">
         <button type="button" onClick={() => load()} className={BTN_SM}>{t('instructions.preview')}</button>
-        <Segmented value={engine} onChange={(v) => { setEngine(v); if (out) load(v); }} label={t('instructions.engine')} options={[{ value: 'claude', label: 'Claude' }, { value: 'codex', label: 'Codex' }]} />
+        <Segmented value={engine} onChange={(v) => { setEngine(v); if (out) load(v); }} label={t('instructions.engine')} options={engineOptions().map((o) => ({ value: o.value, label: o.label }))} />
       </div>
       {out && (
         <pre dir="ltr" className="thin-scroll max-h-[360px] overflow-auto whitespace-pre-wrap rounded-lg border border-hair bg-bg p-2 font-mono text-[11px] leading-snug text-fg">

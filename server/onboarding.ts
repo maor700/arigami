@@ -14,7 +14,7 @@ import { isWin, which, shellArgs, toPosixPath, HOME, chromeCandidates } from './
 import { supervise } from './lib/children.js';
 import { gitAuthEnv, gitEnvFor } from './lib/git-auth.js';
 import { cfg, setEngineReadiness } from './lib/config.js';
-import { geminiReady } from './lib/gemini-cli.js';
+import { geminiReady, findAgy, agyLoggedIn } from './lib/gemini-cli.js';
 import { syncComposioKey } from './lib/mcp-servers.js';
 import { hasCredentials, hasLocalCodexLogin } from './accounts.js';
 import * as funnel from './funnel.js';
@@ -766,6 +766,12 @@ const codexOnPath = (): boolean => {
   return b && path.isAbsolute(b) ? fs.existsSync(b) : onPath(b || 'codex');
 };
 
+/** The Antigravity CLI (`agy`) is installed: ARIGAMI_AGY_BIN, ~/.local/bin, or PATH. */
+export const geminiCliFound = (): boolean => {
+  const b = findAgy();
+  return !!b && (!path.isAbsolute(b) || fs.existsSync(b));
+};
+
 const gitAuthed = (): boolean =>
   !!process.env.GH_TOKEN ||
   !!process.env.GITHUB_TOKEN ||
@@ -811,9 +817,13 @@ export function status(): { environment: EnvInfo; steps: Step[] } {
   const claudeOk = claudeAuthed();
   const codexCliOk = codexOnPath();
   const codexOk = codexCliOk && codexAuthed();
-  // One connected engine is enough; the other engine's rows turn optional.
-  const claudeReq = !codexOk || (cliOk && claudeOk);
-  const codexReq = !(cliOk && claudeOk);
+  const geminiCliOk = geminiCliFound();
+  const geminiOk = geminiCliOk && agyLoggedIn();
+  // One connected engine is enough: the first connected one stays required, the others' rows turn optional.
+  const claudeFull = cliOk && claudeOk;
+  const claudeReq = claudeFull || !(codexOk || geminiOk);
+  const codexReq = !claudeFull && (codexOk || !geminiOk);
+  const geminiReq = !claudeFull && !codexOk;
   steps.push({
     id: 'claude-cli',
     title: 'Claude Code CLI installed',
@@ -859,6 +869,26 @@ export function status(): { environment: EnvInfo; steps: Step[] } {
     autoFixable: false,
     dependsOn: ['codex-cli'],
     detail: codexOk ? undefined : 'Sign in with ChatGPT or add an OpenAI API key in the Accounts view (or run `codex login`)',
+  });
+  steps.push({
+    id: 'gemini-cli',
+    title: 'Antigravity CLI (agy) installed',
+    scope: 'global',
+    status: geminiCliOk ? 'ok' : 'missing',
+    required: geminiReq,
+    autoFixable: false,
+    dependsOn: [],
+    detail: geminiCliOk ? undefined : 'Install the Antigravity CLI (agy), then Recheck',
+  });
+  steps.push({
+    id: 'gemini-auth',
+    title: 'Gemini authentication',
+    scope: 'global',
+    status: !geminiCliOk ? 'blocked' : geminiOk ? 'ok' : 'missing',
+    required: geminiReq,
+    autoFixable: false,
+    dependsOn: ['gemini-cli'],
+    detail: geminiOk ? undefined : 'Sign in with Google in the Accounts view (or run `agy` once on the host)',
   });
   const gitOk = gitAuthed() || ghCliAuthed() || !!process.env.ARIGAMI_GIT_TOKEN;
   steps.push({
@@ -972,7 +1002,7 @@ export function readyRepos(): string[] {
 // ===========================================================================
 // B3 / K5 — the first-run WIZARD state machine.
 //
-// One linear flow: pair → claude → codex → git → profile → integrations → repo → health.
+// One linear flow: pair → claude → codex → gemini → git → profile → integrations → repo → health.
 // Every step has a live PROBE (filesystem / env / config — never a network
 // call except the explicit health run) and a persisted RECORD in
 // $ARIGAMI_DIR/onboarding.json ({status:'complete'|'skipped', at, by}). The
@@ -987,7 +1017,7 @@ export function readyRepos(): string[] {
 // stored alongside the records so restarts don't re-emit.
 // ===========================================================================
 
-export const WIZARD_STEPS = ['pair', 'claude', 'codex', 'git', 'profile', 'integrations', 'repo', 'telemetry', 'health'] as const;
+export const WIZARD_STEPS = ['pair', 'claude', 'codex', 'gemini', 'git', 'profile', 'integrations', 'repo', 'telemetry', 'health'] as const;
 export type WizardStepId = (typeof WIZARD_STEPS)[number];
 export type WizardStatus = 'ok' | 'todo' | 'skipped' | 'blocked' | 'error' | 'running';
 
@@ -1019,8 +1049,8 @@ export interface WizardView {
 }
 
 export type OnboardingMode = 'minimal' | 'full';
-// claude/codex: whichever is not connected reads 'skipped' once the other is.
-export const MINIMAL_REQUIRED: readonly WizardStepId[] = ['pair', 'claude', 'codex'];
+// claude/codex/gemini: whichever is not connected reads 'skipped' once another is.
+export const MINIMAL_REQUIRED: readonly WizardStepId[] = ['pair', 'claude', 'codex', 'gemini'];
 
 export interface HealthCheck {
   id: 'claude' | 'codex' | 'gemini' | 'desktop' | 'chrome' | 'whatsapp';
@@ -1098,6 +1128,9 @@ export interface WizardProbes {
   claudeAuth: () => boolean;
   codexCli: () => boolean;
   codexAuth: () => boolean;
+  /** optional so probe sets written before the gemini engine keep working (absent = not installed) */
+  geminiCli?: () => boolean;
+  geminiAuth?: () => boolean;
   gitAuth: () => boolean;
   profileApplied: () => string | null; // applied bundle name
   pendingProfile: () => string | null;
@@ -1136,6 +1169,8 @@ export const defaultProbes: WizardProbes = {
   claudeAuth: () => claudeAuthed(),
   codexCli: () => codexOnPath(),
   codexAuth: () => codexAuthed(),
+  geminiCli: () => geminiCliFound(),
+  geminiAuth: () => agyLoggedIn(),
   gitAuth: () => gitAuthed() || ghCliAuthed() || !!process.env.ARIGAMI_GIT_TOKEN,
   profileApplied: () => {
     try {
@@ -1189,6 +1224,7 @@ const TITLES: Record<WizardStepId, string> = {
   pair: 'Pair this device',
   claude: 'Connect Claude',
   codex: 'Connect Codex',
+  gemini: 'Connect Gemini',
   git: 'Git / GitHub access',
   profile: 'Profile bundle',
   integrations: 'Integrations',
@@ -1201,6 +1237,7 @@ const SKIPPABLE: Record<WizardStepId, boolean> = {
   pair: false,
   claude: false,
   codex: false,
+  gemini: false,
   git: true,
   profile: true,
   integrations: true,
@@ -1225,10 +1262,20 @@ function computeSteps(file: OnboardingFile, p: WizardProbes): WizardStep[] {
   const cauth = p.claudeAuth();
   const xcli = p.codexCli();
   const xauth = p.codexAuth();
+  const gcli = p.geminiCli ? p.geminiCli() : false;
+  const gmauth = p.geminiAuth ? p.geminiAuth() : false;
   const claudeOk = cli && cauth;
   const codexOk = xcli && xauth;
-  // An engine step not connected while the other engine is: skipped by the probe.
-  const engine = (id: 'claude' | 'codex', ok: boolean, otherOk: boolean, fallback: WizardStatus) =>
+  const geminiOk = gcli && gmauth;
+  const LABEL = { claude: 'Claude', codex: 'Codex', gemini: 'Gemini' } as const;
+  const okNow = { claude: claudeOk, codex: codexOk, gemini: geminiOk };
+  /** The connected engine other than `id` (the first one), or null. */
+  const other = (id: keyof typeof okNow): string | null => {
+    const hit = (Object.keys(okNow) as Array<keyof typeof okNow>).find((e) => e !== id && okNow[e]);
+    return hit ? LABEL[hit] : null;
+  };
+  // An engine step not connected while another engine is: skipped by the probe.
+  const engine = (id: 'claude' | 'codex' | 'gemini', ok: boolean, otherOk: boolean, fallback: WizardStatus) =>
     !ok && otherOk ? { status: 'skipped' as WizardStatus, by: 'auto' as const } : resolve(id, ok, fallback);
   const gauth = p.gitAuth();
   const applied = p.profileApplied();
@@ -1253,11 +1300,11 @@ function computeSteps(file: OnboardingFile, p: WizardProbes): WizardStep[] {
       title: TITLES.claude,
       fixable: cli,
       skippable: SKIPPABLE.claude,
-      ...engine('claude', claudeOk, codexOk, cli ? 'todo' : 'blocked'),
+      ...engine('claude', claudeOk, !!other('claude'), cli ? 'todo' : 'blocked'),
       detail: claudeOk
         ? 'signed in'
-        : codexOk
-          ? 'optional — Codex is connected'
+        : other('claude')
+          ? `optional — ${other('claude')} is connected`
           : !cli
             ? 'Claude Code CLI not found on PATH — install it first (npm i -g @anthropic-ai/claude-code)'
             : 'sign in with Claude (PKCE) or paste a token',
@@ -1268,15 +1315,30 @@ function computeSteps(file: OnboardingFile, p: WizardProbes): WizardStep[] {
       title: TITLES.codex,
       fixable: xcli,
       skippable: SKIPPABLE.codex,
-      ...engine('codex', codexOk, claudeOk, xcli ? 'todo' : 'blocked'),
+      ...engine('codex', codexOk, !!other('codex'), xcli ? 'todo' : 'blocked'),
       detail: codexOk
         ? 'signed in'
-        : claudeOk
-          ? 'optional — Claude is connected'
+        : other('codex')
+          ? `optional — ${other('codex')} is connected`
           : !xcli
             ? 'Codex CLI not found on PATH — install it first (npm i -g @openai/codex)'
             : 'sign in with ChatGPT or paste an OpenAI API key',
       data: { cli: xcli, authed: xauth },
+    },
+    {
+      id: 'gemini',
+      title: TITLES.gemini,
+      fixable: gcli,
+      skippable: SKIPPABLE.gemini,
+      ...engine('gemini', geminiOk, !!other('gemini'), gcli ? 'todo' : 'blocked'),
+      detail: geminiOk
+        ? 'signed in'
+        : other('gemini')
+          ? `optional — ${other('gemini')} is connected`
+          : !gcli
+            ? 'Antigravity CLI (agy) not found on PATH — install it first'
+            : 'sign in with Google',
+      data: { cli: gcli, authed: gmauth },
     },
     {
       id: 'git',
@@ -1514,6 +1576,7 @@ export function healthEngine(p: Pick<WizardProbes, 'claudeCli' | 'claudeAuth' | 
   const d = (cfg as any).defaultEngine;
   if (d === 'gemini' && gemini()) return 'gemini';
   if ((d === 'claude' || d === 'codex') && ok[d as 'claude' | 'codex']) return d;
+  if (!ok.claude && !ok.codex && gemini()) return 'gemini'; // a gemini-only host
   return ok.claude || !ok.codex ? 'claude' : 'codex';
 }
 

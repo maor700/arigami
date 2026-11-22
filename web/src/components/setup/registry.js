@@ -3,7 +3,7 @@
 // `manual`/`autoCapable`); this table only fills the gaps — old hosts without
 // S1, and the wizard/Setup screens that address capabilities by id.
 //
-// Capability ids: identity · claude · codex · git · repo:<name> · whatsapp ·
+// Capability ids: identity · claude · codex · gemini · git · repo:<name> · whatsapp ·
 // mcp:<service> · composio:<toolkit> · desktop · push · remote · telemetry
 //
 // M1 `provider`: where the connection actually lives — 'native-mcp' (the
@@ -14,6 +14,7 @@ export const FAMILIES = {
   identity: { manual: { kind: 'takeover' }, autoCapable: false, icon: 'user' },
   claude: { manual: { kind: 'oauth', flow: 'pkce', token: true }, autoCapable: true, playbook: 'connect-claude', icon: 'key' },
   codex: { manual: { kind: 'oauth', flow: 'codex', token: true }, autoCapable: true, playbook: 'connect-codex', icon: 'key' },
+  gemini: { manual: { kind: 'oauth', flow: 'gemini', token: false }, autoCapable: true, playbook: 'connect-gemini', icon: 'key' },
   git: { manual: { kind: 'oauth', flow: 'device', token: true }, autoCapable: true, playbook: 'connect-github', icon: 'code' },
   repo: { manual: { kind: 'repo' }, autoCapable: false, icon: 'code' },
   whatsapp: { manual: { kind: 'qr' }, autoCapable: false, icon: 'qr' },
@@ -63,7 +64,7 @@ export function capTitle(t, id) {
 // per playbook so the text can be precise (domains, clicks, what is never typed).
 export function consentKeys(id) {
   const pb = manualFor(id).playbook;
-  const n = { 'connect-composio': 4, 'connect-claude': 4, 'connect-codex': 4, 'connect-github': 4, 'connect-tailscale': 4, 'connect-mcp': 4 }[pb] || 0;
+  const n = { 'connect-composio': 4, 'connect-claude': 4, 'connect-codex': 4, 'connect-gemini': 4, 'connect-github': 4, 'connect-tailscale': 4, 'connect-mcp': 4 }[pb] || 0;
   return Array.from({ length: n }, (_, i) => `setup.consent.${pb}.${i + 1}`);
 }
 

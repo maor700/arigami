@@ -7,6 +7,9 @@
 //            the host machine, paste the callback address back and the host
 //            forwards it to codex's loopback; the poller sees it finish) /
 //            paste an OpenAI API key
+//   Gemini — the Antigravity CLI's own Google sign-in on the host: open the
+//            link, paste the code Google shows; the poller sees agy finish.
+//            The one account is the machine's login, so this is also "sign in again".
 // Backend: server/accounts.js + /__api/accounts (generic routes:
 // /accounts/providers, POST /accounts {provider}, /accounts/login/*). Usage
 // comes from the store's per-account 'account-usage' broadcasts. `initialAdd`
@@ -29,6 +32,16 @@ import { Checkbox } from '../ui/checkbox.jsx';
 import { Tip } from '../ui/tooltip.jsx';
 
 const INPUT = `${FIELD} mt-2 w-full`;
+// Sign-ins a CLI on the host finishes by itself: the cockpit shows the link, takes what the browser gives back, and polls.
+const POLLED_FLOW = {
+  codex: { starting: 'codexStarting', verifying: 'codexVerifying', step1: 'codexStep1', step1b: 'codexStep1b', step2: 'codexStep2', placeholder: 'codexCallbackPlaceholder', hint: 'codexCallbackHint', done: 'codexDone', start: 'codexBrowser', body: 'codexAddBody' },
+  gemini: { starting: 'geminiStarting', verifying: 'geminiVerifying', step1: 'geminiStep1', step1b: 'geminiStep1b', step2: 'geminiStep2', placeholder: 'geminiCodePlaceholder', hint: null, done: 'geminiDone', start: 'geminiBrowser', body: 'geminiAddBody' },
+};
+/** A dead login the human can renew from the card: the provider's browser sign-in IS its local login (gemini). */
+export function canSignInAgain(account, usage, P) {
+  const renews = P?.methods?.some((m) => m.id === 'browser' && m.type === P.localType) && account?.type === P.localType;
+  return !!renews && !!usage && !usage.available && (usage.reason === 'http-401' || usage.reason === 'no-credentials');
+}
 // The filled action button: the one accent (primary) fill of the add flow.
 const PRIMARY = `${BTN_PRIMARY} h-8 px-3 text-sm`;
 const GHOST = BTN_SM;
@@ -64,7 +77,7 @@ function StateBadge({ account, usage }) {
   return <StatusPill status="ok" label={t('launcher.account.available')} />;
 }
 
-function AccountCard({ account, usage, busy, catalog, onSetActive, onSetPool, onRemove }) {
+function AccountCard({ account, usage, busy, catalog, onSetActive, onSetPool, onRemove, onSignIn }) {
   const t = useT();
   const provider = providerOf(account);
   const local = account.type === (catalog[provider] || PROVIDERS[provider])?.localType;
@@ -115,6 +128,9 @@ function AccountCard({ account, usage, busy, catalog, onSetActive, onSetPool, on
           <Checkbox checked={!!account.pool} disabled={busy} onCheckedChange={(v) => onSetPool(account.id, v === true)} />
           {t('launcher.account.inPool')}
         </label>
+        {canSignInAgain(account, usage, catalog[provider] || PROVIDERS[provider]) && (
+          <button type="button" data-sign-in-again disabled={busy} onClick={() => onSignIn(provider)} className={GHOST}>{t('launcher.account.signInAgain')}</button>
+        )}
         {!local && (
           <button type="button" disabled={busy} onClick={() => onRemove(account)} className={`${BTN_DANGER} ms-auto`}>
             {t('launcher.account.remove')}
@@ -216,10 +232,10 @@ export default function Accounts({ initialAdd = false, identity, onConnectAuto, 
   // The browser path. Claude: self-driven PKCE — mint the consent URL, open it,
   // exchange the pasted code. Codex: device-auth — codex prints a URL + a code
   // the human types INTO the browser; we poll until codex reports done.
-  const startAuth = () => run(async () => {
-    const r = await api.post('/accounts/login/start', { provider, label: label.trim() || undefined });
+  const startAuth = (prov = provider) => run(async () => {
+    const r = await api.post('/accounts/login/start', { provider: prov, label: label.trim() || undefined });
     if (r?.state === 'error') throw new Error(r.error || t('launcher.account.startAuthError'));
-    setAuth({ provider, ...r }); setCode(''); setAddMode('auth');
+    setProvider(prov); setAuth({ provider: prov, ...r }); setCode(''); setAddMode('auth');
     if (r?.url) { try { window.open(r.url, '_blank', 'noopener'); } catch { /* user clicks the link */ } }
   });
   const submitCode = () => run(async () => {
@@ -227,7 +243,7 @@ export default function Accounts({ initialAdd = false, identity, onConnectAuto, 
     if (!r?.ok) { setAuth((a) => ({ ...(a || {}), state: 'error', error: r?.error || t('launcher.account.exchangeFailed') })); return; }
     // Codex: the host forwarded the callback; codex now exchanges the code and
     // exits — the poller below sees 'verifying' → 'done'. Claude: done here.
-    if (auth?.provider === 'codex') { setAuth((a) => ({ ...(a || {}), state: 'verifying' })); setCode(''); return; }
+    if (POLLED_FLOW[auth?.provider]) { setAuth((a) => ({ ...(a || {}), state: 'verifying' })); setCode(''); return; }
     resetAdd();
   });
   const cancelAuth = () => {
@@ -236,7 +252,8 @@ export default function Accounts({ initialAdd = false, identity, onConnectAuto, 
   };
   // Codex device flow: the URL/code may arrive a moment after start, and the
   // finish happens in the browser — poll the flow until it is done or failed.
-  const pollable = auth?.provider === 'codex' && ['starting', 'awaiting', 'verifying'].includes(auth?.state);
+  const flowText = POLLED_FLOW[auth?.provider] || null;
+  const pollable = !!flowText && ['starting', 'awaiting', 'verifying'].includes(auth?.state);
   useEffect(() => {
     if (!pollable) { if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; } return undefined; }
     const tick = async () => {
@@ -246,7 +263,7 @@ export default function Accounts({ initialAdd = false, identity, onConnectAuto, 
         // Open the sign-in page once the URL is known (start() may have returned before codex printed it).
         if (r.url && !auth.url) { try { window.open(r.url, '_blank', 'noopener'); } catch { /* link */ } }
         setAuth((a) => ({ ...(a || {}), ...r }));
-        if (r.state === 'done') { toastSuccess(t('launcher.account.codexDone')); resetAdd(); await loadAccounts(); }
+        if (r.state === 'done') { toastSuccess(t(`launcher.account.${flowText.done}`)); resetAdd(); await loadAccounts(); }
       } catch { /* transient — keep polling */ }
     };
     pollRef.current = setInterval(tick, 2000);
@@ -275,7 +292,7 @@ export default function Accounts({ initialAdd = false, identity, onConnectAuto, 
             </div>
           )}
           {g.items.map((a) => (
-            <AccountCard key={a.id} account={a} usage={usageOf(a)} busy={busy} catalog={catalog} onSetActive={setActive} onSetPool={setPool} onRemove={remove} />
+            <AccountCard key={a.id} account={a} usage={usageOf(a)} busy={busy} catalog={catalog} onSetActive={setActive} onSetPool={setPool} onRemove={remove} onSignIn={(prov) => startAuth(prov)} />
           ))}
         </div>
       ))}
@@ -302,13 +319,14 @@ export default function Accounts({ initialAdd = false, identity, onConnectAuto, 
           <div className="text-sm font-medium text-fg">{t('launcher.account.addHeading')}</div>
           <ProviderPicker catalog={catalog} value={provider} onChange={setProvider} />
           <p className="mt-2 text-xs leading-snug text-fgdim" data-add-body={provider}>
-            {!P.methods?.length ? t('launcher.account.localOnlyBody', { provider: P.label }) : provider === 'codex' ? t('launcher.account.codexAddBody') : t('launcher.account.addBody')}
+            {!P.methods?.length ? t('launcher.account.localOnlyBody', { provider: P.label }) : POLLED_FLOW[provider] ? t(`launcher.account.${POLLED_FLOW[provider].body}`) : t('launcher.account.addBody')}
           </p>
-          {!!P.methods?.length && <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder={t('launcher.account.labelPlaceholder')} className={INPUT} />}
+          {/* a label names a NEW account; a provider whose sign-in is the machine's one login has nothing to name */}
+          {!!P.methods?.length && !P.methods.some((m) => m.type === P.localType) && <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder={t('launcher.account.labelPlaceholder')} className={INPUT} />}
           <div className="mt-2.5 flex flex-wrap items-center gap-2">
             {P.methods?.some((m) => m.id === 'browser') && (
-              <button type="button" data-auth-browser disabled={busy} onClick={startAuth} className={PRIMARY}>
-                {provider === 'codex' ? t('launcher.account.codexBrowser') : t('launcher.account.authBrowser')}
+              <button type="button" data-auth-browser disabled={busy} onClick={() => startAuth()} className={PRIMARY}>
+                {POLLED_FLOW[provider] ? t(`launcher.account.${POLLED_FLOW[provider].start}`) : t('launcher.account.authBrowser')}
               </button>
             )}
             {P.methods?.some((m) => m.id === 'paste') && (
@@ -321,48 +339,48 @@ export default function Accounts({ initialAdd = false, identity, onConnectAuto, 
         </div>
       )}
 
-      {addMode === 'auth' && auth?.provider === 'codex' && (
-        <div className="rounded-xl border border-hair bg-panel p-3" data-codex-device-flow data-state={auth.state}>
+      {addMode === 'auth' && flowText && (
+        <div className="rounded-xl border border-hair bg-panel p-3" data-login-flow={auth.provider} {...(auth.provider === 'codex' ? { 'data-codex-device-flow': '' } : {})} data-state={auth.state}>
           <div className="flex flex-wrap items-center gap-2 text-sm font-medium text-fg">
-            <ProviderBadge provider="codex" catalog={catalog} />
+            <ProviderBadge provider={auth.provider} catalog={catalog} />
             {t('launcher.account.addAccountTitle')}{label ? ` · ${label}` : ''}
           </div>
-          {auth.state === 'starting' && <p className="mt-1.5 text-xs text-fgdim">{t('launcher.account.codexStarting')}</p>}
-          {auth.state === 'verifying' && <p className="mt-1.5 text-xs text-fgdim">{t('launcher.account.codexVerifying')}</p>}
+          {auth.state === 'starting' && <p className="mt-1.5 text-xs text-fgdim">{t(`launcher.account.${flowText.starting}`)}</p>}
+          {auth.state === 'verifying' && <p className="mt-1.5 text-xs text-fgdim">{t(`launcher.account.${flowText.verifying}`)}</p>}
           {auth.state === 'awaiting' && (
             <>
               <ol className="mt-1.5 ms-4 list-decimal text-xs leading-relaxed text-fgdim">
                 <li>
-                  {t('launcher.account.codexStep1')}
+                  {t(`launcher.account.${flowText.step1}`)}
                   {auth.url && <> — <a href={auth.url} target="_blank" rel="noreferrer" className="text-info underline">{t('launcher.account.openSignIn')}</a></>}
-                  {t('launcher.account.codexStep1b')}
+                  {t(`launcher.account.${flowText.step1b}`)}
                 </li>
-                <li>{t('launcher.account.codexStep2')}</li>
+                <li>{t(`launcher.account.${flowText.step2}`)}</li>
               </ol>
               <input
                 value={code}
                 onChange={(e) => setCode(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter' && code.trim() && !busy) submitCode(); }}
-                placeholder={t('launcher.account.codexCallbackPlaceholder')}
+                placeholder={t(`launcher.account.${flowText.placeholder}`)}
                 spellCheck={false}
                 autoFocus
                 dir="ltr"
                 data-codex-callback
                 className={`${INPUT} font-mono text-xs`}
               />
-              <p className="mt-1.5 text-xs text-fgdim">{t('launcher.account.codexCallbackHint')}</p>
+              {flowText.hint && <p className="mt-1.5 text-xs text-fgdim">{t(`launcher.account.${flowText.hint}`)}</p>}
             </>
           )}
           {auth.state === 'error' && <p className="mt-1.5 text-xs text-err">{auth.error || t('launcher.account.startAuthError')}</p>}
           <div className="mt-2.5 flex items-center gap-2">
             {auth.state === 'awaiting' && <button type="button" disabled={busy || !code.trim()} onClick={submitCode} className={PRIMARY}>{busy ? t('launcher.account.finishing') : t('launcher.account.finish')}</button>}
-            {auth.state === 'error' && <button type="button" disabled={busy} onClick={startAuth} className={PRIMARY}>{t('launcher.account.codexBrowser')}</button>}
+            {auth.state === 'error' && <button type="button" disabled={busy} onClick={() => startAuth(auth.provider)} className={PRIMARY}>{t(`launcher.account.${flowText.start}`)}</button>}
             <button type="button" onClick={cancelAuth} className="text-xs text-fgdim hover:text-fg coarse:min-h-11">{t('launcher.account.cancel')}</button>
           </div>
         </div>
       )}
 
-      {addMode === 'auth' && auth?.provider !== 'codex' && (
+      {addMode === 'auth' && !flowText && (
         <div className="rounded-xl border border-hair bg-panel p-3">
           <div className="flex flex-wrap items-center gap-2 text-sm font-medium text-fg">
             <ProviderBadge provider="claude" catalog={catalog} />

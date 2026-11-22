@@ -122,18 +122,17 @@ test('"<engine> wants you to look at the screen" names the engine that asked', (
 
 /* ---------- the capabilities panel ---------------------------------------- */
 
-test('the capabilities panel is titled after the engine, and drops the Claude-only usage tab for codex', () => {
+test('the capabilities panel is titled after the engine, and every engine has its own usage tab', () => {
   const panel = (session, initialTab = 'commands') =>
     render(h(SlashCommands.CapabilitiesPanel, { capabilities: {}, session, initialTab, onClose() {} }));
 
   expect(panel(SESSIONS[1])).toContain('Codex capabilities');
   expect(panel(SESSIONS[0])).toContain('Claude Code capabilities');
 
-  // `usage` = Claude subscription meters + which Claude ACCOUNT this session
-  // runs on. A codex session has neither, so the tab is not offered…
+  // `usage` = the account of the session's OWN provider and its meters — offered on every engine,
+  // never reading another engine's quota (the tab lists only that provider's accounts).
   expect(panel(SESSIONS[0])).toContain('Usage');
-  expect(panel(SESSIONS[1])).not.toContain('Usage');
-  // …and `/usage` opening it directly falls back rather than rendering blank.
+  expect(panel(SESSIONS[1])).toContain('Usage');
   expect(panel(SESSIONS[1], 'usage')).toContain('Info');
 });
 

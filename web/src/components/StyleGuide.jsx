@@ -227,7 +227,7 @@ export default function StyleGuide() {
                 <DropdownMenuSeparator />
                 <DropdownMenuCheckboxItem checked={checks.a} onCheckedChange={(v) => setChecks((s) => ({ ...s, a: v }))}>Show archived</DropdownMenuCheckboxItem>
                 <DropdownMenuRadioGroup value={radio} onValueChange={setRadio}>
-                  <DropdownMenuRadioItem value="claude">Claude</DropdownMenuRadioItem><DropdownMenuRadioItem value="codex">Codex</DropdownMenuRadioItem>
+                  <DropdownMenuRadioItem value="claude">Claude</DropdownMenuRadioItem><DropdownMenuRadioItem value="codex">Codex</DropdownMenuRadioItem><DropdownMenuRadioItem value="gemini">Gemini</DropdownMenuRadioItem>
                 </DropdownMenuRadioGroup>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem variant="destructive"><TrashIcon />Delete<DropdownMenuShortcut>⌘⌫</DropdownMenuShortcut></DropdownMenuItem>

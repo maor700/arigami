@@ -1,7 +1,7 @@
 // B3 — אשף הרצה ראשונה (web/src/components/Wizard.jsx).
 export const strings = {
   'wizard.title': 'הגדרת Arigami',
-  'wizard.subtitle': '{n} צעדים קצרים. חיבור Claude או Codex הוא הצעד היחיד שחובה — על השאר אפשר לדלג ולחזור אליהם מ״התקנה״ בהמשך.',
+  'wizard.subtitle': '{n} צעדים קצרים. חיבור Claude, Codex או Gemini הוא הצעד היחיד שחובה — על השאר אפשר לדלג ולחזור אליהם מ״התקנה״ בהמשך.',
   'wizard.reviewSteps': 'עיון בשלבים',
   'wizard.stepOf': 'שלב {n} מתוך {total}',
   'wizard.back': 'חזרה',
@@ -50,6 +50,8 @@ export const strings = {
   'wizard.codex.connected': 'Codex מחובר.',
   'wizard.codex.optional': 'אופציונלי — Claude מחובר, כך ש-Arigami כבר יכול לרוץ. אפשר להוסיף את Codex אחר כך מההגדרות.',
   'wizard.codex.instead': 'השתמש ב-Codex במקום',
+  'wizard.gemini.title': 'חיבור Gemini',
+  'wizard.gemini.noCli': 'ה-Antigravity CLI ‏(agy) לא מותקן על המכונה הזו. התקן אותו ואז בדוק שוב:',
 
   'wizard.git.title': 'גישה ל-Git / GitHub',
   'wizard.git.body': 'נדרש רק לשכפול ריפוזיטורים פרטיים ופתיחת PR. ריפו ציבורי עובד בלי זה.',
@@ -125,7 +127,7 @@ export const strings = {
 
   'launcher.setup.runWizard': 'הרץ אשף הגדרה',
   'launcher.setup.runWizardHint': 'זרימת הרצה-ראשונה צעד-צעד: Claude, Git, פרופיל, אינטגרציות, ריפו, תקינות.',
-  'wizard.gate.engine': 'כדי להמשיך מחברים את Claude או את Codex — מספיק אחד מהם.',
+  'wizard.gate.engine': 'כדי להמשיך מחברים את Claude, את Codex או את Gemini — מספיק אחד מהם.',
   'wizard.gate.skip': 'משלימים את הצעד הזה, או לוחצים ״דלג בינתיים״, כדי להמשיך.',
   'wizard.gate.required': 'משלימים את הצעד הזה כדי להמשיך.',
   'wizard.health.fix': 'לתקן את החיבור',

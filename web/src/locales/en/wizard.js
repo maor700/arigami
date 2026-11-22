@@ -1,7 +1,7 @@
 // B3 — first-run wizard (web/src/components/Wizard.jsx).
 export const strings = {
   'wizard.title': 'Set up Arigami',
-  'wizard.subtitle': '{n} short steps. Connecting Claude or Codex is the one required step — you can skip the rest and come back from Setup later.',
+  'wizard.subtitle': '{n} short steps. Connecting Claude, Codex or Gemini is the one required step — you can skip the rest and come back from Setup later.',
   'wizard.reviewSteps': 'Review the steps',
   'wizard.stepOf': 'Step {n} of {total}',
   'wizard.back': 'Back',
@@ -50,6 +50,8 @@ export const strings = {
   'wizard.codex.connected': 'Codex is connected.',
   'wizard.codex.optional': 'Optional — Claude is connected, so Arigami can already run. You can add Codex later from Settings.',
   'wizard.codex.instead': 'Use Codex instead',
+  'wizard.gemini.title': 'Connect Gemini',
+  'wizard.gemini.noCli': 'The Antigravity CLI (agy) is not installed on this host. Install it, then Recheck:',
 
   'wizard.git.title': 'Git / GitHub access',
   'wizard.git.body': 'Needed only to clone private repositories and open pull requests. Public repos work without it.',
@@ -125,7 +127,7 @@ export const strings = {
 
   'launcher.setup.runWizard': 'Run setup wizard',
   'launcher.setup.runWizardHint': 'Step-by-step first-run flow: Claude, Git, profile, integrations, repo, telemetry, health.',
-  'wizard.gate.engine': 'Connect Claude or Codex to continue — either one is enough.',
+  'wizard.gate.engine': 'Connect Claude, Codex or Gemini to continue — any one is enough.',
   'wizard.gate.skip': 'Finish this step, or press “Skip for now”, to continue.',
   'wizard.gate.required': 'Finish this step to continue.',
   'wizard.health.fix': 'Fix the connection',

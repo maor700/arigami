@@ -21,6 +21,7 @@ const LIB = path.join(SKILLS, '_lib');
 // domains for non-Google Composio toolkits). Extend deliberately, never ad hoc.
 const APPROVED_DOMAINS = new Set([
   'accounts.google.com', 'myaccount.google.com', 'google.com',
+  'antigravity.google', // connect-gemini: the Google-hosted page agy's sign-in redirects to (it shows the authorization code)
   // the other identity providers connect-identity signs in (Microsoft work + personal accounts, Apple Account)
   'login.microsoftonline.com', 'login.live.com', 'account.microsoft.com', 'myaccount.microsoft.com', 'appleid.apple.com', 'account.apple.com',
   'claude.ai', 'claude.com', 'platform.claude.com', 'console.anthropic.com',
@@ -36,7 +37,7 @@ const APPROVED_DOMAINS = new Set([
   'localhost',
   ...MCP_CATALOG.flatMap((s) => s.domains),
 ]);
-const CAPABILITY_RE = /^(identity|claude|codex|git|remote|whatsapp|desktop|push|telemetry|repo:<name>|composio:<toolkit>|mcp:<service>)$/;
+const CAPABILITY_RE = /^(identity|claude|codex|gemini|git|remote|whatsapp|desktop|push|telemetry|repo:<name>|composio:<toolkit>|mcp:<service>)$/;
 
 function frontmatter(content) {
   const m = content.match(/^---\n([\s\S]*?)\n---/);
@@ -51,8 +52,8 @@ function frontmatter(content) {
 
 const playbooks = fs.readdirSync(SKILLS).filter((d) => d.startsWith('connect-')).sort();
 
-test('the seven JIT-setup playbooks ship', () => {
-  expect(playbooks).toEqual(['connect-claude', 'connect-codex', 'connect-composio', 'connect-github', 'connect-identity', 'connect-mcp', 'connect-tailscale']);
+test('the eight JIT-setup playbooks ship', () => {
+  expect(playbooks).toEqual(['connect-claude', 'connect-codex', 'connect-composio', 'connect-gemini', 'connect-github', 'connect-identity', 'connect-mcp', 'connect-tailscale']);
 });
 
 // M1: connect-mcp is the ONE playbook for every native remote-MCP vendor — its

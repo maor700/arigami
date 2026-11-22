@@ -34,11 +34,11 @@ function fakeFetch(over: Record<string, { status?: number; json?: unknown }> = {
 
 beforeEach(() => gm.resetGeminiCaches());
 
-test('the provider registry knows gemini: its own engine, one local account type, nothing to add from the cockpit', () => {
+test('the provider registry knows gemini: its own engine, one local account type, signed in through the browser', () => {
   expect(PROVIDERS.gemini.engine).toBe('gemini');
   expect(PROVIDERS.gemini.localType).toBe('gemini-home');
   expect(PROVIDERS.gemini.types).toEqual(['gemini-home']);
-  expect(PROVIDERS.gemini.methods).toEqual([]);
+  expect(PROVIDERS.gemini.methods).toEqual([{ id: 'browser', type: 'gemini-home' }]); // no pasted secret
   expect(providerForEngine('gemini')).toBe('gemini');
   expect(providerForEngine('codex')).toBe('codex');
   expect(providerCatalog().map((p) => p.id)).toEqual(['claude', 'codex', 'gemini']);

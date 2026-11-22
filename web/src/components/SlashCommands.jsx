@@ -226,10 +226,7 @@ const MCP_STATUS = {
 };
 
 const TABS = [
-  // 'usage' = Claude subscription meters + which Claude ACCOUNT this session
-  // runs on. Both are properties of the claude CLI's auth, not of a session in
-  // general — a Codex session has neither, so the tab is dropped for it rather
-  // than shown reading someone else's quota. tabsFor() below.
+  // 'usage' = which account of the session's own provider it runs on, and that provider's meters (never another engine's quota).
   ['usage', 'dialogs.tabUsage'],
   ['mcp', null], // MCP — product noun, not translated
   ['skills', 'dialogs.tabSkills'],
@@ -239,9 +236,9 @@ const TABS = [
   ['info', 'dialogs.tabInfo'],
 ];
 
-/** TABS minus the ones that only make sense for the claude engine. */
-function tabsFor(engine) {
-  return normalizeEngine(engine) === 'claude' ? TABS : TABS.filter(([id]) => id !== 'usage');
+/** The tabs of a session's panel — the same for every engine. */
+function tabsFor() {
+  return TABS;
 }
 
 // The full usage object for an account: live per-account broadcast, else the
@@ -259,7 +256,7 @@ function sessionAccounts(session, accounts) {
   const list = (accounts?.accounts || []).filter((a) => providerOf(a) === provider);
   const activeId = accounts?.activeIds?.[provider] ?? (provider === 'claude' ? accounts?.activeId : null);
   const sessAccId = session?.claude?.accountId || activeId;
-  return { list, sessAccId, account: list.find((a) => a.id === sessAccId) || null };
+  return { provider, activeId, list, sessAccId, account: list.find((a) => a.id === sessAccId) || null };
 }
 
 // `/usage` + `/status` tab: which account this session runs on, plus every
@@ -268,7 +265,7 @@ function AccountsUsageTab({ session, accounts, accountUsage }) {
   const t = useT();
   // Only the accounts of the provider this session's engine consumes — a
   // codex session's /status must not list Claude logins as candidates.
-  const { list, sessAccId } = sessionAccounts(session, accounts);
+  const { provider, activeId, list, sessAccId } = sessionAccounts(session, accounts);
   const labelOf = (id) => list.find((a) => a.id === id)?.label || t('dialogs.activeAccount');
   if (!list.length) return <Pending engine={engineLabel(session?.engine)} />;
   return (

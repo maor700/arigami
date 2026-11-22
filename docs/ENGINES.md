@@ -269,7 +269,18 @@ Provider `gemini` feeds the `gemini` engine (Google's Antigravity CLI, `agy`). O
 
 - **`gemini-home`** — the machine's own `agy` Google login in `~/.gemini` (`ARIGAMI_GEMINI_HOME` overrides; `ARIGAMI_GEMINI_DIR` is an alias), seeded like
   `codex-home`: a live pointer, not removable from the cockpit, `gemini-home-stale` in a backup. A login made after boot is
-  adopted on the next `GET /__api/accounts`. There is no add flow: sign in with `agy` on the host.
+  adopted on the next `GET /__api/accounts`.
+
+Signing in from the cockpit (`server/gemini-login.ts`, flow ids `agy_…` on the generic `/__api/accounts/login/*` routes): the
+host runs `agy` under the pty bridge, presses Enter on its "Google OAuth" menu row, and hands out the authorize link agy
+prints (Google redirects to `antigravity.google/oauth-callback`, which shows a code). The pasted code — or the callback
+address, the host takes `code=` out of it — is typed into agy, and the flow is done when agy has written its token file;
+agy is stopped before its chat opens. Only code characters are ever typed. An agy that is already signed in shows no menu
+and the flow ends `done`. The same flow is the `gemini` setup capability (`POST /__api/setup/gemini`, playbook
+`connect-gemini`), the third card of the engine step in the wizard / Setup / the chat's setup card, Add account › Gemini,
+and "Sign in again" on a card whose login is dead (401 or signed out). Measured up to the link against the real agy in a
+scratch home; the code exchange itself only against a scripted stand-in. With `ARIGAMI_GEMINI_HOME` set the sign-in still
+writes to agy's default home (only `agy acp` takes `--gemini-dir`).
 
 The token file (`antigravity-cli/antigravity-oauth-token`) is agy's. The host reads the access token from it for the calls
 below and nothing else: it is never written, copied into `accounts.json`, logged, or passed to a session.
