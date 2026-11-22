@@ -1,5 +1,5 @@
 // Gemini as a peer of claude and codex: the pre-tool hook, native skills, the model ladder, the 3-minute tool wait,
-// the question card, sign-in and cleanup. Facts marked "measured" were probed against agy 1.5.14 (docs/ENGINES.md).
+// the question card and cleanup. Facts marked "measured" were probed against agy 1.5.14 (docs/ENGINES.md).
 import { test, expect, beforeAll, afterAll } from 'bun:test';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -19,13 +19,8 @@ let gemHome: string;
 beforeAll(() => {
   dir = tmpDir('gem-parity-');
   gemHome = path.join(dir, 'gemini');
-  // a fake agy: `acp --login` prints a Google link, reads the code, and "signs in" by writing the token file
   fakeAgy = path.join(dir, 'agy');
-  fs.writeFileSync(
-    fakeAgy,
-    `#!/bin/sh\ncase "$*" in *--login*)\n  echo "Open this link in a browser to log in with Google:"; echo "  https://accounts.google.com/o/oauth2/auth?client_id=x&state=y"\n  read code\n  if [ "$code" = "good-code" ]; then mkdir -p "$ARIGAMI_GEMINI_HOME/antigravity-cli"; echo tok > "$ARIGAMI_GEMINI_HOME/antigravity-cli/antigravity-oauth-token"; echo "Logged in."; else echo "login failed: invalid authorization code"; exit 1; fi;;\nesac\nexit 0\n`,
-    { mode: 0o755 }
-  );
+  fs.writeFileSync(fakeAgy, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
 });
 afterAll(() => {
   fs.rmSync(dir, { recursive: true, force: true });
@@ -325,30 +320,7 @@ test('a failed turn that looks like a limit: confirmed quota waits and says when
   expect(out.c2).toMatchObject({ modelChoice: 'gemini-4-neon', modelRung: 0, effort: 'xhigh', modelRestoreAt: null });
 });
 
-// ---- sign-in, cleanup, and the rest of the host ---------------------------------------------------
-
-test('sign-in: agy prints the Google link, the code goes back on stdin, and the token file is the proof', () => {
-  fs.rmSync(gemHome, { recursive: true, force: true });
-  const r = runInChild(
-    "const gl=await import('./server/gemini-login.ts');" +
-      'const wait=async(id,s)=>{for(let i=0;i<100&&gl.loginStatus(id).state!==s;i++)await new Promise((r)=>setTimeout(r,30));return gl.loginStatus(id);};' +
-      "const a=gl.startLogin();const ready=await wait(a.id,'awaiting-code');const same=gl.startLogin().id===a.id;" +
-      "const bad=await gl.submitCode(a.id,'wrong');" +
-      "const b=gl.startLogin();await wait(b.id,'awaiting-code');const ok=await gl.submitCode(b.id,'good-code');" +
-      "const c=gl.startLogin();await wait(c.id,'awaiting-code');const cancelled=gl.cancelLogin(c.id);" +
-      "emit({ready,same,bad,ok,cancelled:cancelled.state,unknown:gl.loginStatus('gem_nope').state});",
-    env()
-  );
-  if (!r.ok) throw new Error(r.error);
-  const o = r.out[0];
-  expect(o.ready).toMatchObject({ state: 'awaiting-code', url: 'https://accounts.google.com/o/oauth2/auth?client_id=x&state=y' });
-  expect(o.same).toBe(true); // one login at a time
-  expect(o.bad).toMatchObject({ ok: false, state: 'error', error: 'login failed: invalid authorization code' });
-  expect(o.ok).toMatchObject({ ok: true, state: 'done' });
-  expect(o.cancelled).toBe('cancelled');
-  expect(o.unknown).toBe('error');
-  expect(fs.existsSync(path.join(gemHome, 'antigravity-cli', 'antigravity-oauth-token'))).toBe(true);
-});
+// ---- cleanup, and the rest of the host ---------------------------------------------------------------
 
 test('deleting a session removes its customization dir and the conversations agy kept for it', () => {
   signIn();
@@ -372,17 +344,14 @@ test('deleting a session removes its customization dir and the conversations agy
   expect(fs.existsSync(path.join(app, 'antigravity-oauth-token'))).toBe(true);
 });
 
-test('the host around the engine: capability, MCP grant truth, telemetry, the default model chain', () => {
+test('the host around the engine: MCP grant truth, telemetry, the default model chain', () => {
   signIn();
   const out = run(
-    "const caps=await import('./server/capabilities.ts');const mc=await import('./server/mcp-connections.ts');const tm=await import('./server/telemetry.ts');const cf=await import('./server/lib/config.ts');" +
-      "const cap=caps.getCapability('gemini');const status=await caps.statusOf(cap);" +
+    "const tm=await import('./server/telemetry.ts');const cf=await import('./server/lib/config.ts');const caps=await import('./server/capabilities.ts');" +
       "const facts=await tm.collectFacts?.();" +
-      "emit({isId:caps.isCapabilityId('gemini'),title:cap.title,playbook:cap.playbook,kind:cap.manual.kind,status,engines:tm.ENGINES,counted:facts?.engines,chain:cf.cfg.geminiModelChain});"
+      "emit({isId:caps.isCapabilityId('gemini'),engines:tm.ENGINES,counted:facts?.engines,chain:cf.cfg.geminiModelChain});"
   );
   expect(out.isId).toBe(true);
-  expect(out).toMatchObject({ title: 'Gemini', playbook: 'connect-gemini', kind: 'oauth' });
-  expect(out.status).toMatchObject({ ok: true, detail: 'signed in' });
   expect(out.engines).toEqual(['claude', 'codex', 'gemini']);
   expect(out.chain).toEqual(['gemini-4-neon', 'gemini-4-argon', 'gemini-3.8-flash']);
   if (out.counted) expect(out.counted.gemini).toBe(1); // this very session

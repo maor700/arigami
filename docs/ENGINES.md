@@ -69,7 +69,7 @@ Verified live 2026-11-22 (agy 1.5.14, gemini-3.8-flash), through the real driver
 - **`/compact`** is agy's own command, sent as a prompt; the chat shows "compacting" / "compacted". **Auto-compact** (`POST /autocompact`, no respawn): when `usage_update` passes the chosen % of the window agy reports, the same `/compact` runs once the turn ends — once per crossing, so a compaction that does not bring the context back under the line is not repeated. The threshold logic is unit-tested; a real crossing (≥ 50% of 1M tokens) was not reproduced.
 - **Tools that wait for a human.** agy abandons an MCP tool call after exactly 3 minutes (measured: "timed out after 3m0s"). `request_screen`, `request_setup`, `sign_in`, `vault_collect` and `vault_fill` therefore answer a gemini session `{still_waiting, wait_key}` after 150 seconds, and the agent calls the tool again with the key — the same card, the same request; the host keeps a landed answer for 5 minutes.
 - **Images** go as ACP image blocks; other attachments are listed by path.
-- **Sign-in from the cockpit.** Capability `gemini` (Settings › Connections, `request_setup`, playbook `connect-gemini`): `agy acp --login` prints a Google link and reads the code — or the address of the page Google lands on — from stdin (measured); `server/gemini-login.ts` runs it and `POST /__api/setup/gemini {action: start|code|poll|cancel}` drives it. agy writes its own token; the host never sees it. The flow is unit-tested against a stand-in CLI; a real Google sign-in through it was not run.
+- **Sign-in from the cockpit.** Capability `gemini`, its setup card, the wizard step and playbook `connect-gemini` — see "Gemini accounts and quota" below. Measured and not used by that flow yet: `agy acp --login` needs no terminal (it prints the Google link and reads the code, or the landing address, from stdin) and takes `--gemini-dir`, so it could also sign in an overridden gemini home.
 - **Deleting a session** removes its dir and the conversations agy kept for it (`conversations/<id>.db`, `brain/<id>/`, `annotations/<id>.pbtxt`, `presence/<id>.lock` — measured: nothing of them remains in `session/list`).
 - **One-shots.** `agy -p --output-format json` (`runOneShot`, engine `gemini`); a run that needs MCP servers (explain / review / summary), or any run under an overridden gemini home, goes over ACP like a session. Both verified live. With no gemini model named they run on the flash family at its lowest effort (from the cached list), else agy's default.
 
@@ -89,7 +89,7 @@ Verified live 2026-11-22 (agy 1.5.14, gemini-3.8-flash), through the real driver
 12. **A command agy moves to the background is lost to the transcript.** Its card closes at the end of the turn with no output, and it is not in the session's background-shell list.
 13. **Sub-agent sessions are ignored.** Updates for another ACP session id are dropped, so `/swarm`, `/teamwork` and the like show nothing of their workers.
 14. **Cost is `null`**, tokens only.
-15. **Not in the Docker image**, no auto-install, no CLI updater; the setup wizard has no Gemini step (the capability and its card exist).
+15. **Not in the Docker image**, no auto-install, no CLI updater.
 16. **The hook costs one short process per tool call** (bun start + a loopback request), on every gemini session.
 
 ## Limitations — what doesn't work on Codex, explicitly
