@@ -27,25 +27,47 @@ beforeAll(async () => {
 });
 const h = (C, props) => React.createElement(C, props);
 
-test('Claude and Codex render as two equal cards with the same structure (en + he)', () => {
+test('Claude, Codex and Gemini render as three equal cards with the same structure (en + he)', () => {
+  const ENGINES = ['claude', 'codex', 'gemini'];
+  const idle = { ok: false, data: { cli: true } };
+  // each card's own markup: from its data-engine marker to the end of its <section>
+  const cards = (html) => {
+    const at = ENGINES.map((e) => html.indexOf(`data-engine="${e}"`));
+    expect(at.every((i) => i >= 0)).toBe(true);
+    expect([...at].sort((a, b) => a - b)).toEqual(at); // rendered in this order
+    return at.map((i) => html.slice(i, html.indexOf('</section>', i)));
+  };
+  const shape = (card) => card.replace(/>[^<]*</g, '><').replace(/data-engine="[a-z]+"/, ''); // tags + classes, no copy
   for (const lang of ['en', 'he']) {
     prefs.setPrefs({ language: lang });
-    const html = render(h(EngineConnect, { engines: { claude: { ok: false, data: { cli: true } }, codex: { ok: false, data: { cli: true } } } }));
-    const claude = html.slice(html.indexOf('data-engine="claude"'), html.indexOf('data-engine="codex"'));
-    const codex = html.slice(html.indexOf('data-engine="codex"'));
-    for (const card of [claude, codex]) {
+    const html = render(h(EngineConnect, { engines: { claude: idle, codex: idle, gemini: idle } }));
+    expect((html.match(/data-engine="/g) || []).length).toBe(3);
+    const [claude, codex, gemini] = cards(html);
+    for (const card of [claude, codex, gemini]) {
       expect((card.match(/<li/g) || []).length).toBe(3); // three numbered steps each
+      expect((card.match(/<h3/g) || []).length).toBe(1); // one title
       expect(card).toContain('<button'); // one primary action
     }
     expect(html).not.toMatch(/setup\.engine\.[a-z.0-9]+/); // no raw i18n keys
-    // equal visual weight: both primary buttons use the same classes
+    // equal visual weight: the three primary buttons use the same classes
     const btn = (s) => /<button[^>]*class="([^"]*)"/.exec(s)[1];
-    expect(btn(claude)).toBe(btn(codex));
+    expect(btn(codex)).toBe(btn(claude));
+    expect(btn(gemini)).toBe(btn(claude));
+    // same structure down to the element: only the words differ — except that Claude and Codex also take a
+    // pasted token (one more secondary button); Gemini signs in with Google only
+    const secondary = (s) => (s.match(/<button/g) || []).length;
+    expect(shape(codex)).toBe(shape(claude));
+    expect(secondary(claude)).toBe(2);
+    expect(secondary(codex)).toBe(2);
+    expect(secondary(gemini)).toBe(1);
+    const sansToken = (s) => { const i = s.indexOf('<button', s.indexOf('<button') + 1); return i < 0 ? s : s.slice(0, i) + s.slice(s.indexOf('</button>', i) + 9); };
+    expect(shape(gemini)).toBe(shape(sansToken(claude)));
   }
   prefs.setPrefs({ language: 'en' });
   const en = render(h(EngineConnect, { engines: {} }));
   expect(en).toContain('Connect Claude');
   expect(en).toContain('Connect Codex');
+  expect(en).toContain('Connect Gemini');
 });
 
 test('a connected engine turns its card green and does not hide the other one', () => {
@@ -55,6 +77,13 @@ test('a connected engine turns its card green and does not hide the other one', 
   expect(html).toContain('data-engine="claude" data-connected="false"');
   expect(html).toContain('Codex is connected');
   expect(html).toContain('Connect Claude'); // still offered — and not an inert "optional" label
+  // the same holds for the third engine, in both directions
+  const g = render(h(EngineConnect, { engines: { claude: { ok: false, data: { cli: true } }, codex: { ok: false, data: { cli: true } }, gemini: { ok: true, data: { cli: true } } } }));
+  expect(g).toContain('data-engine="gemini" data-connected="true"');
+  expect(g).toContain('Gemini is connected');
+  expect(g).toContain('Connect Claude');
+  expect(g).toContain('Connect Codex');
+  expect(html).toContain('Connect Gemini');
 });
 
 test('a missing CLI shows the install line for that engine only', () => {
@@ -68,6 +97,8 @@ test('either engine alone satisfies the first-run gate', () => {
   expect(anyEngineConnected({ claude: { ok: false }, codex: { ok: true } })).toBe(true);
   expect(anyEngineConnected({ claude: { ok: true }, codex: null })).toBe(true);
   expect(anyEngineConnected({ claude: { ok: false }, codex: { ok: false } })).toBe(false);
+  expect(anyEngineConnected({ claude: { ok: false }, codex: { ok: false }, gemini: { ok: true } })).toBe(true);
+  expect(anyEngineConnected({ claude: { ok: false }, codex: { ok: false }, gemini: { ok: false } })).toBe(false);
   expect(anyEngineConnected(null)).toBe(false);
 });
 
@@ -127,7 +158,7 @@ test('host-written strings a first-run person meets are shown in the UI language
   expect(serverText('state mismatch — the pasted code is from a different login attempt; start over')).toContain('נסה שוב');
   expect(serverText('something unknown')).toBe('something unknown');
   prefs.setPrefs({ language: 'en' });
-  expect(serverText('Not logged in · Please run /login')).toBe('Not signed in yet — connect Claude or Codex first.');
+  expect(serverText('Not logged in · Please run /login')).toBe('Not signed in yet — connect Claude, Codex or Gemini first.');
 });
 
 test('the first-run chat card for Claude offers Codex as an equal card (one component for chat, Setup and wizard)', () => {
