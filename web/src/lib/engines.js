@@ -311,6 +311,27 @@ export function effortOptionsFor(engine, model) {
   ];
 }
 
+/** A model id as a name for a sentence: the catalog label, with the rung for an id that carries one (gemini-4-neon-low → "Gemini 4 Neon (Low)"); null when no catalog knows it. */
+export function modelDisplayName(model) {
+  const id = String(model || '');
+  const hit = catalogModel(id);
+  if (!hit) return null;
+  if (hit.value === id) return hit.label;
+  const rung = id.slice(hit.value.length + 1);
+  return `${hit.label} (${EFFORT_KEY[rung] ? t(EFFORT_KEY[rung]) : rung})`;
+}
+
+/** The supervisor's model chains by engine, from GET /supervisor: `modelChain` is claude's, `<engine>ModelChain` any other's. */
+export function engineChains(snap) {
+  const out = [];
+  if (snap?.modelChain?.length) out.push({ engine: 'claude', label: null, chain: snap.modelChain });
+  for (const id of ENGINE_IDS) {
+    const chain = id === 'claude' ? null : snap?.[`${id}ModelChain`];
+    if (Array.isArray(chain) && chain.length) out.push({ engine: id, label: ENGINE_NAMES[id].short, chain });
+  }
+  return out;
+}
+
 /** Human label for a stored effort value under this engine/model. */
 export function effortLabelFor(engine, model, value) {
   const v = value || 'default';

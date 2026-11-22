@@ -8,7 +8,7 @@
 // the climb back. Quiet by design: no toast, no pulse; the chat gets one system
 // line at the switch and one at the climb back.
 import { useT } from '../lib/i18n.js';
-import { catalogModel } from '../lib/engines.js';
+import { modelDisplayName } from '../lib/engines.js';
 import { Icon } from '../lib/icons.js';
 import { faStairs } from '@fortawesome/free-solid-svg-icons';
 
@@ -25,8 +25,8 @@ export function modelFamily(v) {
  * family falls back to its capitalized id. The configured model stays English.
  */
 export function runningName(v, t) {
-  const cx = catalogModel(String(v || ''));
-  if (cx) return cx.label;
+  const cx = modelDisplayName(v); // codex and gemini models are product names (gemini keeps its rung: a ladder step can be the same family at a lower effort)
+  if (cx) return cx;
   const f = modelFamily(v);
   const key = `rail.model.${f}`;
   const s = typeof t === 'function' ? t(key) : key;
@@ -34,8 +34,8 @@ export function runningName(v, t) {
   return f.charAt(0).toUpperCase() + f.slice(1);
 }
 export function configuredName(v) {
-  const cx = catalogModel(String(v || ''));
-  if (cx) return cx.label;
+  const cx = modelDisplayName(v);
+  if (cx) return cx;
   const f = modelFamily(v);
   return f.charAt(0).toUpperCase() + f.slice(1);
 }
