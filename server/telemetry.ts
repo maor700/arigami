@@ -78,7 +78,7 @@ export interface Payload {
   events: WireEvent[];
 }
 
-export const ENGINES = ['claude', 'codex'] as const;
+export const ENGINES = ['claude', 'codex', 'gemini'] as const;
 
 interface TelemetryState {
   cursor: number; // number of funnel.jsonl lines already considered
@@ -236,7 +236,7 @@ let factsProvider: () => Promise<Facts> = async () => {
   let version = '0.0.0';
   let commit: string | null = null;
   let sessions = 0;
-  const engines = { claude: 0, codex: 0 };
+  const engines = { claude: 0, codex: 0, gemini: 0 };
   try {
     const v = await import('./version.js');
     const info = await v.getVersion();
@@ -249,8 +249,7 @@ let factsProvider: () => Promise<Facts> = async () => {
     const st = await import('./state.js');
     const all = st.listSessions({ archived: true });
     sessions = all.length;
-    // gemini sessions count in `sessions` only: the wire format's engines are claude + codex.
-    for (const s of all) if (s.engine !== 'gemini') engines[s.engine === 'codex' ? 'codex' : 'claude']++;
+    for (const s of all) engines[s.engine === 'codex' || s.engine === 'gemini' ? s.engine : 'claude']++;
   } catch {
     /* CLI / tests without state */
   }
@@ -327,7 +326,7 @@ export async function buildPayload(opts: { fromCursor?: number; now?: Date } = {
     arch: process.arch,
     docker: inDocker(),
     sessions: bucketSessions(f.sessions),
-    engines: { claude: bucketSessions(f.engines?.claude ?? 0), codex: bucketSessions(f.engines?.codex ?? 0) },
+    engines: { claude: bucketSessions(f.engines?.claude ?? 0), codex: bucketSessions(f.engines?.codex ?? 0), gemini: bucketSessions(f.engines?.gemini ?? 0) },
     events: fresh,
   };
   assertClean(payload);

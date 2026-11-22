@@ -175,7 +175,7 @@ export function injectedServersFor(owner: string, state: McpState = readMcpState
 // P2-4 — Codex's own grants: `codex mcp login` under one host-wide CODEX_HOME, `.credentials.json` keyed like Claude's
 // ---------------------------------------------------------------------------
 
-export type McpEngine = 'claude' | 'codex';
+export type McpEngine = 'claude' | 'codex' | 'gemini';
 
 /** The CODEX_HOME every `codex mcp login` runs under; each codex session links its `.credentials.json` here. */
 export const codexMcpHome = (): string => path.join(ARIGAMI_DIR, 'codex-mcp');
@@ -195,7 +195,7 @@ export function readCodexMcpGrants(dir: string = codexMcpHome()): Map<string, bo
 /** Which engines hold a usable grant for this name. Bearer servers are claude-only (codex bearer is not wired). */
 export function grantEngines(name: string, auth: McpAuth, state: McpState = readMcpState(), codex: Map<string, boolean> = readCodexMcpGrants()): McpEngine[] {
   const out: McpEngine[] = [];
-  if (hostGrants.isHostHeld(name)) return hostGrants.isLive(name) ? ['claude', 'codex'] : []; // one grant, every engine
+  if (hostGrants.isHostHeld(name)) return hostGrants.isLive(name) ? ['claude', 'codex', 'gemini'] : []; // one grant, every engine (gemini has no grants of its own)
   if (grantLive(name, auth, state)) out.push('claude');
   if (auth !== 'bearer' && codex.get(name) === true) out.push('codex');
   return out;

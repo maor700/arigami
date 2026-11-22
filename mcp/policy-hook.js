@@ -21,8 +21,9 @@ let raw = '';
 for await (const chunk of process.stdin) raw += chunk;
 let ev = {};
 try { ev = JSON.parse(raw || '{}'); } catch {}
+const AGY = process.argv.includes('--agy');
 const toolName = String(ev.tool_name || '');
-if (!SID || !toolName) process.exit(0); // nothing to judge
+if (!AGY && (!SID || !toolName)) process.exit(0); // nothing to judge
 const post = (route, body) =>
   fetch(`${HOST}/__api/sessions/${SID}/${route}`, {
     method: 'POST',
@@ -34,6 +35,27 @@ const post = (route, body) =>
     if (!res.ok) throw new Error(v?.error || `HTTP ${res.status}`);
     return v;
   });
+
+// GEMINI (`--agy`): Antigravity's hooks.json speaks another dialect — {hookEventName, toolCall:{id,name,args}} in, one JSON
+// {decision: allow|deny|ask|force_ask, reason} out (no decision = deny, measured). The host decides: the agent's allowlist,
+// the mods' tool.call up to next(), then what the session's permission mode wants agy to do. PostToolUse carries no output
+// on agy, so it only closes the mods chain. `--restricted` = fail closed when the host cannot be reached.
+if (AGY) {
+  const say = (o) => { process.stdout.write(JSON.stringify(o)); process.exit(0); };
+  const call = ev.toolCall || {};
+  const name = String(call.name || '');
+  if (ev.hookEventName === 'PostToolUse') {
+    if (MODS && SID && name) await post('mods/tool-post', { tool: name, tool_use_id: call.id || '', output: '' }).catch(() => {});
+    say({});
+  }
+  if (!SID || !name) say({ decision: 'ask' });
+  try {
+    say(await post('gemini/tool-check', { name, args: call.args ?? {}, tool_use_id: call.id || '', mods: MODS }));
+  } catch (e) {
+    if (process.argv.includes('--restricted')) say({ decision: 'deny', reason: `[arigami policy] cannot verify "${name}" against the policy (${e?.message || e}) — blocked` });
+    say({ decision: 'ask' });
+  }
+}
 
 // MODS tool.call, after the tool ran (PostToolUse): the chain that was suspended at next() decides. An MCP tool's
 // result can be replaced outright; a built-in's cannot through a hook, so it is blocked with the new text as the reason.

@@ -32,13 +32,39 @@ export function isPending(r) {
  * error (4xx from the host, or the wait key vanishing — e.g. the host
  * restarted and the card is gone).
  */
-export function makeBlockingCall(api, { sleepFn = sleep } = {}) {
-  return async function blockingCall(path, body) {
-    const wait_key = 'wait_' + randomUUID();
+export const WAIT_KEY_RE = /^wait_[A-Za-z0-9-]{8,80}$/;
+
+/** What a tool answers when its engine would give up before the human acts (`maxWaitMs`): the key to keep waiting with. */
+export const stillWaiting = (wait_key) => ({
+  still_waiting: true,
+  wait_key,
+  hint: `The human has not answered yet — nothing failed. Call this same tool again with the same arguments plus "wait_key":"${wait_key}" to keep waiting for the SAME request. Do not start a new one and do not report a failure.`,
+});
+
+// `maxWaitMs`: an engine that abandons a tool call after a fixed time (agy: 3 minutes, measured) gets `stillWaiting`
+// before that, and comes back with the key as `resumeKey` — the card the human is looking at stays the same one.
+export function makeBlockingCall(api, { sleepFn = sleep, maxWaitMs = 0 } = {}) {
+  return async function blockingCall(path, body, resumeKey) {
+    const resumed = typeof resumeKey === 'string' && WAIT_KEY_RE.test(resumeKey);
+    const wait_key = resumed ? resumeKey : 'wait_' + randomUUID();
+    const ctl = { stop: false };
+    const result = run(path, body, wait_key, resumed, ctl);
+    if (!(maxWaitMs > 0)) return result;
+    result.catch(() => {}); // the abandoned wait must not become an unhandled rejection
+    let timer;
+    const late = new Promise((r) => { timer = setTimeout(() => r(stillWaiting(wait_key)), maxWaitMs); });
+    try {
+      return await Promise.race([result, late]);
+    } finally {
+      clearTimeout(timer);
+      ctl.stop = true; // no further legs from this call; the host keeps a landed result for the next one
+    }
+  };
+  async function run(path, body, wait_key, resumed, ctl) {
     let transient = 0;
     let r;
     try {
-      r = await api('POST', path, { ...body, wait_key });
+      r = resumed ? { pending: true, wait_key } : await api('POST', path, { ...body, wait_key });
     } catch (e) {
       // The host may have accepted the request and only the response leg
       // died — re-attach by key instead of failing the tool.
@@ -46,7 +72,7 @@ export function makeBlockingCall(api, { sleepFn = sleep } = {}) {
       transient++;
       r = { pending: true, wait_key };
     }
-    while (isPending(r)) {
+    while (isPending(r) && !ctl.stop) {
       try {
         r = await api('POST', '/__mcp/wait', { wait_key });
         transient = 0;
@@ -57,5 +83,5 @@ export function makeBlockingCall(api, { sleepFn = sleep } = {}) {
       }
     }
     return r;
-  };
+  }
 }

@@ -89,7 +89,7 @@ test('payload shape: allow-listed events only, no forbidden strings, R4 mileston
   expect(p.version).toBe('1.2.3');
   expect(p.commit).toBe('abc1234');
   expect(p.sessions).toBe('2-5');
-  expect(p.engines).toEqual({ claude: '2-5', codex: '1' });
+  expect(p.engines).toEqual({ claude: '2-5', codex: '1', gemini: '0' });
   expect(typeof p.docker).toBe('boolean');
   expect(p.events.map((e: any) => e.name)).toEqual([
     'install', 'first_session', 'first_pm_tree', 'first_request_screen', 'first_proposal_applied',
@@ -119,7 +119,7 @@ test('assertClean rejects a payload smuggling a path / email / hostname / extra 
       "const {payload:base}=await tm.buildPayload();const tries=[" +
       "{...base,version:'/usr/local'},{...base,version:'me@x'},{...base,arch:'host.example.com'},{...base,extra:1}," +
       "{...base,events:[{name:'first_session',at:base.sentAt,prompt:'hi'}]},{...base,events:[{name:'not_a_thing',at:base.sentAt}]}," +
-      "{...base,engines:{claude:'3',codex:'1'}},{...base,engines:{claude:'1',codex:'1',gemini:'1'}},base];" +
+      "{...base,engines:{claude:'3',codex:'1'}},{...base,engines:{claude:'1',codex:'1',gemini:'1',llama:'1'}},base];" +
       "emit(tries.map(t=>{try{tm.assertClean(t);return 'ok';}catch(e){return 'rejected';}}));",
     env(dir)
   );

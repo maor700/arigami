@@ -233,8 +233,7 @@ async function waitLeg(res: ServerResponse, key: string, entry: WaitEntry): Prom
   const hit = await Promise.race([entry.promise.then((v) => ({ v })), leg]);
   if (timer) clearTimeout(timer);
   if (!hit) return json(res, { pending: true, wait_key: key, legs: entry.legs }, 202);
-  blockingWaits.delete(key);
-  if (entry.expire) clearTimeout(entry.expire);
+  // The result stays readable for WAIT_RESULT_TTL_MS: an engine that abandoned this leg (agy, after 3 minutes) comes back for it.
   json(res, hit.v);
 }
 async function respondBlocking(res: ServerResponse, body: Record<string, unknown>, sessionId: string, promise: Promise<unknown>): Promise<void> {
@@ -1061,7 +1060,7 @@ function ownerOfRequest(explicit: unknown, me: import('./auth.js').Principal | n
 /** P2-4: capability probes that answer for a session's engine (mcp:* grants are per engine). */
 function sessionProbes(sessionId: string | null | undefined): Partial<caps.CapabilityProbes> {
   const s = sessionId ? state.getSession(sessionId) : null;
-  return s ? { engine: () => (s.engine === 'codex' ? 'codex' : 'claude') } : {};
+  return s ? { engine: () => (s.engine === 'codex' || s.engine === 'gemini' ? s.engine : 'claude') } : {};
 }
 
 // Every transition: one `setup-update` chat event (same id as the `setup`
@@ -2444,9 +2443,10 @@ async function applyCodexMcpSetup(spec: mcpCat.McpServerSpec, body: any, owner: 
 
 /** Which engine a setup request is for: explicit body.engine, else the calling session's. */
 function setupEngine(body: any, req: IncomingMessage): mcpConn.McpEngine {
-  if (body?.engine === 'codex' || body?.engine === 'claude') return body.engine;
+  if (body?.engine === 'codex' || body?.engine === 'claude' || body?.engine === 'gemini') return body.engine;
   const sid = String(body?.sessionId || req.headers['x-arigami-session'] || req.headers['x-session-id'] || '');
-  return sid && state.getSession(sid)?.engine === 'codex' ? 'codex' : 'claude';
+  const eng = sid ? state.getSession(sid)?.engine : null;
+  return eng === 'codex' || eng === 'gemini' ? eng : 'claude';
 }
 
 /** POST /__api/setup/mcp:<service> — {action:'start'|'poll'|'code'|'cancel'} or a bearer {token}. */
@@ -2462,6 +2462,8 @@ async function applyMcpSetup(slug: string, body: any, owner: caps.Owner, engine:
   const { gatewayEnabled } = await import('./lib/mcp-gateway.js');
   if (gatewayEnabled()) return applyHostMcpSetup(spec, body, owner, name, url, origin || browserOriginFallback());
   if (engine === 'codex') return applyCodexMcpSetup(spec, body, owner, name, url);
+  // agy holds no MCP grants of its own: a gemini session reaches a vendor only through the host's grant.
+  if (engine === 'gemini') throw new Error(`${spec.title} reaches a Gemini session only through the MCP gateway — it is turned off on this host (ARIGAMI_MCP_GATEWAY=0)`);
   const { scope, cwd } = mcpScope(owner);
 
   // --- bearer (GitHub PAT): no browser at all -------------------------------
@@ -3300,6 +3302,11 @@ export async function destroySession(id: string): Promise<reap.ReapReport | null
   // A codex session's per-session $CODEX_HOME (config + thread history)
   // dies with it too. Dynamically imported: codex.ts imports this module.
   import('./codex.js').then((m) => m.removeCodexSession(id)).catch(() => {});
+  // A gemini session's hooks/skills dir and the conversations agy kept for it.
+  if (s.engine === 'gemini') {
+    const conversations = [...new Set([...(((s.claude as any)?.acpSessions || []) as string[]), ...(s.claude?.sessionId ? [s.claude.sessionId] : [])])];
+    import('./gemini-acp.js').then((m) => m.removeGeminiSession(id, conversations)).catch(() => {});
+  }
   state.deleteSession(id);
   return report;
 }
@@ -4442,7 +4449,7 @@ export async function handle(
         const owner = caps.isOwnable(id) ? qOwner : caps.GLOBAL_OWNER;
         const qEngine = u.searchParams.get('engine');
         const probes: Partial<caps.CapabilityProbes> =
-          qEngine === 'codex' || qEngine === 'claude' ? { engine: () => qEngine } : me?.kind === 'session' ? sessionProbes(me.sessionId) : {};
+          qEngine === 'codex' || qEngine === 'claude' || qEngine === 'gemini' ? { engine: () => qEngine } : me?.kind === 'session' ? sessionProbes(me.sessionId) : {};
         const cap = caps.getCapability(id, probes, owner);
         if (!cap) return badRequest(res, `unknown capability: ${id}`);
         const why = (u.searchParams.get('why') || '').trim() || cap.title; // F6: never empty
@@ -5765,6 +5772,7 @@ export async function handle(
         })),
         modelChain: cfg.modelChain,
         codexModelChain: cfg.codexModelChain,
+        geminiModelChain: cfg.geminiModelChain,
         supervisor: cfg.supervisor,
       });
     }
@@ -7010,6 +7018,24 @@ export async function handle(
       const pre = await mods.toolPre(modsCtx(s), { tool: String(body?.tool_name || ''), input: body?.input && typeof body.input === 'object' ? body.input : {}, id: String(body?.tool_use_id || '') });
       if (!pre.allow) claude.appendChat(id, { kind: 'ext-card', ext: 'mods', title: `${body?.tool_name || 'Tool'} call blocked by a mod`, body: pre.reason });
       return json(res, pre);
+    }
+    // GEMINI: agy's pre-tool hook (mcp/policy-hook.js --agy) asks before every tool call — allowlist, mods, then the permission mode's answer.
+    if (sub === 'gemini/tool-check' && m === 'POST') {
+      const me = (req as any).auth as import('./auth.js').Principal | null;
+      if (!(me?.kind === 'session' && me.sessionId === id) && !auth.isAdmin(me)) return json(res, { error: 'session token required' }, 403);
+      const body = ((await readBody(req).catch(() => ({}))) || {}) as any;
+      const gem = await import('./gemini-acp.js');
+      const v = gem.geminiToolCheck(id, String(body?.name || ''), body?.args);
+      if (v.decision === 'deny' || !body?.mods) return json(res, { decision: v.decision, ...(v.reason ? { reason: v.reason } : {}) });
+      const mods = await import('./mods.js');
+      const pre = await mods.toolPre(modsCtx(s), { tool: v.tool.name, input: v.input, id: String(body?.tool_use_id || '') });
+      if (!pre.allow) {
+        claude.appendChat(id, { kind: 'ext-card', ext: 'mods', title: `${v.tool.name} call blocked by a mod`, body: pre.reason });
+        gem.noteHookDenied(id, String(body?.name || ''), pre.reason);
+        return json(res, { decision: 'deny', reason: pre.reason });
+      }
+      // A mod's changed arguments are merged by agy (shallow); only an MCP tool's are in agy's own shape.
+      return json(res, { decision: v.decision, ...(pre.input && v.tool.server ? { overwrite: pre.input } : {}) });
     }
     if (sub === 'tabs' && m === 'POST') {
       const body = (await readBody(req)) as any;

@@ -41,7 +41,17 @@ import {
   modelRows,
   skillPrompt,
   skillsNote,
+  hooksJson,
+  hookDecision,
+  readsOnlyUnder,
+  acpDiffCounts,
+  skillStub,
+  agyConversationPaths,
 } from './lib/gemini-cli.js';
+import { geminiRealHome } from './lib/gemini-home.js';
+import { bunExecShell } from './lib/bun-exec.js';
+import { hasMods } from './mods.js';
+import { setGeminiCatalogSource, looksLikeGeminiLimit } from './lib/gemini-quota.js';
 import * as extensions from './extensions.js';
 import type { AcpMcpServer, AcpModel, GeminiModelRow, ToolName } from './lib/gemini-cli.js';
 
@@ -52,6 +62,8 @@ interface ToolState extends ToolName {
   host: boolean;
   done: boolean;
   denied?: string;
+  /** agy's ask_question: shown as the question card, answered by the next message */
+  question?: boolean;
 }
 
 interface AcpState {
@@ -84,6 +96,8 @@ interface AcpState {
   /** rpc id of an open permission request → its tool call */
   requests: Map<number | string, string>;
   window: number | null;
+  /** why the pre-tool hook refused a call, by agy tool name — shown on the failed card */
+  hookDenied: Map<string, string>;
 }
 
 const states = new Map<string, AcpState>();
@@ -91,7 +105,7 @@ const states = new Map<string, AcpState>();
 function fresh(): AcpState {
   return {
     proc: null, seq: 0, pending: new Map(), sessionId: null, ready: false, queue: [], running: false, after: [], compacting: false, compactDue: null, autoCompacted: false,
-    turnStartedAt: 0, text: '', thought: '', tools: new Map(), servers: [], models: [], modelId: null, modeId: null, requests: new Map(), window: null,
+    turnStartedAt: 0, text: '', thought: '', tools: new Map(), servers: [], models: [], modelId: null, modeId: null, requests: new Map(), window: null, hookDenied: new Map(),
   };
 }
 
@@ -172,6 +186,80 @@ function skillRoots(): Record<string, string | null> {
   return { arigami: SKILLS_DIR, 'arigami-user': fs.existsSync(USER_SKILLS_DIR) ? USER_SKILLS_DIR : null, 'arigami-ext': ext };
 }
 
+// ---- the session's own customization dir -----------------------------------------------
+
+/** Where agy finds this session's hooks and skills (`agy acp --add-dir`); rewritten on every spawn, removed with the session. */
+export const geminiSessionDir = (id: string): string => path.join(cfg.configDir!, 'gemini', id);
+
+const descriptionOf = (skillMd: string): string => {
+  try {
+    const fm = /^---\n([\s\S]*?)\n---/.exec(fs.readFileSync(skillMd, 'utf8'))?.[1] || '';
+    return (/^description:\s*(.*)$/m.exec(fm)?.[1] || '').replace(/^["']|["']$/g, '');
+  } catch {
+    return '';
+  }
+};
+
+/**
+ * The pre-tool hook (A3 allowlist, mods, ask-before-edit) and one stub per Arigami skill, so agy lists them as its own.
+ * A user skill shadows a shipped one of the same name, as everywhere else.
+ */
+export function writeSessionDir(s: Session): string {
+  const dir = geminiSessionDir(s.id);
+  const agents = path.join(dir, '.agents');
+  fs.mkdirSync(agents, { recursive: true });
+  const restricted = isRestrictive(policyFor(slugOf(s)));
+  const flags = ['--agy', ...(restricted ? ['--restricted'] : []), ...(hasMods() ? ['--mods'] : [])];
+  fs.writeFileSync(path.join(agents, 'hooks.json'), hooksJson(bunExecShell('policy', flags), { post: hasMods() }));
+  const skillsRoot = path.join(agents, 'skills');
+  fs.rmSync(skillsRoot, { recursive: true, force: true });
+  const roots = skillRoots();
+  for (const root of [roots['arigami-ext'], roots.arigami, roots['arigami-user']]) {
+    if (!root) continue;
+    let names: string[] = [];
+    try { names = fs.readdirSync(root); } catch { continue; }
+    for (const name of names) {
+      const real = path.join(root, name);
+      if (!/^[a-z0-9][a-z0-9-]*$/.test(name) || !fs.existsSync(path.join(real, 'SKILL.md'))) continue;
+      fs.mkdirSync(path.join(skillsRoot, name), { recursive: true });
+      fs.writeFileSync(path.join(skillsRoot, name, 'SKILL.md'), skillStub(name, descriptionOf(path.join(real, 'SKILL.md')), real));
+    }
+  }
+  return dir;
+}
+
+/** Deleting a session: its customization dir, and the conversations agy kept for it. */
+export function removeGeminiSession(id: string, conversations: string[] = []): void {
+  states.delete(id);
+  try { fs.rmSync(geminiSessionDir(id), { recursive: true, force: true }); } catch { /* best effort */ }
+  for (const c of conversations) for (const p of agyConversationPaths(geminiRealHome(), c)) try { fs.rmSync(p, { recursive: true, force: true }); } catch { /* agy's files */ }
+}
+
+/** The pre-tool hook's question (mcp/policy-hook.js --agy): the call under Arigami's name, the allowlist's verdict, else what the permission mode wants agy to do. */
+export function geminiToolCheck(id: string, name: string, args: unknown): { tool: ToolName; input: Record<string, unknown>; decision: 'allow' | 'deny' | 'ask' | 'force_ask'; reason?: string } {
+  const s = getSession(id);
+  const st = states.get(id);
+  const servers = st?.servers.length ? st.servers : (((s?.claude as any)?.mcpLoaded?.servers || []) as any[]).map((x) => String(x.name));
+  const tool = aliasToolName(name, servers);
+  const input = toolInput(tool.name, args);
+  const v = s ? checkToolCall(policyFor(slugOf(s)), tool.name, input, id) : { allow: true as const };
+  if (!v.allow) {
+    const reason = `[arigami policy] ${(v as any).reason || `${tool.name} is not allowed for this agent`}`;
+    st?.hookDenied.set(name, reason);
+    return { tool, input, decision: 'deny', reason };
+  }
+  if (ownRead(id, tool.name, args)) return { tool, input, decision: 'allow' };
+  return { tool, input, decision: hookDecision(s?.claude?.permissionMode, tool.name) };
+}
+
+/** Arigami's own skill packs and docs sit outside the workspace: reading them is part of running a skill, never a question for the human. */
+const ownRead = (id: string, tool: string, args: unknown): boolean => readsOnlyUnder(tool, args, [...Object.values(skillRoots()), docsDir(), geminiSessionDir(id)]);
+
+/** A mod refused a call the allowlist let through (api.ts runs the mods): remembered for the failed card. */
+export function noteHookDenied(id: string, name: string, reason: string): void {
+  states.get(id)?.hookDenied.set(name, reason);
+}
+
 /** Arigami's permission mode → agy's session mode; bypass stays on `default` so every request still reaches the policy check. */
 export function acpModeFor(permissionMode: string | null | undefined): string {
   if (permissionMode === 'acceptEdits') return 'accept-edits';
@@ -205,13 +293,18 @@ const modelsFile = (): string => path.join(cfg.configDir!, 'gemini-models.json')
 
 function noteModels(models: { availableModels?: AcpModel[]; currentModelId?: string } | undefined, window: number | null): void {
   if (!Array.isArray(models?.availableModels) || !models!.availableModels!.length) return;
-  const rows = pickerRows(modelRows(models!.availableModels!, window || modelCache?.rows[0]?.contextWindow || null));
+  const rows = modelRows(models!.availableModels!, window || modelCache?.rows[0]?.contextWindow || null);
   modelCache = { rows, at: Date.now() };
   try { fs.writeFileSync(modelsFile(), JSON.stringify({ at: modelCache.at, rows })); } catch { /* a cache */ }
 }
 
-/** The Gemini families Antigravity offers this account, as the picker lists them (from the last session or probe; survives a restart). */
+/** The Gemini families Antigravity offers this account, as the picker lists them. */
 export function geminiModels(): GeminiModelRow[] {
+  return pickerRows(geminiFamilies());
+}
+
+/** Every family agy serves this account, Claude/GPT-through-Google included (from the last session or probe; survives a restart). */
+export function geminiFamilies(): GeminiModelRow[] {
   if (!modelCache) {
     try {
       const j = JSON.parse(fs.readFileSync(modelsFile(), 'utf8'));
@@ -224,7 +317,7 @@ export function geminiModels(): GeminiModelRow[] {
 /** Ask agy for the list without spending a turn: initialize + session/new in a scratch dir (hourly, or `force`). */
 export function refreshGeminiModels({ force = false }: { force?: boolean } = {}): Promise<GeminiModelRow[]> {
   const have = geminiModels();
-  if (!force && modelCache && Date.now() - modelCache.at < MODELS_TTL_MS) return Promise.resolve(have);
+  if (!force && modelCache && have.length && Date.now() - modelCache.at < MODELS_TTL_MS) return Promise.resolve(have);
   if (modelsInflight) return modelsInflight;
   modelsInflight = (async () => {
     try {
@@ -404,7 +497,9 @@ async function startSession(id: string, p: any): Promise<void> {
   st.modelId = r.result?.models?.currentModelId || null;
   st.modeId = r.result?.modes?.currentModeId || null;
   noteModels(r.result?.models, null);
-  setClaude(id, { sessionId: sid });
+  // Every conversation agy opened for this session — what removeGeminiSession deletes.
+  const known: string[] = Array.isArray((s.claude as any)?.acpSessions) ? (s.claude as any).acpSessions : [];
+  setClaude(id, { sessionId: sid, ...(known.includes(sid) ? {} : { acpSessions: [...known, sid].slice(-50) }) } as any);
   await applyModel(id, st);
   await applyMode(id, st);
   if (gone()) return;
@@ -502,7 +597,7 @@ function onPromptDone(id: string, st: AcpState, r: { result?: any; error?: any }
   flushText(id, st);
   // A tool the turn left without a final status (cancelled, or a command agy moved to the background).
   for (const [toolCallId, t] of st.tools) {
-    if (!t.done && !t.host) appendChat(id, { kind: 'tool-result', toolUseId: toolCallId, content: t.denied || '', isError: !!t.denied });
+    if (!t.done && !t.host && !t.question) appendChat(id, { kind: 'tool-result', toolUseId: toolCallId, content: t.denied || '', isError: !!t.denied });
   }
   st.tools.clear();
   const wasCompaction = st.compacting;
@@ -514,6 +609,7 @@ function onPromptDone(id: string, st: AcpState, r: { result?: any; error?: any }
   if (r.error) {
     const msg = String(r.error.message || 'the turn failed');
     appendChat(id, { kind: 'error', text: `gemini: ${msg}`, isError: true });
+    if (looksLikeGeminiLimit(msg)) import('./gemini-recovery.js').then((m) => m.onGeminiLimit(id, msg)).catch(() => {});
   } else if (stop === 'cancelled') {
     appendChat(id, { kind: 'system', text: '⏹ interrupted' });
   } else if (wasCompaction) {
@@ -547,15 +643,39 @@ export function toolResultText(u: any): string {
   return out && Object.keys(out).length ? JSON.stringify(out) : '';
 }
 
+/** Pure: agy's ask_question arguments → the question card's input. */
+export function questionInput(raw: any): { questions: Array<{ question: string; header: string; multiSelect: boolean; options: Array<{ label: string; description: string }> }> } {
+  const list = Array.isArray(raw?.questions) ? raw.questions : [];
+  return {
+    questions: list.map((q: any) => ({
+      question: String(q?.question || ''),
+      header: String(q?.header || ''),
+      multiSelect: !!q?.is_multi_select,
+      options: (Array.isArray(q?.options) ? q.options : []).map((o: any) => {
+        const text = String(typeof o === 'string' ? o : o?.label || '');
+        const rec = /^\(Recommended\)\s*/i;
+        return { label: text.replace(rec, ''), description: rec.test(text) ? 'Recommended' : String(o?.description || '') };
+      }),
+    })),
+  };
+}
+
 function toolOf(id: string, st: AcpState, u: any): ToolState {
   const toolCallId = String(u.toolCallId);
   let t = st.tools.get(toolCallId);
   if (t) return t;
-  const meta = aliasToolName(String(u.name || u.title || ''), st.servers, u.kind);
+  const raw = String(u.name || u.title || '');
+  const meta = aliasToolName(raw, st.servers, u.kind);
   t = { ...meta, host: meta.server === 'arigami', done: false };
   st.tools.set(toolCallId, t);
   flushThought(id, st);
   flushText(id, st);
+  if (raw === 'ask_question') {
+    // agy ends the turn on a question and takes the next message as the answer — the card answers with a message.
+    t.question = true;
+    appendChat(id, { kind: 'tool-use', toolUseId: toolCallId, name: 'AskUserQuestion', input: questionInput(u.rawInput ?? u.args) });
+    return t;
+  }
   // Arigami's own tools show as UI (a badge, a card, a tab) — both halves of the raw call stay out of the transcript.
   if (!t.host) appendChat(id, { kind: 'tool-use', toolUseId: toolCallId, name: t.name, input: toolInput(t.name, u.rawInput ?? u.args) });
   return t;
@@ -568,6 +688,15 @@ function onToolUpdate(id: string, st: AcpState, u: any): void {
   if (t.done || (status !== 'completed' && status !== 'failed')) return;
   t.done = true;
   const isError = status === 'failed' || Number(u.rawOutput?.exit_code) > 0;
+  const hookReason = isError ? st.hookDenied.get(String(u.name || '')) : undefined;
+  if (hookReason) {
+    st.hookDenied.delete(String(u.name || ''));
+    t.denied = hookReason;
+  }
+  if (t.question) return;
+  // A finished edit: the Changes tab reloads on turnDiff.at (as with codex's turn/diff/updated).
+  const diff = isError ? null : acpDiffCounts(u.content);
+  if (diff) setClaude(id, { turnDiff: { at: Date.now(), ...diff } } as any);
   const content = toolResultText(u) || (isError ? t.denied || 'failed' : '');
   if (t.server) noteMcpResult(id, t.server, { content, is_error: isError && !t.denied });
   if (!t.host) appendChat(id, { kind: 'tool-result', toolUseId: String(u.toolCallId), content, isError });
@@ -599,7 +728,8 @@ function onPermissionRequest(id: string, st: AcpState, j: any): void {
     respond(st, j.id, { outcome: outcomeFor(options, { behavior: 'deny' }) });
     return;
   }
-  if ((s?.claude?.permissionMode || 'bypassPermissions') === 'bypassPermissions') {
+  // agy still asks about a file outside the workspace after the hook said allow (measured) — answered here.
+  if ((s?.claude?.permissionMode || 'bypassPermissions') === 'bypassPermissions' || ownRead(id, t.name, call.rawInput ?? call.args)) {
     respond(st, j.id, { outcome: outcomeFor(options, { behavior: 'allow' }) });
     return;
   }
@@ -706,9 +836,10 @@ function geminiEnv(): NodeJS.ProcessEnv {
   return rest;
 }
 
-function acpPrepare(_s: Session, _opts: { resume: boolean }): void {
+function acpPrepare(s: Session, _opts: { resume: boolean }): void {
   requireAgy();
   if (!agyLoggedIn()) throw new Error(AGY_SIGNED_OUT);
+  writeSessionDir(s);
 }
 
 function acpBuildSpawn(s: Session, _opts: { resume: boolean; sessionId: string | null }) {
@@ -731,7 +862,7 @@ function acpBuildSpawn(s: Session, _opts: { resume: boolean; sessionId: string |
     ...(screenHandle?.display ? { DISPLAY: String(screenHandle.display) } : {}),
   };
   // The session id, MCP servers, model and mode all travel in the handshake, not on argv.
-  return { bin: requireAgy(), args: agyAcpArgs(), env, cwd: cwdOf(s) };
+  return { bin: requireAgy(), args: agyAcpArgs(process.env, ['--add-dir', geminiSessionDir(s.id)]), env, cwd: cwdOf(s) };
 }
 
 const geminiDriver: EngineDriver = {
@@ -762,11 +893,12 @@ const geminiDriver: EngineDriver = {
     const live = st?.models.length ? effortsFor(model, st.models) : [];
     if (live.length) return live;
     const family = splitModelId(model || GEMINI_DEFAULT_MODEL).family;
-    const row = geminiModels().find((r) => r.id === family);
+    const row = geminiFamilies().find((r) => r.id === family);
     return row?.efforts.length ? row.efforts : fallbackEfforts(model);
   },
 };
 
 registerEngine(geminiDriver);
+setGeminiCatalogSource(() => geminiFamilies().map((r) => r.id));
 
 export { geminiDriver, acpHandleEvent, acpWriteMessage, acpInterrupt, acpHandshake, acpBuildSpawn, acpPrepare, geminiEnv };

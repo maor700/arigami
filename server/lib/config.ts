@@ -307,6 +307,8 @@ export interface Config {
   modelChain: string[];
   // P2-6 — codex sessions' ladder (codex model ids), used only when the codex account pool is exhausted.
   codexModelChain: string[];
+  // gemini sessions' ladder (model families) — a model that is unavailable steps down it; a spent quota only reaches a rung outside Gemini's shared bucket.
+  geminiModelChain: string[];
   // P3-1 — codex driver: long-lived `codex app-server` (default) or the one-process-per-turn `codex exec` fallback; read at boot.
   codexTransport: 'app-server' | 'exec';
   // P3-1 — app-server approvalPolicy for sessions with no explicit permission mode.
@@ -438,6 +440,7 @@ export const DEFAULTS: Config = {
   defaultEngine: 'claude',
   modelChain: ['fable', 'sonnet', 'haiku'],
   codexModelChain: ['gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5'],
+  geminiModelChain: ['gemini-4-neon', 'gemini-4-argon', 'gemini-3.8-flash'],
   codexTransport: 'app-server',
   codexApprovals: 'never',
   ctxWindowOverrides: {},
@@ -564,6 +567,8 @@ function envOverrides(): Partial<Config> {
     o.modelChain = E.ARIGAMI_MODEL_CHAIN.split(',').map((m) => m.trim()).filter(Boolean);
   if (E.ARIGAMI_CODEX_MODEL_CHAIN != null && E.ARIGAMI_CODEX_MODEL_CHAIN !== '')
     o.codexModelChain = E.ARIGAMI_CODEX_MODEL_CHAIN.split(',').map((m) => m.trim()).filter(Boolean);
+  if (E.ARIGAMI_GEMINI_MODEL_CHAIN != null && E.ARIGAMI_GEMINI_MODEL_CHAIN !== '')
+    o.geminiModelChain = E.ARIGAMI_GEMINI_MODEL_CHAIN.split(',').map((m) => m.trim()).filter(Boolean);
   if (E.ARIGAMI_CODEX_TRANSPORT) o.codexTransport = E.ARIGAMI_CODEX_TRANSPORT as Config['codexTransport'];
   if (E.ARIGAMI_CODEX_APPROVALS) o.codexApprovals = E.ARIGAMI_CODEX_APPROVALS as Config['codexApprovals'];
   const sup: Partial<SupervisorConfig> = {};

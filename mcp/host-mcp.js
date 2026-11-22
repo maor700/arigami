@@ -62,7 +62,11 @@ export async function createArigamiServer(env = process.env) {
   // CHAT1: the endpoints that block on a human (permission_prompt / question
   // cards, request_screen, request_setup) go through the long-poll wrapper —
   // a single open request died after ~5 min and took the answer with it.
-  const blockingCall = makeBlockingCall(api);
+  // agy abandons an MCP tool call after 3 minutes (measured): a gemini session gets {still_waiting, wait_key} before
+  // that and calls the tool again with the key — same card, same request.
+  const GEMINI = env.ARIGAMI_ENGINE === 'gemini';
+  const blockingCall = makeBlockingCall(api, GEMINI ? { maxWaitMs: Number(env.ARIGAMI_GEMINI_TOOL_WAIT_MS) || 150_000 } : {});
+  const WAIT_PROP = GEMINI ? { wait_key: { type: 'string', description: 'Only when a previous call of this tool answered {still_waiting:true, wait_key}: pass that key (with the same arguments) to keep waiting for the same request.' } } : {};
 
   function sid(args) {
     const id = args?.session_id || env.ARIGAMI_SESSION_ID;
@@ -355,7 +359,7 @@ export async function createArigamiServer(env = process.env) {
     },
     {
       name: 'list_sessions',
-      description: 'List host sessions (summaries) — the peer-discovery source for send_message/task_session. Each entry includes `engine` (claude|codex) so you can tell which channel will actually reach it.',
+      description: 'List host sessions (summaries) — the peer-discovery source for send_message/task_session. Each entry includes `engine` (claude|codex|gemini) so you can tell which channel will actually reach it.',
       inputSchema: obj({}),
       run: async () => {
         // full=1: untruncated result.summary (the web wire form caps finished workers' summaries).
@@ -797,6 +801,7 @@ export async function createArigamiServer(env = process.env) {
           reason: { type: 'string', enum: ['login', '2fa', 'captcha', 'payment', 'other'], description: 'Why the human is needed. Drives the card label and push title.' },
           hint: { type: 'string', description: 'Exactly what to do and what "done" looks like.' },
           shared: { type: 'boolean', description: 'The step is on the SHARED desktop (the owner\'s screen). Automatic while you hold it: your lease is parked until the human answers, then you get it back first.' },
+          ...WAIT_PROP,
           ...SID_PROP,
         },
         ['prompt']
@@ -808,13 +813,13 @@ export async function createArigamiServer(env = process.env) {
           ...(a.reason ? { reason: a.reason } : {}),
           ...(a.hint ? { hint: a.hint } : {}),
           ...(a.shared === true ? { shared: true } : {}),
-        }),
+        }, a.wait_key),
     },
     {
       name: 'request_setup',
       description:
         'Ask for a capability this host does not have yet (JIT setup) — call it whenever a tool answers {needs_setup:"<capability>", why, hint}. ' +
-        'Capability ids: identity (Google login in Chrome) · claude (Claude account) · codex (ChatGPT login / OpenAI key) — the engine logins, each only for sessions on that engine · git (gh/PAT) · repo:<name> · whatsapp · composio:<toolkit> (gmail/googledrive/googlecalendar/slack/linear/notion…) · desktop · push · remote (tailscale) · telemetry · voice:<openai|elevenlabs|cartesia|deepgram> / telephony:twilio (voice & phone keys). ' +
+        'Capability ids: identity (Google login in Chrome) · claude (Claude account) · codex (ChatGPT login / OpenAI key) · gemini (Google sign-in for the Antigravity CLI) — the engine logins, each only for sessions on that engine · git (gh/PAT) · repo:<name> · whatsapp · composio:<toolkit> (gmail/googledrive/googlecalendar/slack/linear/notion…) · desktop · push · remote (tailscale) · telemetry · voice:<openai|elevenlabs|cartesia|deepgram> / telephony:twilio (voice & phone keys). ' +
         'The host posts a Setup card in the chat (with a QR / token field / OAuth button / Auto-Manual switch as appropriate) and pushes "the agent needs <capability>" to the human\'s phone. ' +
         'mode: omit to let the host pick — "auto" when a Google identity is connected and the capability is auto-capable, else "manual". ' +
         'ALWAYS BLOCKS (≤15 min) until the human acts on the card: connects it manually → {state:"done"}, clicks "Not now" → {state:"skipped"}, nobody → {state:"timeout"}, or clicks "Connect automatically" (consent) → {state:"auto", id, playbook}. `mode` only PRESELECTS the card switch — there is never auto without that click. On "skipped"/"timeout" offer an alternative, never nag. ' +
@@ -825,6 +830,7 @@ export async function createArigamiServer(env = process.env) {
           capability: { type: 'string', description: 'Registry id, e.g. "composio:gmail", "repo:my-app", "whatsapp"' },
           why: { type: 'string', description: 'What you need it for — shown on the card and in the push (when you run as an agent, identity/composio connect to YOUR agent: its Chrome profile + its own Composio account; the shared one is used only as a fallback)' },
           mode: { type: 'string', enum: ['auto', 'manual', 'ask'], description: 'Omit for the host default (auto when possible)' },
+          ...WAIT_PROP,
           ...SID_PROP,
         },
         ['capability', 'why']
@@ -835,7 +841,7 @@ export async function createArigamiServer(env = process.env) {
           capability: a.capability,
           why: a.why,
           ...(a.mode ? { mode: a.mode } : {}),
-        }),
+        }, a.wait_key),
     },
     {
       name: 'report_setup',
@@ -1045,12 +1051,13 @@ export async function createArigamiServer(env = process.env) {
         fill: { type: 'string', enum: ['username', 'password', 'otp'], description: 'driving only: the host types this vault value into the field you clicked into' },
         human: { type: 'string', description: 'driving only: the one step only the owner can do, in one line ("solve the I\'m-not-a-robot check")' },
         done: { type: 'boolean', description: 'driving only: the page shows you signed in — the host checks the session and brings it into your browser' },
+        ...WAIT_PROP,
         ...SID_PROP,
       }),
       run: (a) => blockingCall(`/__api/sessions/${sid(a)}/sign-in`, {
         site: a.site, reason: a.reason, account: a.account, ...(a.browser === true ? { browser: true } : {}), ...(a.url ? { url: a.url } : {}),
         ...(a.fill ? { fill: a.fill } : {}), ...(a.human ? { human: a.human } : {}), ...(a.done === true ? { done: true } : {}),
-      }),
+      }, a.wait_key),
     },
     // VAULT2: the owner's named details beyond a sign-in — a card number, an ID number, a customer code. Names and
     // outcomes reach the model; a value goes cockpit → host → the page, never through a tool result.
@@ -1081,9 +1088,10 @@ export async function createArigamiServer(env = process.env) {
         },
         title: { type: 'string', description: 'The entry (account) these belong to, when the owner has more than one for the site — e.g. a person\'s name' },
         reason: { type: 'string', description: 'One short line the human sees: what you need these for' },
+        ...WAIT_PROP,
         ...SID_PROP,
       }, ['site', 'fields']),
-      run: (a) => blockingCall(`/__api/sessions/${sid(a)}/vault/collect`, { site: a.site, fields: a.fields, ...(a.title ? { title: a.title } : {}), ...(a.reason ? { reason: a.reason } : {}) }),
+      run: (a) => blockingCall(`/__api/sessions/${sid(a)}/vault/collect`, { site: a.site, fields: a.fields, ...(a.title ? { title: a.title } : {}), ...(a.reason ? { reason: a.reason } : {}) }, a.wait_key),
     },
     {
       name: 'vault_fill',
@@ -1102,9 +1110,10 @@ export async function createArigamiServer(env = process.env) {
         entry: { type: 'string', description: 'Which entry (account) when the owner has several for the site: its title or id from vault_fields' },
         target: { type: 'string', description: 'Words of the page field\'s label / name / placeholder, instead of clicking into it first' },
         reason: { type: 'string', description: 'One short line the owner sees on the card' },
+        ...WAIT_PROP,
         ...SID_PROP,
       }, ['site', 'field']),
-      run: (a) => blockingCall(`/__api/sessions/${sid(a)}/vault/fill`, { site: a.site, field: a.field, ...(a.part ? { part: a.part } : {}), ...(a.entry ? { entry: a.entry } : {}), ...(a.target ? { target: a.target } : {}), ...(a.reason ? { reason: a.reason } : {}) }),
+      run: (a) => blockingCall(`/__api/sessions/${sid(a)}/vault/fill`, { site: a.site, field: a.field, ...(a.part ? { part: a.part } : {}), ...(a.entry ? { entry: a.entry } : {}), ...(a.target ? { target: a.target } : {}), ...(a.reason ? { reason: a.reason } : {}) }, a.wait_key),
     },
     {
       name: 'browser_logins',
@@ -1383,7 +1392,7 @@ export async function createArigamiServer(env = process.env) {
     },
     {
       name: 'list_agents',
-      description: 'List the agents (the Team section) on this host: slug, name, emoji, color, engine (claude|codex; absent = host default), model, skills, tools, budget, homeSessionId, persona. Use a slug with create_session({agent}).',
+      description: 'List the agents (the Team section) on this host: slug, name, emoji, color, engine (claude|codex|gemini; absent = host default), model, skills, tools, budget, homeSessionId, persona. Use a slug with create_session({agent}).',
       inputSchema: obj({}),
       run: async () => (await api('GET', '/__api/agents')).agents,
     },
