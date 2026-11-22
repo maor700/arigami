@@ -1,7 +1,7 @@
-// Connect an AI engine — Claude and Codex as TWO EQUAL choices, side by side:
+// Connect an AI engine — Claude, Codex and Gemini as EQUAL choices, side by side:
 // same card, same numbered steps, same primary button, same live state. Used by
 // the chat's setup card, the Setup screen and the wizard, so a person who only
-// has Codex (or only Claude) is never pushed to the other.
+// has one of them is never pushed to another.
 //
 //   card     title · 3 numbered steps (the current one is highlighted) ·
 //            ONE primary button · "use a token instead" · live state / failure
@@ -22,12 +22,18 @@ import { faCheck, faRotateRight } from '@fortawesome/free-solid-svg-icons';
 export const ENGINE_SPECS = [
   { id: 'claude', name: 'Claude', flow: 'pkce', install: 'npm i -g @anthropic-ai/claude-code' },
   { id: 'codex', name: 'Codex', flow: 'codex', install: 'npm i -g @openai/codex' },
+  // agy has no one-line install: the card links to its own getting-started page (the address agy's help prints).
+  { id: 'gemini', name: 'Gemini', flow: 'gemini', token: false, installUrl: 'https://antigravity.google/docs/getting-started.md' },
 ];
+export const ENGINE_CAP_IDS = ENGINE_SPECS.map((e) => e.id);
 
-/** {claude, codex} → true when at least one engine can run (pure; the Setup screen and tests use it). */
+/** A setup overview → {claude, codex, gemini}: each engine's capability row (or null). */
+export const enginesFrom = (overview) => Object.fromEntries(ENGINE_CAP_IDS.map((id) => [id, overview?.capabilities?.find((c) => c.id === id) || null]));
+
+/** {claude, codex, gemini} → true when at least one engine can run (pure; the Setup screen and tests use it). */
 export const anyEngineConnected = (engines) => ENGINE_SPECS.some((e) => !!engines?.[e.id]?.ok);
 
-function EngineCard({ spec, cap, otherOk, sessionId, owner, onChanged, onDone }) {
+function EngineCard({ spec, cap, others, sessionId, owner, onChanged, onDone }) {
   const t = useT();
   const [phase, setPhase] = useState('idle'); // idle | waiting | error — from the OAuth step
   const ok = !!cap?.ok;
@@ -56,13 +62,15 @@ function EngineCard({ spec, cap, otherOk, sessionId, owner, onChanged, onDone })
             {!cli ? (
               <>
                 <p className="text-xs leading-snug text-fgdim">{t(`wizard.${spec.id}.noCli`)}</p>
-                <code dir="ltr" className="mt-1.5 block rounded-md border border-hair bg-muted px-2 py-1.5 font-mono text-xs select-all">{spec.install}</code>
+                {spec.install
+                  ? <code dir="ltr" className="mt-1.5 block rounded-md border border-hair bg-muted px-2 py-1.5 font-mono text-xs select-all">{spec.install}</code>
+                  : <a href={spec.installUrl} target="_blank" rel="noopener noreferrer" dir="ltr" className="mt-1.5 block break-all text-xs text-info underline">{spec.installUrl}</a>}
                 <button type="button" onClick={onChanged} className={`${BTN2} mt-2`}><Icon icon={faRotateRight} /> {t('setup.engine.recheck')}</button>
               </>
             ) : (
               <OAuthCodeStep
                 capability={spec.id}
-                manual={{ kind: 'oauth', flow: spec.flow, token: true }}
+                manual={{ kind: 'oauth', flow: spec.flow, token: spec.token !== false }}
                 sessionId={sessionId}
                 owner={owner}
                 signInLabel={t(`setup.engine.${spec.id}.connect`)}
@@ -72,7 +80,7 @@ function EngineCard({ spec, cap, otherOk, sessionId, owner, onChanged, onDone })
               />
             )}
           </div>
-          {otherOk && <div className="mt-2 text-xs text-fgdim">{t('setup.engine.have', { name: spec.id === 'claude' ? 'Codex' : 'Claude' })}</div>}
+          {others && <div className="mt-2 text-xs text-fgdim">{t('setup.engine.have', { name: others })}</div>}
         </>
       )}
     </section>
@@ -80,7 +88,7 @@ function EngineCard({ spec, cap, otherOk, sessionId, owner, onChanged, onDone })
 }
 
 /**
- * Both engines, side by side. `engines` ({claude, codex}: {ok, data:{cli}}) may be
+ * Every engine, side by side. `engines` ({claude, codex, gemini}: {ok, data:{cli}}) may be
  * passed in (the Setup screen already holds them); otherwise this polls the host
  * itself, so a sign-in that finishes in another window turns the card green.
  */
@@ -90,9 +98,7 @@ export default function EngineConnect({ engines: given, onChanged, onDone, sessi
   const poll = !given;
   const refresh = useCallback(async () => {
     try {
-      const ov = await setupApi.overview();
-      const cap = (id) => ov?.capabilities?.find((c) => c.id === id) || null;
-      setOwn({ claude: cap('claude'), codex: cap('codex') });
+      setOwn(enginesFrom(await setupApi.overview()));
     } catch { /* keep the last view */ }
   }, []);
   useEffect(() => {
@@ -108,13 +114,13 @@ export default function EngineConnect({ engines: given, onChanged, onDone, sessi
   return (
     <div>
       {intro && <p className="mb-3 text-sm leading-relaxed text-fgdim">{t('setup.engine.intro')}</p>}
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
         {ENGINE_SPECS.map((spec) => (
           <EngineCard
             key={spec.id}
             spec={spec}
             cap={engines?.[spec.id]}
-            otherOk={!!engines?.[spec.id === 'claude' ? 'codex' : 'claude']?.ok}
+            others={ENGINE_SPECS.filter((o) => o.id !== spec.id && engines?.[o.id]?.ok).map((o) => o.name).join(', ')}
             sessionId={sessionId}
             owner={owner}
             onChanged={changed}

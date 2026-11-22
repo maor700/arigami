@@ -1,6 +1,6 @@
 // B3 — first-run wizard. A LINEAR, mobile-friendly stepper over the one
 // onboarding state machine (server/onboarding.ts wizard()):
-//   pair → claude → codex → git → profile → integrations → repo → telemetry → health
+//   pair → claude → codex → gemini → git → profile → integrations → repo → telemetry → health
 // Every step's status/skippability comes from GET /__api/onboarding/wizard.
 // S2: the credential steps are a thin list of the shared setup components
 // (web/src/components/setup/*) — the same ones the chat's SetupCard and
@@ -15,6 +15,7 @@ import { serverText } from '../lib/server-text.js';
 import { setPrefs } from '../lib/prefs.js';
 import { useStore } from '../lib/store.js';
 import { OAuthCodeStep, TokenStep, QrStep, ToggleStep, RepoStep, EngineConnect } from './setup/index.js';
+import { ENGINE_CAP_IDS } from './setup/EngineConnect.jsx';
 import { BTN, BTN2, INPUT, CARD, BODY, Pill, ErrorBox, OkLine, Spinner } from './setup/shared.jsx';
 import { Badge } from './ui/badge.jsx';
 import { Button } from './ui/button.jsx';
@@ -71,13 +72,14 @@ function PairStep({ step }) {
   );
 }
 
-// ---- claude / codex / git — the shared setup components ------------
+// ---- claude / codex / gemini / git — the shared setup components ------------
 // (web/src/components/setup/*): the same EngineConnect the chat's SetupCard and
-// the Setup screen render. Claude and Codex are two equal choices side by side;
-// either one satisfies both wizard steps (the server marks the other 'skipped').
+// the Setup screen render. The engines are equal choices side by side;
+// any one satisfies every engine step (the server marks the others 'skipped').
+const ENGINE_STEPS = new Set(ENGINE_CAP_IDS);
 function EngineStep({ steps, refresh }) {
   const engines = {};
-  for (const id of ['claude', 'codex']) {
+  for (const id of ENGINE_CAP_IDS) {
     const s = steps.find((x) => x.id === id);
     engines[id] = { ok: !!(s?.data?.cli && s?.data?.authed), data: { cli: s?.data?.cli !== false } };
   }
@@ -302,8 +304,9 @@ function HealthStep({ step, refresh }) {
 
 const STEP_TITLE = {
   pair: 'wizard.pair.title',
-  claude: 'setup.engine.title', // one step for both engines (Claude and Codex are equal choices)
+  claude: 'setup.engine.title', // one step for every engine (equal choices)
   codex: 'wizard.codex.title',
+  gemini: 'wizard.gemini.title',
   git: 'wizard.git.title',
   profile: 'wizard.profile.title',
   integrations: 'wizard.integrations.title',
@@ -342,17 +345,17 @@ export default function Wizard({ onDone, onExit, onStart }) {
     if (wizardTick) refresh();
   }, [wizardTick, refresh]);
 
-  // F8: in minimal mode only the required steps (pair, claude, codex) are listed;
+  // F8: in minimal mode only the required steps (pair + the engines) are listed;
   // once done we show a Start panel instead of jumping back to step 1.
-  // Claude and Codex are ONE step ("connect an engine", both cards side by side): either one connected settles it.
+  // The engines are ONE step ("connect an engine", the cards side by side), shown under `claude`: any one connected settles it.
   const rawSteps = view?.steps || [];
-  const engineOk = rawSteps.some((s) => (s.id === 'claude' || s.id === 'codex') && s.status === 'ok');
+  const engineOk = rawSteps.some((s) => ENGINE_STEPS.has(s.id) && s.status === 'ok');
   const steps = rawSteps
-    .filter((s) => s.id !== 'codex')
+    .filter((s) => s.id === 'claude' || !ENGINE_STEPS.has(s.id))
     .filter((s) => view?.mode === 'full' || !Array.isArray(view?.required) || view.required.includes(s.id) || s.id === 'claude')
     .map((s) => (s.id === 'claude' ? { ...s, status: engineOk ? 'ok' : s.status === 'skipped' ? 'todo' : s.status, skippable: false } : s));
   const finished = !!view?.done && idx === null;
-  const curId = view?.current === 'codex' ? 'claude' : view?.current;
+  const curId = ENGINE_STEPS.has(view?.current) ? 'claude' : view?.current;
   const cur = idx ?? Math.max(0, steps.findIndex((s) => s.id === curId));
   const step = finished ? null : steps[cur];
   const [starting, setStarting] = useState(false);
@@ -445,7 +448,7 @@ export default function Wizard({ onDone, onExit, onStart }) {
             <h2 className="mb-3 text-base font-medium">{t(STEP_TITLE[step.id])}</h2>
 
             {step.id === 'pair' && <PairStep step={step} />}
-            {(step.id === 'claude' || step.id === 'codex') && <EngineStep steps={view.steps} refresh={refresh} />}
+            {ENGINE_STEPS.has(step.id) && <EngineStep steps={view.steps} refresh={refresh} />}
             {step.id === 'git' && <GitStep step={step} refresh={refresh} />}
             {step.id === 'profile' && <ProfileStep step={step} refresh={refresh} onSkip={() => act('skip')} />}
             {step.id === 'integrations' && <IntegrationsStep step={step} refresh={refresh} />}

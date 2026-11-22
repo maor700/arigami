@@ -35,7 +35,7 @@ import { Section, SettingCard, StatusPill, Field, Toggle, CopyRow, ErrorLine, BT
 
 // Families rendered by a section of their own — everything else falls into the
 // "infrastructure status" list in the drawer (git, desktop, repo:*).
-const OWN_SECTION = new Set(['identity', 'claude', 'codex', 'whatsapp', 'remote', 'push', 'telemetry', 'composio', 'mcp', 'voice', 'telephony']);
+const OWN_SECTION = new Set(['identity', 'claude', 'codex', 'gemini', 'whatsapp', 'remote', 'push', 'telemetry', 'composio', 'mcp', 'voice', 'telephony']);
 export const CONNECTIONS_ADVANCED_IDS = ['owner', 'claude-more', 'channels', 'remote-advanced', 'status', 'audit'];
 const PICKER_SECTIONS = new Set(['mcp', 'integrations', 'add']);
 

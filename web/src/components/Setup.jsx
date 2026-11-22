@@ -14,7 +14,7 @@ import RepoPicker from './setup/RepoPicker.jsx';
 import { RepoRow } from './setup/RepoList.jsx';
 import { addOutcome } from '../lib/repo-status.js';
 import { entryFromRepo, repoNameFromSource } from '../lib/repo-picker.js';
-import { anyEngineConnected } from './setup/EngineConnect.jsx';
+import { anyEngineConnected, enginesFrom } from './setup/EngineConnect.jsx';
 import * as setupApi from '../lib/setup-api.js';
 import { BTN, BTN2, BTN2_SM, INPUT as FIELD } from './setup/shared.jsx';
 import { Badge } from './ui/badge.jsx';
@@ -311,7 +311,7 @@ export default function Setup({ onClose, onCreated, onRunWizard }) {
   const [profiles, setProfiles] = useState([]);
   const [repoList, setRepoList] = useState([]); // GET /onboarding/repos — real per-repo clone state
   const [repoNote, setRepoNote] = useState(null);
-  const [engines, setEngines] = useState(null); // {claude, codex}: {ok, detail, data} from setup-api.overview()
+  const [engines, setEngines] = useState(null); // {claude, codex, gemini}: {ok, detail, data} from setup-api.overview()
   const [more, setMore] = useState(false);
   const { setupTick, wizardTick } = useStore();
 
@@ -320,8 +320,7 @@ export default function Setup({ onClose, onCreated, onRunWizard }) {
       const [st, ov, rl] = await Promise.all([api.get('/onboarding/status'), setupApi.overview().catch(() => null), api.get('/onboarding/repos').catch(() => null)]);
       setData(st);
       if (Array.isArray(rl)) setRepoList(rl);
-      const cap = (id) => ov?.capabilities?.find((c) => c.id === id) || null;
-      setEngines({ claude: cap('claude'), codex: cap('codex') });
+      setEngines(enginesFrom(ov));
       setErr(null);
     } catch (e) {
       setErr(e.message);

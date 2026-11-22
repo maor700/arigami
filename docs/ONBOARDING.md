@@ -83,7 +83,7 @@ and trigger-readiness.
 
 ### Taxonomy — a tree, not a flat list
 
-- **Global (credentials):** `claude-cli`/`claude-auth` or `codex-cli`/`codex-auth` → `git-auth` (GH_TOKEN / gh). Gates; the engine not connected carries `required:false` once the other one is.
+- **Global (credentials):** `claude-cli`/`claude-auth`, `codex-cli`/`codex-auth` or `gemini-cli`/`gemini-auth` → `git-auth` (GH_TOKEN / gh). Gates; an engine not connected carries `required:false` once another one is.
 - **Per-repo group** (one per `repos.json` entry): `repo:<n>.cloned` → `repo:<n>.env` → `repo:<n>.deps`.
 - **Profile-specific:** `linear-connector` (only if `profile.issueSource == "linear"`), `voice` (Groq), `playwright` (Chromium/ffmpeg binary presence).
 

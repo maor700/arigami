@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { fmtTokens, contextColor } from './ui.jsx';
 import { useT } from '../lib/i18n.js';
 import { api } from '../lib/api.js';
-import { supportsCompaction } from '../lib/engines.js';
+import { supportsCompaction, isClaudeEngine } from '../lib/engines.js';
 import { Button } from './ui/button.jsx';
 import { Checkbox } from './ui/checkbox.jsx';
 import { Input } from './ui/input.jsx';
@@ -133,7 +133,7 @@ export default function ContextModal({ session, usage, onClose }) {
             />
             <span className="text-xs text-muted-foreground">%</span>
           </div>
-          <div className="mt-1.5 ps-6 text-xs text-muted-foreground">{t('dialogs.ctxAutoCompactRestartNote')}</div>
+          {isClaudeEngine(session.engine) && <div className="mt-1.5 ps-6 text-xs text-muted-foreground">{t('dialogs.ctxAutoCompactRestartNote')}</div>}
         </div>}
 
         <div className="flex items-center justify-end gap-2 border-t border-border px-5 py-3">

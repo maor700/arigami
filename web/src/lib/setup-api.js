@@ -42,6 +42,7 @@ async function legacyOverview() {
   push('identity', false, '');
   push('claude', step('claude')?.status === 'ok', step('claude')?.detail, step('claude')?.data);
   push('codex', step('codex')?.status === 'ok', step('codex')?.detail, step('codex')?.data);
+  push('gemini', step('gemini')?.status === 'ok', step('gemini')?.detail, step('gemini')?.data);
   push('git', step('git')?.status === 'ok', step('git')?.detail, { ...step('git')?.data, ghLogin: wiz?.ghLogin });
   push('whatsapp', wa?.status === 'connected', wa?.user || wa?.status, wa);
   push('composio', !!step('integrations')?.data?.composio, '', step('integrations')?.data);

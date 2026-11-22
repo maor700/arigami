@@ -9,6 +9,7 @@
 //            redirect URL pasted back (the CLI's own "paste the redirect URL"
 //            path). Both are offered; whichever lands first wins.
 //   codex    Codex: `codex login` on the host; same loopback + paste-back as mcp.
+//   gemini   Gemini: agy's Google sign-in on the host; paste the code Google shows, the host types it into agy — polling sees it finish.
 // Every flow also offers "paste a token instead" (TokenStep) when
 // `manual.token` is true. Links are absolute provider URLs the server hands
 // back — never a host-local address — so they work from a phone too.
@@ -31,8 +32,9 @@ export default function OAuthCodeStep({ capability, manual = {}, onDone, onCance
   const t = useT();
   const flow = manual.flow || 'pkce';
   // Flows where the human can finish by pasting something back from the browser.
-  const pasteBack = flow === 'pkce' || flow === 'mcp' || flow === 'codex';
+  const pasteBack = flow === 'pkce' || flow === 'mcp' || flow === 'codex' || flow === 'gemini';
   const loopback = flow === 'mcp' || flow === 'codex'; // paste the redirect URL, then keep polling
+  const keepPolling = loopback || flow === 'gemini'; // the paste is not the end: the CLI finishes the exchange after it
   const [mode, setMode] = useState(null); // null | 'link' | 'token'
   const [link, setLink] = useState(null); // {id?, url, code?}
   const [code, setCode] = useState('');
@@ -113,7 +115,7 @@ export default function OAuthCodeStep({ capability, manual = {}, onDone, onCance
       // M1: handing the redirect URL to `claude mcp login` is not the end — the
       // token exchange happens after it, so stay on the card and let the poll
       // report success (the pkce flow, by contrast, is done at this point).
-      if (loopback) return;
+      if (keepPolling) return;
       setLink(null);
       setMode(null);
       onDone?.(r);
@@ -188,7 +190,7 @@ export default function OAuthCodeStep({ capability, manual = {}, onDone, onCance
         )}
         {pasteBack && (
           <>
-            <div className="text-xs leading-snug text-fgdim">{t(flow === 'codex' ? 'setup.oauth.codexHint' : loopback ? 'setup.oauth.mcpHint' : 'setup.oauth.linkHint')}</div>
+            <div className="text-xs leading-snug text-fgdim">{t(flow === 'codex' ? 'setup.oauth.codexHint' : flow === 'gemini' ? 'setup.oauth.geminiHint' : loopback ? 'setup.oauth.mcpHint' : 'setup.oauth.linkHint')}</div>
             <div className="flex gap-2">
               <input className={`${INPUT} min-w-0 flex-1`} dir="auto" value={code} onChange={(e) => setCode(e.target.value)} placeholder={t(loopback ? 'setup.oauth.redirectPlaceholder' : 'setup.oauth.codePlaceholder')} spellCheck={false} autoCapitalize="off" autoCorrect="off" onKeyDown={(e) => e.key === 'Enter' && code.trim() && exchange()} />
               {navigator.clipboard?.readText && <button type="button" className={BTN2} onClick={pasteClip}>{t('setup.oauth.paste')}</button>}
@@ -209,7 +211,7 @@ export default function OAuthCodeStep({ capability, manual = {}, onDone, onCance
     <div className="flex flex-col gap-2">
       <div className="flex flex-wrap gap-2">
         <button type="button" className={neutral ? BTN2 : BTN} disabled={busy} onClick={start}>
-          {signInLabel || t(flow === 'device' ? 'setup.oauth.signInDevice' : flow === 'redirect' ? 'setup.oauth.signInRedirect' : flow === 'mcp' ? 'setup.oauth.signInMcp' : flow === 'codex' ? 'setup.oauth.signInCodex' : 'setup.oauth.signIn')}
+          {signInLabel || t(flow === 'device' ? 'setup.oauth.signInDevice' : flow === 'redirect' ? 'setup.oauth.signInRedirect' : flow === 'mcp' ? 'setup.oauth.signInMcp' : flow === 'codex' ? 'setup.oauth.signInCodex' : flow === 'gemini' ? 'setup.oauth.signInGemini' : 'setup.oauth.signIn')}
         </button>
         {manual.token !== false && <button type="button" className={BTN2} onClick={() => setMode('token')}>{t('setup.oauth.pasteToken')}</button>}
         {onCancel && <button type="button" className={BTN2} onClick={onCancel}>{t('setup.cancel')}</button>}

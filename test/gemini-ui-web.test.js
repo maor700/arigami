@@ -144,9 +144,8 @@ test('permission modes: all four, with ask and bypass worded for what agy does; 
   expect(html).not.toContain('Codex');
   expect(Launcher.permissionModeForEngine('plan', 'gemini')).toBe('plan');
   expect(Launcher.permissionModeForEngine('default', 'gemini')).toBe('default');
-  // the CLI-update badge + "refresh model list" and the /usage tab are gated on the claude engine
+  // the CLI-update badge + "refresh model list" are gated on the claude engine
   expect(src('components/ComposerPill.jsx')).toMatch(/extra=\{isClaudeEngine\(session\.engine\) && \(/);
-  expect(src('components/SlashCommands.jsx')).toMatch(/normalizeEngine\(engine\) === 'claude' \? TABS : TABS\.filter\(\(\[id\]\) => id !== 'usage'\)/);
 });
 
 test('the launcher picker lists Gemini families when the engine is gemini', () => {
@@ -163,13 +162,13 @@ test('a saved launcher preset keeps engine gemini', () => {
   expect(prefs.getPrefs().sessionPresets.find((x) => x.id === junk).engine).toBe('');
 });
 
-test('providers: gemini accounts feed the gemini engine; the local type is the only one and has nothing to add', () => {
+test('providers: gemini accounts feed the gemini engine; the local type is the only one, signed in through the browser', () => {
   expect(providers.PROVIDER_IDS).toEqual(['claude', 'codex', 'gemini']);
   expect(providers.providerForEngine('gemini')).toBe('gemini');
   expect(providers.providerOf({ provider: 'gemini' })).toBe('gemini');
   expect(providers.providerLabel('gemini')).toBe('Gemini');
   expect(providers.PROVIDERS.gemini.localType).toBe('gemini-home');
-  expect(providers.PROVIDERS.gemini.methods).toEqual([]);
+  expect(providers.PROVIDERS.gemini.methods).toEqual([{ id: 'browser', type: 'gemini-home' }]);
   expect(providers.TYPE_LABEL_KEYS['gemini-home']).toBe('launcher.account.typeGeminiHome');
   // the snapshot from the accounts list: one 5-hour window, no week
   const u = providers.snapshotUsage({ provider: 'gemini', lastUsage: { session: 3, week: null, sessionMins: 300, at: 1 } });

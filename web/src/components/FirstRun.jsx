@@ -6,7 +6,7 @@ import { Logo } from './Logo.jsx';
 import { Button } from './ui/button.jsx';
 import { Tip } from './ui/tooltip.jsx';
 import * as setupApi from '../lib/setup-api.js';
-import { anyEngineConnected } from './setup/EngineConnect.jsx';
+import { anyEngineConnected, enginesFrom } from './setup/EngineConnect.jsx';
 import { faArrowUp, faCamera, faComment, faCodeBranch } from '@fortawesome/free-solid-svg-icons';
 
 // F8: no sessions yet → one question ("What would you like me to do?"), three
@@ -25,14 +25,13 @@ export default function FirstRun({ config, onCreated, onOpenLauncher, onNeedsSet
   const [val, setVal] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
-  // Is an engine (Claude or Codex) connected? null = not known yet (never blocks; the host's own card still catches it).
+  // Is an engine (Claude, Codex or Gemini) connected? null = not known yet (never blocks; the host's own card still catches it).
   const [connected, setConnected] = useState(null);
   useEffect(() => {
     let live = true;
     const check = () => setupApi.overview().then((ov) => {
       if (!live) return;
-      const cap = (id) => ov?.capabilities?.find((c) => c.id === id) || null;
-      setConnected(anyEngineConnected({ claude: cap('claude'), codex: cap('codex') }));
+      setConnected(anyEngineConnected(enginesFrom(ov)));
     }).catch(() => {});
     check();
     const id = setInterval(check, 4000); // a sign-in finished in another tab/window lifts the gate by itself

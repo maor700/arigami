@@ -380,6 +380,16 @@ export const strings = {
   'launcher.account.codexVerifying': 'מחובר — קורא את פרטי החשבון…',
   'launcher.account.codexStarting': 'מפעיל codex login…',
   'launcher.account.codexDone': 'חשבון Codex נוסף',
+  'launcher.account.geminiBrowser': '🔓 כניסה עם Google',
+  'launcher.account.geminiAddBody': 'Gemini רץ על ה-Antigravity CLI ‏(agy) של המכונה הזו ועל כניסת ה-Google האחת שלו. היכנסו כאן עם Google — ה-CLI שומר את הכניסה, שום דבר לא נשמר ב-Arigami.',
+  'launcher.account.geminiStep1': 'פתחו את דף הכניסה',
+  'launcher.account.geminiStep1b': ' ואשרו עם חשבון ה-Google שעליו Gemini ירוץ.',
+  'launcher.account.geminiStep2': 'Google מציגה אז קוד אישור. העתיקו אותו והדביקו למטה.',
+  'launcher.account.geminiCodePlaceholder': 'קוד אישור (4/0A…)',
+  'launcher.account.geminiStarting': 'מפעיל את ההתחברות של ה-Antigravity CLI…',
+  'launcher.account.geminiVerifying': 'הקוד נשלח — ממתין שה-CLI יסיים להתחבר…',
+  'launcher.account.geminiDone': 'Gemini מחובר',
+  'launcher.account.signInAgain': 'כניסה מחדש',
   'launcher.account.codexPasteTitle': 'הדבקת מפתח API של OpenAI',
   'launcher.account.codexPasteBody':
     'מפתח API מ-platform.openai.com. הוא נבדק מול ה-API לפני השמירה, והשימוש מחויב לפי בקשה למפתח הזה — לא לתוכנית ChatGPT.',
@@ -463,7 +473,7 @@ export const strings = {
   'launcher.mcp.checkNow': 'בדיקה עכשיו',
   'launcher.mcp.statusHint':
     'השרתים ש-{engine} של הסשן הזה עלה איתם, וכל אחד נבדק במקום שבאמת מגיש אותו: Arigami, ההגדרות של המנוע עצמו, או קריאה חיה לכלי. חיבור מחדש מפעיל מחדש את תהליך {engine} של הסשן, וכך הוא מקבל גם שירותים שחוברו מאז שעלה.',
-  'launcher.firstRun.needEngineTitle': 'קודם מחברים את Claude או את Codex',
-  'launcher.firstRun.needEngineBody': 'Arigami עונה דרך Claude או דרך Codex — מחברים את מה שיש לך (מספיק אחד). זה לוקח כדקה.',
-  'launcher.firstRun.needEngineBtn': 'חיבור Claude או Codex',
+  'launcher.firstRun.needEngineTitle': 'קודם מחברים את Claude, את Codex או את Gemini',
+  'launcher.firstRun.needEngineBody': 'Arigami עונה דרך Claude, Codex או Gemini — מחברים את מה שיש לך (מספיק אחד). זה לוקח כדקה.',
+  'launcher.firstRun.needEngineBtn': 'חיבור מנוע AI',
 };

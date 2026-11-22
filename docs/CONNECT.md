@@ -1,6 +1,6 @@
 # Connecting services just-in-time (`connect-*` playbooks)
 
-Arigami starts with the minimum — pairing and one engine account (Claude or Codex). Everything
+Arigami starts with the minimum — pairing and one engine account (Claude, Codex or Gemini). Everything
 else (Linear/Notion/Sentry over their own MCP servers, Gmail via Composio,
 GitHub, Tailscale remote access, a repo, WhatsApp…)
 is connected **from inside the chat, the moment a task needs it**. This
@@ -81,7 +81,7 @@ Microsoft / Apple") is finished in the owner's own Chrome on the shared desktop,
    `myaccount.google.com`, `google.com`, the other identity providers' sign-in and account pages
    (`login.microsoftonline.com`, `login.live.com`, `account.microsoft.com`, `myaccount.microsoft.com`,
    `appleid.apple.com`, `account.apple.com`), `claude.ai`, `claude.com`,
-   `platform.claude.com`, `console.anthropic.com`, `auth.openai.com`, `openai.com`, `chatgpt.com`, `backend.composio.dev`,
+   `platform.claude.com`, `console.anthropic.com`, `auth.openai.com`, `openai.com`, `chatgpt.com`, `antigravity.google`, `backend.composio.dev`,
    `composio.dev`, `login.tailscale.com`, `tailscale.com`, `github.com`, plus the
    provider domain of a non-Google Composio toolkit (`slack.com`, `linear.app`,
    `notion.so`), and — for `connect-mcp` — the vendor domains of
