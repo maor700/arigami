@@ -70,7 +70,7 @@ Verified live 2026-11-22 (agy 1.5.14, gemini-3.8-flash), through the real driver
 - **`/compact`** is agy's own command, sent as a prompt; the chat shows "compacting" / "compacted". **Auto-compact** (`POST /autocompact`, no respawn): when `usage_update` passes the chosen % of the window agy reports, the same `/compact` runs once the turn ends — once per crossing, so a compaction that does not bring the context back under the line is not repeated. The threshold logic is unit-tested; a real crossing (≥ 50% of 1M tokens) was not reproduced.
 - **Tools that wait for a human.** agy abandons an MCP tool call after exactly 3 minutes (measured: "timed out after 3m0s"). `request_screen`, `request_setup`, `sign_in`, `vault_collect` and `vault_fill` therefore answer a gemini session `{still_waiting, wait_key}` after 150 seconds, and the agent calls the tool again with the key — the same card, the same request; the host keeps a landed answer for 5 minutes.
 - **Images** go as ACP image blocks; other attachments are listed by path.
-- **Sign-in from the cockpit.** Capability `gemini`, its setup card, the wizard step and playbook `connect-gemini` — see "Gemini accounts and quota" below. Measured and not used by that flow yet: `agy acp --login` needs no terminal (it prints the Google link and reads the code, or the landing address, from stdin) and takes `--gemini-dir`, so it could also sign in an overridden gemini home.
+- **Sign-in from the cockpit.** Capability `gemini`, its setup card, the wizard step and playbook `connect-gemini` — see "Gemini accounts and quota" below. That flow runs `agy acp --login`: no terminal needed, and `--gemini-dir` signs in an overridden gemini home.
 - **Deleting a session** removes its dir and the conversations agy kept for it (`conversations/<id>.db`, `brain/<id>/`, `annotations/<id>.pbtxt`, `presence/<id>.lock` — measured: nothing of them remains in `session/list`).
 - **One-shots.** `agy -p --output-format json` (`runOneShot`, engine `gemini`); a run that needs MCP servers (explain / review / summary), or any run under an overridden gemini home, goes over ACP like a session. Both verified live. With no gemini model named they run on the flash family at its lowest effort (from the cached list), else agy's default.
 
@@ -282,15 +282,15 @@ Provider `gemini` feeds the `gemini` engine (Google's Antigravity CLI, `agy`). O
   adopted on the next `GET /__api/accounts`.
 
 Signing in from the cockpit (`server/gemini-login.ts`, flow ids `agy_…` on the generic `/__api/accounts/login/*` routes): the
-host runs `agy` under the pty bridge, presses Enter on its "Google OAuth" menu row, and hands out the authorize link agy
-prints (Google redirects to `antigravity.google/oauth-callback`, which shows a code). The pasted code — or the callback
-address, the host takes `code=` out of it — is typed into agy, and the flow is done when agy has written its token file;
-agy is stopped before its chat opens. Only code characters are ever typed. An agy that is already signed in shows no menu
-and the flow ends `done`. The same flow is the `gemini` setup capability (`POST /__api/setup/gemini`, playbook
-`connect-gemini`), the third card of the engine step in the wizard / Setup / the chat's setup card, Add account › Gemini,
-and "Sign in again" on a card whose login is dead (401 or signed out). Measured up to the link against the real agy in a
-scratch home; the code exchange itself only against a scripted stand-in. With `ARIGAMI_GEMINI_HOME` set the sign-in still
-writes to agy's default home (only `agy acp` takes `--gemini-dir`).
+host runs `agy acp --login` (plain pipes, no terminal; `--gemini-dir` when `ARIGAMI_GEMINI_HOME` is set) and hands out the
+authorize link agy prints (Google redirects to `antigravity.google/oauth-callback`, which shows a code). The pasted code —
+or the callback address, the host takes `code=` out of it — goes to agy's stdin, only code characters ever do, and the flow
+is done when agy has written its token file. A refused code ends at once with agy's own line. agy offers a link even when it
+is already signed in and keeps the old login until the new one lands, so the same flow is "sign in again". It is also the
+`gemini` setup capability (`POST /__api/setup/gemini`, playbook `connect-gemini`), the third card of the engine step in the
+wizard / Setup / the chat's setup card, and Add account › Gemini. Measured against the real agy in scratch homes: the link,
+an existing login left untouched on cancel, a refused code. An accepted code needs a real Google consent — only run against
+a scripted stand-in.
 
 The token file (`antigravity-cli/antigravity-oauth-token`) is agy's. The host reads the access token from it for the calls
 below and nothing else: it is never written, copied into `accounts.json`, logged, or passed to a session.

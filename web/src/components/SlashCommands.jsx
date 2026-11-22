@@ -420,7 +420,7 @@ function CapBody({ caps, session, initialTab, onClose, onPickCommand }) {
   const codex = engineId !== 'claude'; // codex and gemini: no claude-style init report
   const { codexVersion, geminiVersion } = useModels();
   // P4-2: codex/gemini have no init report — a thread id means it ran; account/plan come from the accounts store.
-  const started = codex ? !!session?.claude?.sessionId : !!(caps.commands?.length || caps.slashCommands?.length || caps.mcpServers?.length || caps.counts?.commands || caps.counts?.mcpServers);
+  const started = codex ? !!(session?.claude?.sessionId || caps.commands?.length) : !!(caps.commands?.length || caps.slashCommands?.length || caps.mcpServers?.length || caps.counts?.commands || caps.counts?.mcpServers);
   const codexAccount = codex ? sessionAccounts(session, accounts).account : null;
   return (
     <div

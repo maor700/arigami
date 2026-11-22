@@ -1,4 +1,4 @@
-// Signing agy in from the cockpit: the host presses Enter on "Google OAuth", shows agy's link, types the pasted code — agy writes its own token file.
+// Signing agy in from the cockpit: the host runs `agy acp --login`, shows agy's link, hands it the pasted code — agy writes its own token file.
 import { test, expect } from 'bun:test';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -18,8 +18,8 @@ function env(extra: Record<string, string> = {}) {
     home,
     token: path.join(home, 'antigravity-cli', 'antigravity-oauth-token'),
     vars: {
-      ARIGAMI_DIR: dir, HOME: dir, ARIGAMI_CODEX_HOME: path.join(dir, 'no-codex'), ARIGAMI_GEMINI_HOME: home, ARIGAMI_AGY_BIN: FAKE, CLAUDE_CODE_OAUTH_TOKEN: '',
-      FAKE_AGY_CODE: CODE, FAKE_AGY_RECORD: path.join(dir, 'typed'), ARIGAMI_GEMINI_LOGIN_EXCHANGE_MS: '2500', ARIGAMI_GEMINI_LOGIN_MENU_MS: '2500', ...extra,
+      ARIGAMI_DIR: dir, HOME: dir, ARIGAMI_CODEX_HOME: path.join(dir, 'no-codex'), ARIGAMI_GEMINI_HOME: home, ARIGAMI_GEMINI_DIR: '', ARIGAMI_AGY_BIN: FAKE, CLAUDE_CODE_OAUTH_TOKEN: '',
+      FAKE_AGY_CODE: CODE, FAKE_AGY_RECORD: path.join(dir, 'typed'), FAKE_AGY_ARGS: path.join(dir, 'args'), ARIGAMI_GEMINI_LOGIN_EXCHANGE_MS: '2500', ...extra,
     },
   };
 }
@@ -27,19 +27,17 @@ const PRELUDE =
   "const a=await import('./server/accounts.js');a.initAccounts();const gl=await import('./server/gemini-login.ts');" +
   'const until=async(id,ok,ms=8000)=>{const t=Date.now();for(;;){const s=gl.geminiLoginStatus(id);if(ok(s)||Date.now()-t>ms)return s;await new Promise(r=>setTimeout(r,100));}};';
 
-test('parseAgyLogin reads the whole authorize link out of real agy output (the printed text is wrapped, the hyperlink is not)', async () => {
+test('parseAgyLogin reads the authorize link out of real `agy acp --login` output', async () => {
   const { parseAgyLogin } = await import('../server/gemini-login.ts');
-  const raw = fs.readFileSync(path.join(HERE, 'fixtures/gemini/agy-login.raw'), 'utf8');
+  const raw = fs.readFileSync(path.join(HERE, 'fixtures/gemini/agy-login.txt'), 'utf8');
   const seen = parseAgyLogin(raw);
-  expect(seen.menu).toBe(true);
   expect(seen.url).toStartWith('https://accounts.google.com/o/oauth2/auth?');
   expect(seen.url).toContain('redirect_uri=https%3A%2F%2Fantigravity.google%2Foauth-callback');
   expect(seen.url).toEndWith('state=TESTSTATE');
-  // before Enter: the menu is up, no link yet
-  expect(parseAgyLogin(raw.slice(0, raw.indexOf('Signing in')))).toEqual({ menu: true, url: null });
-  expect(parseAgyLogin('')).toEqual({ menu: false, url: null });
-  // no hyperlink escape → the plain text is the fallback
-  expect(parseAgyLogin('open https://accounts.google.com/o/oauth2/auth?x=1 now').url).toBe('https://accounts.google.com/o/oauth2/auth?x=1');
+  expect(parseAgyLogin(raw.slice(0, raw.indexOf('https://')))).toEqual({ url: null });
+  expect(parseAgyLogin('')).toEqual({ url: null });
+  // a terminal hyperlink, when agy prints one, wins over wrapped text
+  expect(parseAgyLogin('\x1b]8;id=x;https://accounts.google.com/o/oauth2/auth?a=1&b=2\x07Click\x1b]8;;\x07 https://accounts.google.com/o/oauth2/auth?a=1').url).toBe('https://accounts.google.com/o/oauth2/auth?a=1&b=2');
 });
 
 test('cleanAuthCode: only code characters ever reach the terminal', async () => {
@@ -49,7 +47,7 @@ test('cleanAuthCode: only code characters ever reach the terminal', async () => 
   for (const bad of ['', 'short', 'two words here', 'code\rrm -rf /', 'a;b|c&d$(x)', '\x1b[2Jabcdefgh', 'x'.repeat(600), null, undefined]) expect(cleanAuthCode(bad)).toBeNull();
 });
 
-test('sign-in: menu → link → pasted code → agy writes its token → the gemini-home account appears, agy is stopped', () => {
+test('sign-in: link → pasted code → agy writes its token → the gemini-home account appears, agy is stopped; an overridden home is passed on', () => {
   const e = env();
   const r = runInChild(
     PRELUDE +
@@ -77,8 +75,10 @@ test('sign-in: menu → link → pasted code → agy writes its token → the ge
   expect(o.after).toEqual(['gemini:gemini-home']);
   expect(o.active).toBe(true);
   expect(o.again).toEqual({ ok: true, state: 'done' });
-  // exactly the code was typed, once — and the host wrote nothing into agy's home itself
+  // exactly the code was handed over, once — and the host wrote nothing into agy's home itself
   expect(fs.readFileSync(e.vars.FAKE_AGY_RECORD, 'utf8')).toBe(CODE);
+  // no terminal emulation: agy's own headless login, pointed at the configured gemini home
+  expect(fs.readFileSync(e.vars.FAKE_AGY_ARGS, 'utf8').trim().split('\n')).toEqual(['acp', '--gemini-dir', e.home, '--login']);
   expect(fs.existsSync(e.token)).toBe(true);
   expect(fs.readFileSync(path.join(e.dir, 'accounts.json'), 'utf8')).not.toContain('access_token');
 });
@@ -96,7 +96,7 @@ test('a code agy rejects ends in an error that says what agy said; cancel and un
   if (!r.ok) throw new Error(r.error);
   const o = r.out[0];
   expect(o.bad.state).toBe('error');
-  expect(o.bad.error).toContain('Invalid authorization code');
+  expect(o.bad.error).toBe('agy: couldn\'t log in: token exchange failed: oauth2: "invalid_grant" "Bad Request"'); // agy's own line, at once
   expect(o.cancelled).toBe('cancelled');
   expect(o.c).toEqual({ ok: true });
   expect(o.late.ok).toBe(false);
@@ -106,14 +106,24 @@ test('a code agy rejects ends in an error that says what agy said; cancel and un
   expect(fs.existsSync(e.token)).toBe(false);
 });
 
-test('already signed in: no menu comes up, the flow ends done without typing anything; no agy at all is said plainly', () => {
+test('signing in again: a link is offered even with a login present, and cancelling leaves that login untouched; no agy at all is said plainly', () => {
   const e = env();
   fs.mkdirSync(path.dirname(e.token), { recursive: true });
-  fs.writeFileSync(e.token, '{"token":{"access_token":"t","expiry":"2020-01-01T00:00:00Z"}}');
-  const r = runInChild(PRELUDE + "const st=gl.startGeminiLogin();const done=await until(st.id,s=>s.state==='done'||s.state==='error',6000);emit({done});", e.vars);
+  const old = '{"token":{"access_token":"t","expiry":"2020-01-01T00:00:00Z"}}';
+  fs.writeFileSync(e.token, old);
+  const r = runInChild(PRELUDE + "const st=gl.startGeminiLogin();const w=await until(st.id,s=>s.state!=='starting');gl.cancelGeminiLogin(st.id);emit({w,after:gl.geminiLoginStatus(st.id).state});", e.vars);
   if (!r.ok) throw new Error(r.error);
-  expect(r.out[0].done.state).toBe('done');
+  expect(r.out[0].w.state).toBe('awaiting');
+  expect(r.out[0].w.url).toStartWith('https://accounts.google.com/');
+  expect(r.out[0].after).toBe('cancelled');
+  expect(fs.readFileSync(e.token, 'utf8')).toBe(old);
   expect(fs.existsSync(e.vars.FAKE_AGY_RECORD)).toBe(false);
+
+  // without an override nothing extra is passed — agy uses its own default home
+  const plain = env({ ARIGAMI_GEMINI_HOME: '' });
+  const r1 = runInChild(PRELUDE + "const st=gl.startGeminiLogin();await until(st.id,s=>s.state!=='starting');gl.cancelGeminiLogin(st.id);emit({});", plain.vars);
+  if (!r1.ok) throw new Error(r1.error);
+  expect(fs.readFileSync(plain.vars.FAKE_AGY_ARGS, 'utf8').trim().split('\n')).toEqual(['acp', '--login']);
 
   const none = env({ ARIGAMI_AGY_BIN: path.join(e.dir, 'no-such-agy') });
   const r2 = runInChild(PRELUDE + 'emit(gl.startGeminiLogin());', none.vars);

@@ -35,6 +35,7 @@ export const strings = {
   'rail.ladderRunningOn': 'running on {model}',
   'rail.ladderResetsAt': '{model} quota resets at {time}',
   'rail.ladderCompacted': 'context was compacted to fit the smaller window',
+  'rail.ladderEffort': 'this model has no {effort} effort — it returns with the model',
   'rail.ladderTitle': 'The session runs on a weaker model until {model}\'s quota is back',
   'rail.model.haiku': 'Haiku',
   'rail.model.sonnet': 'Sonnet',
