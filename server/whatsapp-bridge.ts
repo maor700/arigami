@@ -524,7 +524,7 @@ export function startBridge(sessionId: string, wake: WakeFn, opts: { internal?: 
         else if (stderrLines === STDERR_MAX_LINES + 1) console.error('[wa-mcp] … further stderr from this process suppressed');
       }
     });
-    const c = new Client({ name: 'arigami-host', version: '0.2.0' });
+    const c = new Client({ name: 'arigami-host', version: '0.2.0' }, (await import('./lib/mcp-validator.js')).mcpClientOptions());
     transport = t;
     spawnedAt = Date.now();
     let exitInfo: ExitInfo = null;

@@ -71,6 +71,8 @@ export interface ScreenConfig {
   snapshotChangeThreshold: number;
   screenshotRetentionDays: number;
   screenshotMaxMb: number;
+  // A session Chrome unused this long is closed (lib/chrome.ts idle closer); unset = 10 min. ARIGAMI_BROWSER_IDLE_MS wins.
+  browserIdleMs?: number;
   // Per-session desktops (T8): pool of VNC ports handed to `server/lib/desktops.ts`
   // when it lazily spawns an `Xvfb`+`x11vnc` pair for a session. The X display
   // number is derived from the port's offset into this range (port 5901 → :100,
@@ -218,6 +220,9 @@ export interface MemoryLearningConfig {
 }
 export interface MemoryConfig {
   learning: MemoryLearningConfig;
+  // CONSOL1: optional token caps — shared USER.md/MEMORY.md and per agent
+  // namespace (agents.<slug> → that agent's MEMORY.md). Absent = memory.ts CAPS.
+  caps?: { user?: number; memory?: number; agents?: Record<string, number> };
 }
 
 // Voice & phone layer (docs/VOICE.md): one kill-switch + a monthly USD cap per provider id (absent = no cap).

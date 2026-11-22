@@ -156,18 +156,33 @@ async function fetchPrSnapshot(
 
 // Fold one snapshot (or the error that replaced it) into the shape pollOne's
 // shared outcome handling expects.
-function prOutcome(l: Listener, snap: PrSnapshot | undefined, err: { kind: PollOutcome['kind']; message?: string } | undefined): PollOutcome {
+// The self-filter is the host's own GitHub login, not the PR author: on a review
+// session the author is the other side, and their replies must wake it.
+function prOutcome(l: Listener, snap: PrSnapshot | undefined, err: { kind: PollOutcome['kind']; message?: string } | undefined, selfLogin?: string): PollOutcome {
   if (!snap) return { kind: err?.kind || 'transient', error: err?.message };
-  const ignoreLogin = snap.meta?.user?.login as string | undefined;
-  const diff = diffPr(snap, l.watermark as PrWatermark, { fireOn: l.fireOn, ignoreLogin });
-  return { kind: 'ok', diff, ignoreLogin };
+  const diff = diffPr(snap, l.watermark as PrWatermark, { fireOn: l.fireOn, ignoreLogin: selfLogin });
+  return { kind: 'ok', diff, ignoreLogin: selfLogin };
+}
+
+// Who `gh` is signed in as. Refreshed for free by every GraphQL batch (viewer);
+// the REST path asks `gh api user` at most once an hour. Unknown → no self-filter.
+const SELF_LOGIN_TTL_MS = 3_600_000;
+let selfLogin: { login: string; at: number } | null = null;
+function rememberSelfLogin(login: string | null | undefined): void {
+  if (login) selfLogin = { login, at: Date.now() };
+}
+async function ghSelfLogin(): Promise<string | undefined> {
+  if (selfLogin && Date.now() - selfLogin.at < SELF_LOGIN_TTL_MS) return selfLogin.login;
+  const me = await ghApi('user');
+  rememberSelfLogin(me.ok ? (me.data?.login as string | undefined) : null);
+  return selfLogin?.login;
 }
 
 async function pollGithubPr(l: Listener): Promise<PollOutcome> {
   const { owner, repo, number } = l.params as { owner: string; repo: string; number: number };
   const { snap, err } = await fetchPrSnapshot(owner, repo, number);
   if (err) return { kind: classifyGhError(err.status, err.stderr), error: err.stderr };
-  return prOutcome(l, snap, undefined);
+  return prOutcome(l, snap, undefined, await ghSelfLogin());
 }
 
 // ---- github-pr batch (one GraphQL query per tick) ---------------------------
@@ -227,12 +242,14 @@ async function pollGithubPrBatch(due: Listener[], now: number): Promise<Map<stri
       for (const g of chunk) for (const l of g.listeners) out.set(l.id, prOutcome(l, undefined, err));
       continue;
     }
-    const { results, rate } = parsePrBatch(res.data?.data, res.data?.errors, chunk.length);
+    const { results, rate, viewer } = parsePrBatch(res.data?.data, res.data?.errors, chunk.length);
     if (rate) ghRate = rate;
+    rememberSelfLogin(viewer);
+    const me = viewer || (await ghSelfLogin());
     chunk.forEach((g, j) => {
       const r = results[j];
       for (const l of g.listeners)
-        out.set(l.id, 'snap' in r ? prOutcome(l, r.snap, undefined) : prOutcome(l, undefined, r.err));
+        out.set(l.id, 'snap' in r ? prOutcome(l, r.snap, undefined, me) : prOutcome(l, undefined, r.err));
     });
     // Stop spending the bucket mid-run: the rest waits for the next tick.
     if (quotaPausedUntil(ghRate, now)) break;

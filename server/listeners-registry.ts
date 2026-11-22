@@ -41,7 +41,7 @@ export const BUILTIN_LISTENER_TYPES: ListenerTypeInfo[] = [
     type: 'github-pr',
     label: 'GitHub pull request',
     schema: { type: 'object', properties: { url: { type: 'string' }, owner: { type: 'string' }, repo: { type: 'string' }, number: { type: 'number' } } },
-    fireOn: ['new_review', 'approved', 'changes_requested', 'new_comment', 'ci_failed', 'ci_passed', 'conflicts'],
+    fireOn: ['new_review', 'approved', 'changes_requested', 'new_comment', 'ci_failed', 'ci_passed', 'conflicts', 'new_push'],
     builtin: true,
   },
   {

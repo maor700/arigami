@@ -21,6 +21,7 @@
 // human approving it via /__api/memory/pending/:id/approve.
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { Database } from 'bun:sqlite';
 import { ARIGAMI_DIR } from './lib/instance.js';
 import { runOneShot, hostEngine } from './lib/oneshot.js';
@@ -69,6 +70,26 @@ export function estimateTokens(s: string): number {
 
 export type CappedTarget = 'user' | 'memory';
 export const CAPS: Record<CappedTarget, number> = { user: 600, memory: 900 };
+
+// CONSOL1: per-namespace caps. An agent's MEMORY.md is injected only into that
+// agent's sessions, so its cap can grow without taxing every other session;
+// the shared files stay at CAPS unless config says otherwise. Read lazily so
+// this module keeps no import-time dependency on the config file.
+let capsOverride: (() => { user?: number; memory?: number; agents?: Record<string, number> } | undefined) | null = null;
+export function setCapsSource(fn: typeof capsOverride): void {
+  capsOverride = fn;
+}
+export function capFor(target: CappedTarget, agent?: string | null): number {
+  const o = capsOverride?.() || undefined;
+  if (agent && target === 'memory' && o?.agents && Number(o.agents[agent]) > 0) return Number(o.agents[agent]);
+  const v = Number(o?.[target]);
+  return v > 0 ? v : CAPS[target];
+}
+
+/** CONSOL1: short content hash — the version a writer read, checked on write (optimistic concurrency). */
+export function contentHash(s: string): string {
+  return crypto.createHash('sha256').update(s || '').digest('hex').slice(0, 16);
+}
 
 function ensureDirs(): void {
   fs.mkdirSync(MEMORY_DIR, { recursive: true });
@@ -184,6 +205,9 @@ export interface LogEntry {
   after: string;
   source: string;
   sessionId?: string;
+  /** CONSOL1: content hashes around the write (absent on entries written before CONSOL1). */
+  beforeHash?: string;
+  afterHash?: string;
 }
 
 let logSeq = 0;
@@ -419,7 +443,7 @@ export function searchMemory(opts: { query: string; scope?: string; limit?: numb
 
 // ---- memory_get ---------------------------------------------------------------
 
-export function getMemoryFile(relPath: string): { path: string; content: string } | { error: string } {
+export function getMemoryFile(relPath: string): { path: string; content: string; hash?: string } | { error: string } {
   ensureDirs();
   const clean = String(relPath || '').replace(/^\/+/, '');
   const agentRel = AGENT_REL_RE.exec(clean);
@@ -431,10 +455,11 @@ export function getMemoryFile(relPath: string): { path: string; content: string 
   } catch {
     // The root docs are created lazily on first write; on a fresh instance /
     // agent the UI asks for them before they exist → an empty doc (200), not a 404.
-    if (clean === 'USER.md' || clean === 'MEMORY.md' || (agentRel && agentRel[2] === 'MEMORY.md')) return { path: clean, content: '' };
+    if (clean === 'USER.md' || clean === 'MEMORY.md' || (agentRel && agentRel[2] === 'MEMORY.md')) return { path: clean, content: '', hash: contentHash('') };
     return { error: 'no such file' };
   }
-  return { path: clean, content: fs.readFileSync(full, 'utf8') };
+  const content = fs.readFileSync(full, 'utf8');
+  return { path: clean, content, hash: contentHash(content) };
 }
 
 // ---- memory_write ---------------------------------------------------------------
@@ -451,6 +476,14 @@ export interface WriteMemoryArgs {
   sessionId?: string;
   /** A1: write into this agent's namespace ('memory'/'journal' only; 'user' is always the shared USER.md). */
   agent?: string | null;
+  /**
+   * CONSOL1: the contentHash() of the file the writer based its change on. When
+   * set and the file changed since, the write is refused with `conflict` instead
+   * of silently landing on top of someone else's edit.
+   */
+  expectedHash?: string;
+  /** CONSOL1, internal only (never from the API): an undo restoring a pruned line may exceed the cap. */
+  allowOverCap?: boolean;
 }
 
 export interface WriteResult {
@@ -458,6 +491,16 @@ export interface WriteResult {
   error?: string;
   deduped?: boolean;
   logSeq?: number;
+  /** CONSOL1: the file's hash after the write (chain it as the next write's expectedHash). */
+  hash?: string;
+  conflict?: boolean;
+}
+
+/** CONSOL1: the current hash of a capped file (shared, or an agent's MEMORY.md). */
+export function fileHash(target: CappedTarget, agent?: string | null): string {
+  const slug = normalizeAgent(agent);
+  const rel = target === 'user' ? 'USER.md' : slug ? `agents/${slug}/MEMORY.md` : 'MEMORY.md';
+  return contentHash(readFileSafe(resolveRel(rel)));
 }
 
 function journalRelPath(): string {
@@ -487,6 +530,9 @@ export function writeMemory(args: WriteMemoryArgs): WriteResult {
   const filePath = resolveRel(relPath);
   const before = readFileSafe(filePath);
   const content = (args.content || '').trim();
+  if (args.expectedHash && contentHash(before) !== args.expectedHash)
+    return { ok: false, conflict: true, error: `conflict: ${relPath} changed since it was read — re-read and retry` };
+  const capOf = () => capFor(target as CappedTarget, slug);
 
   if ((action === 'add' || action === 'replace') && !content) return { ok: false, error: 'content required' };
   if (content) {
@@ -505,8 +551,8 @@ export function writeMemory(args: WriteMemoryArgs): WriteResult {
     if (isDuplicate(before, content)) return { ok: true, deduped: true };
     const bullet = `- ${content}`;
     const candidate = before ? `${before.replace(/\n+$/, '')}\n${bullet}\n` : `${bullet}\n`;
-    const cap = CAPS[target as CappedTarget];
-    if (estimateTokens(candidate) > cap)
+    const cap = capOf();
+    if (!args.allowOverCap && estimateTokens(candidate) > cap)
       return { ok: false, error: `would exceed ${target}.md cap (~${cap} tokens) — trim or replace an existing line first` };
     after = candidate;
   } else if (action === 'replace') {
@@ -516,8 +562,10 @@ export function writeMemory(args: WriteMemoryArgs): WriteResult {
     if (idx === -1) return { ok: false, error: 'old_text not found' };
     lines[idx] = `- ${content}`;
     after = lines.join('\n');
-    const cap = CAPS[target as CappedTarget];
-    if (estimateTokens(after) > cap) return { ok: false, error: `would exceed ${target}.md cap (~${cap} tokens)` };
+    const cap = capOf();
+    // A replace that does not grow the file is always allowed — a file that is
+    // already over a (lowered) cap must still be tightenable line by line.
+    if (!args.allowOverCap && estimateTokens(after) > cap && estimateTokens(after) > estimateTokens(before)) return { ok: false, error: `would exceed ${target}.md cap (~${cap} tokens)` };
   } else {
     // remove
     const needle = args.old_text || content;
@@ -531,9 +579,49 @@ export function writeMemory(args: WriteMemoryArgs): WriteResult {
 
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, after);
-  const entry = appendLog({ target, action, path: relPath, before, after, source, sessionId: args.sessionId });
+  const afterHash = contentHash(after);
+  const entry = appendLog({ target, action, path: relPath, before, after, source, sessionId: args.sessionId, beforeHash: contentHash(before), afterHash });
   reindexPath(scopeForRel(relPath, target), relPath, after);
-  return { ok: true, logSeq: entry.seq };
+  return { ok: true, logSeq: entry.seq, hash: afterHash };
+}
+
+// ---- per-line provenance (CONSOL1) ------------------------------------------------
+// The append-only log already carries ts/source/sessionId and the full
+// before/after of every write, so "who wrote this line, from which session,
+// when" is DERIVED from it — no format change, no second store. A line that
+// predates the log (hand-edited file) reports source 'unknown'.
+
+export interface LineProvenance {
+  line: string;
+  seq: number | null;
+  ts: string | null;
+  source: string;
+  sessionId?: string;
+}
+
+export function lineProvenance(target: CappedTarget, agent?: string | null): LineProvenance[] {
+  const slug = normalizeAgent(agent);
+  const rel = target === 'user' ? 'USER.md' : slug ? `agents/${slug}/MEMORY.md` : 'MEMORY.md';
+  const origin = new Map<string, Omit<LineProvenance, 'line'>>();
+  for (const raw of readFileSafe(LOG_FILE).split('\n')) {
+    if (!raw || !raw.includes(`"path":${JSON.stringify(rel)}`)) continue;
+    let e: LogEntry;
+    try {
+      e = JSON.parse(raw);
+    } catch {
+      continue;
+    }
+    if (e.path !== rel) continue;
+    const had = new Set(String(e.before || '').split('\n').map(normalizeLine));
+    for (const l of String(e.after || '').split('\n')) {
+      const n = normalizeLine(l);
+      if (n && !had.has(n)) origin.set(n, { seq: e.seq, ts: e.ts, source: e.source, sessionId: e.sessionId });
+    }
+  }
+  return readFileSafe(resolveRel(rel))
+    .split('\n')
+    .filter((l) => l.trim())
+    .map((line) => ({ line, ...(origin.get(normalizeLine(line)) || { seq: null, ts: null, source: 'unknown' }) }));
 }
 
 // ---- episodes -------------------------------------------------------------------

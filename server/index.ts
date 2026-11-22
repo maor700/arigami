@@ -431,13 +431,13 @@ try {
 // config (it stops the host's entry from connecting) — clear any left over.
 setTimeout(() => void import('./api.js').then((a: any) => a.sweepCliTwins()).catch(() => {}), 5_000).unref?.();
 
-// A session's idle Chrome closes after ARIGAMI_BROWSER_IDLE_MS (10 min) and
-// reopens on its next browser step — unless a human may be looking at it.
+// A session's idle Chrome closes after screen.browserIdleMs / ARIGAMI_BROWSER_IDLE_MS (10 min) and
+// reopens on its next browser step — unless a human may be looking at it or a DevTools client drives it.
 {
   const chromeMod = await import('./lib/chrome.js');
   const cdpMod = await import('./lib/chrome-cdp.js');
   const apiMod = await import('./api.js');
-  chromeMod.startIdleCloser((id) => apiMod.hasOpenScreenRequest(id), (id) => cdpMod.cdpPort(id), (m) => console.log(m));
+  chromeMod.startIdleCloser((id) => apiMod.hasOpenScreenRequest(id), (id) => cdpMod.cdpPort(id));
 }
 
 // A bind failure is the single most confusing way for the host to die — say what
@@ -508,6 +508,18 @@ server.listen(cfg.port, cfg.bind, () => {
   import('./lib/resources.js')
     .then((m) => m.primeCpu())
     .catch(() => {});
+  // One line a minute of the host's own RSS/heap/fds and what it holds per session — logs/host-health.log.
+  Promise.all([import('./lib/host-health.js'), import('./claude.js'), import('./state.js'), import('./lib/desktops.js'), import('./lib/mcp-validator.js')])
+    .then(([h, cl, st, dk, mv]) =>
+      h.startHealthLog(() => ({
+        sessions: st.listSessions({ archived: true }).length,
+        claudeProcs: cl.procCount(),
+        desktops: dk.aliveCount(),
+        chatTails: cl.chatTailCount(),
+        mcpSchemas: mv.compiledSchemas(),
+      }))
+    )
+    .catch((e: any) => console.error('[host] health log failed to start:', e?.message));
   // EXT: load the installed extensions BEFORE the listener scheduler, so an
   // extension's listener type is registered by the time the first tick polls a
   // listener rehydrated from state.json.

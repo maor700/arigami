@@ -72,8 +72,9 @@ function allChecksPassed(snap: PrSnapshot): boolean {
 }
 
 // Compute what's new past the watermark and whether it should wake the session.
-// ignoreLogin (the PR author = usually us) is filtered for *firing* but still
-// advances the watermark, so the agent's own comments never self-wake the loop.
+// ignoreLogin is the GitHub identity this host acts as (never the PR author — on a
+// review session the author is the other side). It is filtered for *firing* but
+// still advances the watermark, so the agent's own comments never self-wake the loop.
 export function diffPr(
   snap: PrSnapshot,
   wm: PrWatermark,
@@ -103,6 +104,9 @@ export function diffPr(
   const dirty = snap.meta?.mergeable_state === 'dirty';
   const conflictFires = fireOn.includes('conflicts') && dirty && !wm.conflictFired;
 
+  // A new head commit. Opt-in: a PR's own session pushes itself, a review session never does.
+  const pushFires = fireOn.includes('new_push') && !!sha && !!wm.headSha && wm.headSha !== sha;
+
   const nextWatermark: PrWatermark = {
     reviewId: maxId(snap.reviews, wm.reviewId || 0),
     issueCommentId: maxId(snap.issueComments, wm.issueCommentId || 0),
@@ -128,7 +132,8 @@ export function diffPr(
     };
   }
 
-  const notMe = (x: any) => !ignoreLogin || x?.user?.login !== ignoreLogin;
+  const me = (ignoreLogin || '').toLowerCase();
+  const notMe = (x: any) => !me || String(x?.user?.login || '').toLowerCase() !== me;
   const newReviews = snap.reviews.filter((r) => (r.id || 0) > (wm.reviewId || 0)).filter(notMe);
   const newComments = [
     ...snap.issueComments.filter((c) => (c.id || 0) > (wm.issueCommentId || 0)),
@@ -142,7 +147,7 @@ export function diffPr(
   });
   const commentFires = fireOn.includes('new_comment') ? newComments : [];
   const shouldFire =
-    reviewFires.length > 0 || commentFires.length > 0 || ciFailedFires || ciPassedFires || conflictFires;
+    reviewFires.length > 0 || commentFires.length > 0 || ciFailedFires || ciPassedFires || conflictFires || pushFires;
 
   const parts: string[] = [];
   for (const r of reviewFires) {
@@ -156,6 +161,7 @@ export function diffPr(
     parts.push(`${verb} by ${who}`);
   }
   if (commentFires.length) parts.push(`${commentFires.length} new comment(s)`);
+  if (pushFires) parts.push(`new commits pushed (head ${sha.slice(0, 7)})`);
   if (ciFailedFires) parts.push(`CI failed: ${newFailures.join(', ')}`);
   if (ciPassedFires) parts.push('CI is green — all checks passed');
   if (conflictFires) parts.push('has merge conflicts with the base branch');
@@ -164,7 +170,9 @@ export function diffPr(
     ? 'Check the failing runs (gh pr checks / gh run view --log-failed) and decide your next step.'
     : conflictFires
       ? 'Rebase or merge the base branch to resolve the conflicts, then push.'
-      : 'Fetch the latest review/comments and decide your next step.';
+      : pushFires && !reviewFires.length && !commentFires.length
+        ? 'Pull the new commits and look at what changed since the last head.'
+        : 'Fetch the latest review/comments and decide your next step.';
 
   return {
     terminal: null,
@@ -219,7 +227,7 @@ export function buildPrBatchQuery(targets: PrTarget[]): { query: string; vars: R
     vars[`r${i}`] = t.repo;
     vars[`n${i}`] = t.number;
   });
-  const query = `query(${decl.join(', ')}) {\n  rateLimit { cost remaining resetAt }\n  ${body.join('\n  ')}\n}\n${PR_FRAGMENT}`;
+  const query = `query(${decl.join(', ')}) {\n  rateLimit { cost remaining resetAt }\n  viewer { login }\n  ${body.join('\n  ')}\n}\n${PR_FRAGMENT}`;
   return { query, vars };
 }
 
@@ -275,7 +283,7 @@ export function parsePrBatch(
   data: any,
   errors: any[] | undefined,
   count: number
-): { results: PrBatchResult[]; rate: RateLimitInfo | null } {
+): { results: PrBatchResult[]; rate: RateLimitInfo | null; viewer: string | null } {
   const byAlias = new Map<string, any[]>();
   for (const e of errors || []) {
     const a = Array.isArray(e?.path) ? String(e.path[0]) : '';
@@ -296,7 +304,9 @@ export function parsePrBatch(
   const rl = data?.rateLimit;
   const resetAt = Date.parse(rl?.resetAt);
   const rate = typeof rl?.remaining === 'number' ? { remaining: rl.remaining, resetAt: Number.isFinite(resetAt) ? resetAt : 0 } : null;
-  return { results, rate };
+  // The token's own login — the self-filter for diffPr, free with every batch.
+  const viewer = typeof data?.viewer?.login === 'string' && data.viewer.login ? data.viewer.login : null;
+  return { results, rate, viewer };
 }
 
 // Quota guard. GraphQL gets its own 5000-point hourly bucket; once fewer than

@@ -178,7 +178,9 @@ beforeAll(() => {
      const scratchDir = (await import('./server/lib/scratch.js')).dirFor(s.id);
      await wait(() => fs.existsSync(scratchDir + '/fake-claude-scratch.txt'));
      const before = { detachedAlive: pidAlive(detached), scratchFile: fs.existsSync(scratchDir + '/fake-claude-scratch.txt') };
+     claude.appendChat(s.id, { type: 'user', text: 'held in the in-memory tail' });
      const report = await api.destroySession(s.id);
+     const chatSeqAfter = claude.chatSeq(s.id);
 
      // a second session whose worktree has uncommitted work
      const d = state.createSession({ title: 'wip', cwd: ${JSON.stringify(dirtyDir)} });
@@ -196,6 +198,7 @@ beforeAll(() => {
        wtExists: fs.existsSync(${JSON.stringify(dir)}),
        scratchExists: fs.existsSync(scratchDir),
        gone: state.getSession(s.id) === null,
+       chatSeqAfter,
        dirtyReport, kept,
        dirtyExists: fs.existsSync(${JSON.stringify(dirtyDir)}),
      });`,
@@ -231,6 +234,7 @@ test.skipIf(isWin)('delete removes the pushed worktree, the scratch dir and the 
   expect(e2e.wtExists).toBe(false);
   expect(e2e.scratchExists).toBe(false);
   expect(e2e.gone).toBe(true);
+  expect(e2e.chatSeqAfter).toBe(0); // the in-memory chat tail went with the transcript
 });
 
 test.skipIf(isWin)('delete keeps a worktree with uncommitted work and lists it', () => {

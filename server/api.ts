@@ -2017,7 +2017,7 @@ async function handleAgents(req: IncomingMessage, res: ServerResponse, u: URL, p
       const hid = a.homeSessionId;
       claude.kill(hid);
       expirePendingSetupRequests(hid, 'agent deleted');
-      chrome.closeChrome(hid);
+      chrome.closeChrome(hid, 'its agent was deleted');
       await chrome.syncProfileToBase(hid).catch(() => {});
       if (!cfg.screen?.keepProfiles) chrome.removeSessionProfile(hid);
       pickDriver().release(hid);
@@ -3285,7 +3285,7 @@ export async function destroySession(id: string): Promise<reap.ReapReport | null
   if (!s) return null;
   claude.kill(id);
   expirePendingSetupRequests(id, 'session deleted');
-  chrome.closeChrome(id);
+  chrome.closeChrome(id, 'session deleted');
   // Fold this session's logins back into chrome-base on every close
   // (T8 §4) — independent of whether the profile copy itself survives.
   // Only an agent session writes back — into the agent's own profile.
@@ -3308,6 +3308,7 @@ export async function destroySession(id: string): Promise<reap.ReapReport | null
     import('./gemini-acp.js').then((m) => m.removeGeminiSession(id, conversations)).catch(() => {});
   }
   state.deleteSession(id);
+  claude.forgetChat(id);
   return report;
 }
 
@@ -6467,6 +6468,7 @@ export async function handle(
         source: body.source || 'agent',
         sessionId: body.sessionId,
         agent: body.agent || null, // A1: agent namespace (host-mcp defaults it from ARIGAMI_AGENT)
+        expectedHash: typeof body.expectedHash === 'string' ? body.expectedHash : undefined, // CONSOL1: optimistic concurrency
       });
       return r.ok ? json(res, r) : badRequest(res, r.error || 'invalid memory write');
     }
@@ -6502,10 +6504,26 @@ export async function handle(
     // POST /memory/learning/apply      manual mode: apply a stored run {runId, keys?} or approve pre-pass clusters {keys}
     // POST /memory/learning/mode       {mode:'auto'|'manual', minBatch?, maxAgeHours?}
     // POST /memory/learning/undo/:seq  revert one applied line by its write-log seq
+    // CONSOL1 ("dreaming" — a diff over the EXISTING lines, reviewed by the human):
+    // GET  /memory/learning/consolidation           recent proposals (newest first)
+    // POST /memory/learning/consolidation/run       compute one now (stored; never applied here)
+    // POST /memory/learning/consolidation/apply     {id, keys?} — hash-checked; 409 when memory moved on
+    // POST /memory/learning/consolidation/undo      {id, key} — revert one applied op
+    // GET  /memory/learning/provenance?target=      per-line author/session/time, derived from the write log
     if (p === '/__api/memory/learning' || p.startsWith('/__api/memory/learning/')) {
       const ml = (await import('./memory-learning.js')).learner();
       const sub = p.slice('/__api/memory/learning'.length).replace(/^\//, '');
       if (!sub && m === 'GET') return json(res, ml.status({ runs: Number(u.searchParams.get('runs')) || 20, preview: u.searchParams.get('preview') !== '0' }));
+      if (sub === 'consolidation' && m === 'GET') return json(res, { proposals: ml.readConsolidations(Number(u.searchParams.get('limit')) || 10) });
+      if (sub === 'provenance' && m === 'GET') {
+        const memory = await import('./memory.js');
+        const target = u.searchParams.get('target') === 'user' ? 'user' : 'memory';
+        try {
+          return json(res, { target, lines: memory.lineProvenance(target, u.searchParams.get('agent') || null) });
+        } catch (e) {
+          return badRequest(res, (e as Error).message);
+        }
+      }
       if (m !== 'POST') return notFound(res);
       if (!auth.isAdmin((req as any).auth)) return json(res, { error: 'admin only' }, 403);
       const body = ((await readBody(req)) || {}) as any;
@@ -6532,6 +6550,16 @@ export async function handle(
           if (!Object.keys(patch).length) return badRequest(res, 'nothing to change');
           updateMemoryLearningConfig(patch);
           return json(res, ml.status({ preview: false }));
+        }
+        if (sub === 'consolidation/run') return json(res, { ok: true, proposal: await ml.consolidate({ trigger: 'manual' }) });
+        if (sub === 'consolidation/apply') {
+          if (!body.id) return badRequest(res, 'id required');
+          const keys = Array.isArray(body.keys) ? body.keys.map(String) : undefined;
+          return json(res, { ok: true, proposal: ml.applyConsolidation(String(body.id), keys) });
+        }
+        if (sub === 'consolidation/undo') {
+          const r = ml.undoConsolidation(String(body.id || ''), String(body.key || ''));
+          return r.ok ? json(res, r) : badRequest(res, r.error || 'undo failed');
         }
         if (sub.startsWith('undo/')) {
           const seq = Number(sub.slice('undo/'.length));
@@ -6965,7 +6993,7 @@ export async function handle(
           // Desktop dies with the session's activity (T8) — the Chrome profile
           // copy is kept (only removed on DELETE) so unarchiving picks up where
           // it left off.
-          chrome.closeChrome(id);
+          chrome.closeChrome(id, 'session archived');
           pickDriver().release(id);
           import('./lib/desktop-control.js').then((m) => m.desktopRelease(id)).catch(() => {});
           sharedDesktop.get().forget(id);
