@@ -163,3 +163,29 @@ test('the small ones: Instructions preview, Connections section, search, style g
   expect(src('components/StyleGuide.jsx')).toContain('<DropdownMenuRadioItem value="gemini">Gemini</DropdownMenuRadioItem>');
   expect(src('components/ContextModal.jsx')).toMatch(/isClaudeEngine\(session\.engine\) && <div[^>]*>\{t\('dialogs\.ctxAutoCompactRestartNote'\)\}/);
 });
+
+test('a model ladder on gemini needs no new UI: the badge names the rung, Health lists the chain', async () => {
+  const engines = await import(web('lib/engines.js'));
+  const { default: LadderBadge, ladderText } = await import(web('components/LadderBadge.jsx'));
+  const { t } = await import(web('lib/i18n.js'));
+  expect(engines.modelDisplayName('gemini-4-neon')).toBe('Gemini 4 Neon');
+  expect(engines.modelDisplayName('gemini-4-neon-low')).toBe('Gemini 4 Neon (Low)');
+  expect(engines.modelDisplayName('gpt-5.5')).toBe('GPT-5.5');
+  expect(engines.modelDisplayName('opus')).toBeNull(); // claude names stay with the badge's own family words
+  // a step down within the family and across families both read as a sentence
+  const same = { running: 'gemini-4-neon-low', configured: 'gemini-4-neon-high', resetAt: null };
+  expect(ladderText(same, t).full).toContain('Gemini 4 Neon (Low)');
+  const html = render(h(LadderBadge, { session: { engine: 'gemini', claude: { ladder: { running: 'gemini-3.8-flash-high', configured: 'gemini-4-neon', resetAt: null } } } }));
+  expect(html).toContain('data-ladder-badge="gemini-3.8-flash-high"');
+  expect(html).toContain('Gemini 3.8 Flash (High)');
+  expect(render(h(LadderBadge, { session: { engine: 'gemini', claude: {} } }))).toBe('');
+  // Health: claude's chain unlabelled, any other engine's under its name — a `geminiModelChain` from the host shows up by itself
+  expect(engines.engineChains({ modelChain: ['opus', 'sonnet'], codexModelChain: ['gpt-5.6-terra', 'gpt-5.5'], geminiModelChain: ['gemini-4-neon', 'gemini-3.8-flash'] })).toEqual([
+    { engine: 'claude', label: null, chain: ['opus', 'sonnet'] },
+    { engine: 'codex', label: 'Codex', chain: ['gpt-5.6-terra', 'gpt-5.5'] },
+    { engine: 'gemini', label: 'Gemini', chain: ['gemini-4-neon', 'gemini-3.8-flash'] },
+  ]);
+  expect(engines.engineChains({ modelChain: ['opus'] })).toEqual([{ engine: 'claude', label: null, chain: ['opus'] }]);
+  expect(engines.engineChains(null)).toEqual([]);
+  expect(src('components/settings/Health.jsx')).toMatch(/engineChains\(snap\)\.map/);
+});

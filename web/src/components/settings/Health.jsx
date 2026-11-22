@@ -8,6 +8,7 @@
 // class ("reminded you" — 84% of the log, not a fault) unless asked, and shows
 // the last 20 by default.
 import { useEffect, useState } from 'react';
+import { engineChains } from '../../lib/engines.js';
 import { api } from '../../lib/api.js';
 import { useStore } from '../../lib/store.js';
 import { useT } from '../../lib/i18n.js';
@@ -50,7 +51,7 @@ export default function Health() {
   const rows = snap?.sessions || [];
   const unhealthy = rows.filter((r) => r.state !== 'IDLE_OK' && r.state !== 'RUNNING');
   const downgraded = sessions.filter((s) => (s.claude?.modelRung || 0) > 0);
-  const chains = [(snap?.modelChain || []).join(' → '), snap?.codexModelChain?.length ? `Codex: ${snap.codexModelChain.join(' → ')}` : ''].filter(Boolean).join(' · ');
+  const chains = engineChains(snap).map((c) => `${c.label ? `${c.label}: ` : ''}${c.chain.join(' → ')}`).join(' · ');
   const allIncidents = log?.incidents || [];
   const reminders = allIncidents.filter((i) => REMINDER_ACTIONS.has(i.action)).length;
   const shown = filterIncidents(allIncidents, showReminders);
