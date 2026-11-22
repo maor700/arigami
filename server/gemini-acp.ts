@@ -777,6 +777,27 @@ function autoCompact(id: string, st: AcpState, used: number, size: number): void
   if (st.ready && !st.running) startPrompt(id, st, COMPACT);
 }
 
+/** Pure: ACP availableCommands → the Commands tab's rows (agy's own commands and the Arigami skill stubs alike). */
+export function commandRows(list: unknown): Array<{ name: string; description: string; argumentHint: string }> {
+  const seen = new Set<string>();
+  const out: Array<{ name: string; description: string; argumentHint: string }> = [];
+  for (const c of Array.isArray(list) ? list : []) {
+    const name = typeof c?.name === 'string' ? c.name.trim() : '';
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    out.push({ name, description: String(c.description || ''), argumentHint: String(c.input?.hint || '') });
+  }
+  return out;
+}
+
+/** agy repeats the list several times a turn: stored (session.claude.capabilities.commands) only when it changed. */
+function onCommands(id: string, list: unknown): void {
+  const commands = commandRows(list);
+  const prev = (getSession(id)?.claude as any)?.capabilities || {};
+  if (JSON.stringify(prev.commands || []) === JSON.stringify(commands)) return;
+  setClaude(id, { capabilities: { ...prev, commands } } as any);
+}
+
 /** ACP responses, agent requests and session/update notifications → the chat kinds. */
 function acpHandleEvent(id: string, raw: unknown): void {
   const j = raw as any;
@@ -823,8 +844,11 @@ function acpHandleEvent(id: string, raw: unknown): void {
     case 'current_mode_update':
       if (typeof u.currentModeId === 'string') st.modeId = u.currentModeId;
       break;
+    case 'available_commands_update':
+      onCommands(id, u.availableCommands);
+      break;
     default:
-      break; // user_message_chunk, available_commands_update, config_option_update, session_info_update, plan
+      break; // user_message_chunk, config_option_update, session_info_update, plan
   }
 }
 

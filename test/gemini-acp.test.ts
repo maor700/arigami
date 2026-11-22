@@ -218,6 +218,10 @@ test('a real turn: command + file write + message map onto the chat kinds; bypas
   expect(claude.state).toBe('idle');
   expect(claude.usage).toMatchObject({ ctxTokens: 8986, ctxWindow: 1048576, ctxAssumed: false });
   expect(claude.turnDiff).toMatchObject({ additions: 1, deletions: 0 }); // the write's diff block → the Changes tab reloads
+  // available_commands_update fills the Commands tab and the slash palette
+  expect(claude.capabilities.commands.map((c: any) => c.name)).toEqual(['goal', 'compact', 'schedule']);
+  expect(claude.capabilities.commands[1]).toEqual({ name: 'compact', description: 'Compact the conversation now (summarize history to free up the context window).', argumentHint: '' });
+  expect(claude.capabilities.permissionMode ?? 'bypassPermissions').toBe('bypassPermissions'); // the other capabilities are kept
 });
 
 test('thinking, MCP tools and a read: Arigami\'s own tools stay out of the transcript, the others get mcp__ names', () => {
@@ -356,6 +360,21 @@ test('auto-compact: past the threshold agy\'s /compact runs once the turn ends, 
   expect(out.prompts).toEqual(['one', '/compact', 'queued', 'two', '/compact']);
   expect(out.sys[0]).toBe('⤷ compacting the context (auto, 850k ≥ 800k tokens)…'); // the reading that crossed the line
   expect(out.sys.filter((t: string) => t === '⤷ context compacted')).toHaveLength(1); // the second compaction is still running
+});
+
+test('commands: rows are de-duplicated, carry the input hint, and an unchanged list is not written again', () => {
+  const out = run(
+    'A.sessionId="sid1";' +
+      "const up=(list)=>g.acpHandleEvent(s.id,{jsonrpc:'2.0',method:'session/update',params:{sessionId:'sid1',update:{sessionUpdate:'available_commands_update',availableCommands:list}}});" +
+      "const list=[{name:'plan',description:'Plan first.',input:{hint:'what to plan'}},{name:'dispatch',description:'Arigami skill'},{name:'plan',description:'dup'},{name:''},{}];" +
+      "up(list);const first=st.getSession(s.id).claude.capabilities;up(list);const same=st.getSession(s.id).claude.capabilities===first;" +
+      "up([{name:'goal',description:''}]);" +
+      "emit({rows:first.commands,same,after:st.getSession(s.id).claude.capabilities.commands,pure:g.commandRows(null)});"
+  );
+  expect(out.rows).toEqual([{ name: 'plan', description: 'Plan first.', argumentHint: 'what to plan' }, { name: 'dispatch', description: 'Arigami skill', argumentHint: '' }]);
+  expect(out.same).toBe(true);
+  expect(out.after).toEqual([{ name: 'goal', description: '', argumentHint: '' }]);
+  expect(out.pure).toEqual([]);
 });
 
 test('images go as ACP image blocks (the shape a real run accepted); other files are listed', () => {
