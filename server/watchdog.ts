@@ -14,6 +14,7 @@ export interface WorkerView {
   claudeState?: string; // worker.claude.state
   updatedAt?: string; // worker.updatedAt — bumps on any state change / event
   result?: { state?: string; reportedAt?: string } | null; // worker.metadata.result
+  status?: string; // worker.status — the cockpit status string (e.g. set by request_review)
 }
 
 export type WatchdogAction = 'retire' | 'crash' | 'stall' | 'none';
@@ -49,6 +50,12 @@ export function evaluateWorker(input: {
 
   if (worker.result && TERMINAL.has(worker.result.state || ''))
     return { action: 'retire', reason: worker.result.state, nextWatermark: watermark };
+
+  // request_review sets status: 'In Review' directly, independent of
+  // metadata.result — a worker that called it (but not report_to_master) already
+  // told a human it's done via the correct channel. It is not hung or silently
+  // finished, so the same retire path applies instead of falling through to stall.
+  if (worker.status === 'In Review') return { action: 'retire', reason: 'in-review', nextWatermark: watermark };
 
   if (cstate === 'dead' && watermark.lastState !== 'dead')
     return { action: 'crash', nextWatermark: { ...watermark, lastState: 'dead' } };
