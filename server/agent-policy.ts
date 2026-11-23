@@ -118,6 +118,7 @@ export const CORE_TOOLS = [
   'memory_write', 'memory_search', 'memory_get', 'skill_propose',
   'list_agents', 'permission_prompt', 'report_to_master',
   'render_ui', // OPENUI: a chat card, no side effects — same standing as request_action
+  'mcp_tools', // GEMINI MCP bridge: read-only schema lookup, filtered by this agent's allowlist
 ];
 
 /** Tools whose denial needs a "the routine has to be added by the human" hint (A5 #1). */

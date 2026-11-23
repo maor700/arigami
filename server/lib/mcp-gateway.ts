@@ -32,6 +32,17 @@ import { createHash } from 'node:crypto';
 import { cfg, getSession } from '../state.js';
 import { auth } from '../auth.js';
 import * as extensions from '../extensions.js';
+import { policyFor, isRestrictive, serverTouched, toolAllowed, checkToolCall } from '../agent-policy.js';
+import {
+  GEMINI_BRIDGE_TOOLS_NAME,
+  GEMINI_BRIDGE_CALL_NAME,
+  GEMINI_DIRECT_ARIGAMI_TOOLS,
+  GEMINI_BRIDGE_TOOL_DEFS,
+  isGeminiGatewayBridged,
+  filterBridgeTools,
+  type McpToolDef,
+  type ServerToolsEntry,
+} from './gemini-mcp-bridge.js';
 
 export const GATEWAY_PREFIX = '/__mcp/s/';
 export const COMPOSIO_SERVER = 'composio-mcp';
@@ -180,6 +191,171 @@ const deny = (res: ServerResponse, status: number, error: string) => {
   res.end(JSON.stringify({ error }));
 };
 
+/** Build the underlying MCP Server instance for one gateway server name, without Gemini bridge wrapping. */
+async function buildRawServer(name: string, session: any, token: string): Promise<any> {
+  if (name === 'arigami') return arigamiServer(session, token);
+  if (name === COMPOSIO_SERVER) {
+    if (!fileOutbound) throw new Error('outbound cards are not wired');
+    const { createComposioServer } = await import('./composio-mcp.js');
+    return createComposioServer(session, ownerOf(session), fileOutbound);
+  }
+  if (name.startsWith('ext-')) return extProxy(name, session, token);
+  return remoteProxy(name, session);
+}
+
+const slugOf = (s: any): string | null => (typeof s?.metadata?.agent === 'string' && s.metadata.agent ? s.metadata.agent : null);
+
+/** Gateway server names this Gemini session may access (same source + A3 filter as geminiMcpServers). */
+async function geminiSessionGatewayServers(session: any): Promise<string[]> {
+  const { mcpServersFor } = await import('../claude.js');
+  const servers: Record<string, any> = mcpServersFor(session, { claudeGrants: false });
+  const policy = policyFor(slugOf(session));
+  const out: string[] = [];
+  for (const [name, sv] of Object.entries(servers || {})) {
+    const url = typeof sv?.url === 'string' ? sv.url : '';
+    if (!url.includes(GATEWAY_PREFIX)) continue;
+    if (isRestrictive(policy) && policy.tools !== null && !serverTouched(policy, name)) continue;
+    out.push(name);
+  }
+  return out;
+}
+
+/** Run `fn` against an in-process MCP Server over an InMemoryTransport pair, closing both sides on exit. */
+async function withInMemoryClient<T>(server: any, fn: (client: McpClient) => Promise<T>): Promise<T> {
+  const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
+  const { InMemoryTransport } = await import('@modelcontextprotocol/sdk/inMemory.js');
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: 'arigami-bridge', version: '0.1.0' }, (await import('./mcp-validator.js')).mcpClientOptions());
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  try {
+    return await fn(client);
+  } finally {
+    await client.close().catch(() => {});
+    await server.close().catch(() => {});
+  }
+}
+
+const BRIDGE_CALL_TIMEOUT_MS = 30 * 60 * 1000;
+
+async function listServerTools(name: string, session: any, token: string, timeoutMs = 5000): Promise<McpToolDef[]> {
+  const server = await buildRawServer(name, session, token);
+  if (!server) return [];
+  const res = await withInMemoryClient(server, (c) => c.listTools(undefined, { timeout: timeoutMs }));
+  return (Array.isArray(res?.tools) ? res.tools : []).map((t: any) => ({
+    name: String(t.name || ''),
+    description: typeof t.description === 'string' ? t.description : '',
+    inputSchema: t.inputSchema && typeof t.inputSchema === 'object' ? t.inputSchema : { type: 'object', properties: {} },
+  }));
+}
+
+async function listSessionGatewayTools(
+  session: any,
+  token: string,
+  opts: { onlyServer?: string; timeoutMs?: number } = {}
+): Promise<ServerToolsEntry[]> {
+  const allowedServers = await geminiSessionGatewayServers(session);
+  const targets = opts.onlyServer ? allowedServers.filter((s) => s === opts.onlyServer) : allowedServers;
+  const policy = policyFor(slugOf(session));
+  const timeoutMs = opts.timeoutMs ?? 5000;
+  return Promise.all(
+    targets.map(async (server): Promise<ServerToolsEntry> => {
+      try {
+        const raw = await listServerTools(server, session, token, timeoutMs);
+        const tools = raw.filter((t) => toolAllowed(policy, server === 'arigami' ? t.name : `mcp__${server}__${t.name}`));
+        return { server, tools };
+      } catch (e) {
+        return { server, tools: [], error: (e as Error).message };
+      }
+    })
+  );
+}
+
+/**
+ * Gemini-specific `/__mcp/s/arigami` wrapper: exposes core everyday arigami tools directly (~24 KB)
+ * plus `mcp_tools` and `mcp_call` to discover and invoke overflow arigami tools and all other
+ * gateway MCP servers without overflowing `agy acp`'s internal eager schema budget.
+ */
+async function createGeminiBridgeArigamiServer(session: any, token: string) {
+  const { Server } = await import('@modelcontextprotocol/sdk/server/index.js');
+  const { ListToolsRequestSchema, CallToolRequestSchema } = await import('@modelcontextprotocol/sdk/types.js');
+  const server = new Server(
+    { name: 'arigami', version: '0.1.0' },
+    { capabilities: { tools: {} }, instructions: "Arigami's tools and MCP bridge. Use mcp_tools + mcp_call for additional arigami and external MCP tools." }
+  );
+
+  server.setRequestHandler(ListToolsRequestSchema, async () => {
+    const raw = await listServerTools('arigami', session, token, 5000);
+    const direct = raw.filter((t) => GEMINI_DIRECT_ARIGAMI_TOOLS.has(t.name));
+    return { tools: [...direct, ...GEMINI_BRIDGE_TOOL_DEFS] };
+  });
+
+  server.setRequestHandler(CallToolRequestSchema, async (req: any) => {
+    const toolName = String(req.params?.name || '');
+    const args = req.params?.arguments && typeof req.params.arguments === 'object' ? req.params.arguments : {};
+
+    if (toolName === GEMINI_BRIDGE_TOOLS_NAME) {
+      const onlyServer = typeof args.server === 'string' && args.server.trim() ? args.server.trim() : undefined;
+      const entries = await listSessionGatewayTools(session, token, { onlyServer, timeoutMs: 10_000 });
+      const payload = filterBridgeTools(entries, {
+        server: onlyServer,
+        query: typeof args.query === 'string' ? args.query : undefined,
+        names: Array.isArray(args.names) ? args.names : undefined,
+        limit: typeof args.limit === 'number' ? args.limit : undefined,
+      });
+      return { content: [{ type: 'text', text: JSON.stringify(payload) }] };
+    }
+
+    if (toolName === GEMINI_BRIDGE_CALL_NAME) {
+      const targetServer = typeof args.server === 'string' ? args.server.trim() : '';
+      const targetTool = typeof args.tool === 'string' ? args.tool.trim() : '';
+      const targetArgs = args.arguments && typeof args.arguments === 'object' && !Array.isArray(args.arguments) ? args.arguments : {};
+      if (!targetServer || !NAME_RE.test(targetServer)) {
+        return { content: [{ type: 'text', text: `error: invalid MCP server name "${targetServer}"` }], isError: true };
+      }
+      if (!targetTool) {
+        return { content: [{ type: 'text', text: 'error: missing tool name' }], isError: true };
+      }
+      if (targetServer === 'arigami' && (targetTool === GEMINI_BRIDGE_CALL_NAME || targetTool === GEMINI_BRIDGE_TOOLS_NAME)) {
+        return { content: [{ type: 'text', text: `error: call "${targetTool}" directly instead of nesting through mcp_call` }], isError: true };
+      }
+      const allowedServers = await geminiSessionGatewayServers(session);
+      if (!allowedServers.includes(targetServer)) {
+        return { content: [{ type: 'text', text: `error: MCP server "${targetServer}" is not available in this session` }], isError: true };
+      }
+      const canonical = targetServer === 'arigami' ? targetTool : `mcp__${targetServer}__${targetTool}`;
+      const verdict = checkToolCall(policyFor(slugOf(session)), canonical, targetArgs, session.id);
+      if (!verdict.allow) {
+        return { content: [{ type: 'text', text: `[arigami policy] ${(verdict as any).reason || `${canonical} is not allowed for this agent`}` }], isError: true };
+      }
+      const { noteMcpResult } = await import('../claude.js');
+      try {
+        const target = await buildRawServer(targetServer, session, token);
+        if (!target) return { content: [{ type: 'text', text: `error: MCP server "${targetServer}" could not be started` }], isError: true };
+        const result = (await withInMemoryClient(target, (c) => c.callTool({ name: targetTool, arguments: targetArgs }, undefined, { timeout: BRIDGE_CALL_TIMEOUT_MS }))) as any;
+        const summary = Array.isArray(result?.content) ? result.content.map((c: any) => (c?.type === 'text' ? String(c.text || '') : '')).join('\n') : '';
+        if (targetServer !== 'arigami') noteMcpResult(session.id, targetServer, { content: summary, is_error: !!result?.isError });
+        return { content: Array.isArray(result?.content) ? result.content : [{ type: 'text', text: JSON.stringify(result ?? { ok: true }) }], ...(result?.isError ? { isError: true } : {}) };
+      } catch (e) {
+        const msg = `${targetServer}.${targetTool}: ${(e as Error).message}`;
+        if (targetServer !== 'arigami') noteMcpResult(session.id, targetServer, { content: msg, is_error: true });
+        return { content: [{ type: 'text', text: `error: ${msg}` }], isError: true };
+      }
+    }
+
+    // Direct arigami tool call
+    try {
+      const raw = await arigamiServer(session, token);
+      const result = (await withInMemoryClient(raw, (c) => c.callTool({ name: toolName, arguments: args }, undefined, { timeout: BRIDGE_CALL_TIMEOUT_MS }))) as any;
+      return { content: Array.isArray(result?.content) ? result.content : [{ type: 'text', text: JSON.stringify(result ?? { ok: true }) }], ...(result?.isError ? { isError: true } : {}) };
+    } catch (e) {
+      return { content: [{ type: 'text', text: `error: ${(e as Error).message}` }], isError: true };
+    }
+  });
+
+  return server;
+}
+
 /** Serve one gateway request. `principal` is the host's auth result for it. */
 export async function handle(req: IncomingMessage, res: ServerResponse, name: string, principal: any): Promise<void> {
   if (!NAME_RE.test(name)) return deny(res, 404, `no such MCP server: ${name}`);
@@ -192,13 +368,11 @@ export async function handle(req: IncomingMessage, res: ServerResponse, name: st
   const token = auth.tokenForSession(session.id);
   let server: any;
   try {
-    if (name === 'arigami') server = await arigamiServer(session, token);
-    else if (name === COMPOSIO_SERVER) {
-      if (!fileOutbound) throw new Error('outbound cards are not wired');
-      const { createComposioServer } = await import('./composio-mcp.js');
-      server = await createComposioServer(session, ownerOf(session), fileOutbound);
-    } else if (name.startsWith('ext-')) server = await extProxy(name, session, token);
-    else server = await remoteProxy(name, session);
+    if (name === 'arigami' && session.engine === 'gemini' && isGeminiGatewayBridged()) {
+      server = await createGeminiBridgeArigamiServer(session, token);
+    } else {
+      server = await buildRawServer(name, session, token);
+    }
   } catch (e) {
     return deny(res, 502, `could not start ${name}: ${(e as Error).message}`);
   }

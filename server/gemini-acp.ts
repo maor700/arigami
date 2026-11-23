@@ -52,6 +52,7 @@ import { geminiRealHome } from './lib/gemini-home.js';
 import { bunExecShell } from './lib/bun-exec.js';
 import { hasMods } from './mods.js';
 import { setGeminiCatalogSource, looksLikeGeminiLimit } from './lib/gemini-quota.js';
+import { isGeminiGatewayBridged, partitionGeminiServers, unwrapBridgeCall, formatBridgeCatalog } from './lib/gemini-mcp-bridge.js';
 import * as extensions from './extensions.js';
 import type { AcpMcpServer, AcpModel, GeminiModelRow, ToolName } from './lib/gemini-cli.js';
 
@@ -174,7 +175,10 @@ export function geminiMcpServers(s: Session): AcpMcpServer[] {
     for (const name of Object.keys(servers)) if (!serverTouched(policy!, name)) delete servers[name];
   }
   sessionMcp.recordSpawn(s.id, Object.entries(servers).map(([name, sv]) => sessionMcp.classify(name, sv)));
-  return acpMcpServers(servers, { ARIGAMI_TOKEN: auth.tokenForSession(s.id) }, identityEnv(s));
+  // With the gateway on, agy acp gets only `arigami` (carrying core host tools + mcp_tools/mcp_call) plus any
+  // non-gateway servers so agy's internal ~44 KB eager schema cap never drops tools silently.
+  const toPass = isGeminiGatewayBridged() ? partitionGeminiServers(servers).direct : servers;
+  return acpMcpServers(toPass, { ARIGAMI_TOKEN: auth.tokenForSession(s.id) }, identityEnv(s));
 }
 
 /** Where `/arigami:<skill>` resolves on this host (the same three packs claude gets as plugins). */
@@ -240,15 +244,18 @@ export function geminiToolCheck(id: string, name: string, args: unknown): { tool
   const s = getSession(id);
   const st = states.get(id);
   const servers = st?.servers.length ? st.servers : (((s?.claude as any)?.mcpLoaded?.servers || []) as any[]).map((x) => String(x.name));
-  const tool = aliasToolName(name, servers);
-  const input = toolInput(tool.name, args);
+  const base = aliasToolName(name, servers);
+  const unwrapped = unwrapBridgeCall(base, args);
+  const tool = unwrapped ? unwrapped.tool : base;
+  const effectiveArgs = unwrapped ? unwrapped.args : args;
+  const input = toolInput(tool.name, effectiveArgs);
   const v = s ? checkToolCall(policyFor(slugOf(s)), tool.name, input, id) : { allow: true as const };
   if (!v.allow) {
     const reason = `[arigami policy] ${(v as any).reason || `${tool.name} is not allowed for this agent`}`;
     st?.hookDenied.set(name, reason);
     return { tool, input, decision: 'deny', reason };
   }
-  if (ownRead(id, tool.name, args)) return { tool, input, decision: 'allow' };
+  if (ownRead(id, tool.name, effectiveArgs)) return { tool, input, decision: 'allow' };
   return { tool, input, decision: hookDecision(s?.claude?.permissionMode, tool.name) };
 }
 
@@ -472,10 +479,15 @@ async function startSession(id: string, p: any): Promise<void> {
   const s = getSession(id);
   if (!s) return;
   const mcpServers = geminiMcpServers(s);
-  st.servers = mcpServers.map((m) => m.name);
+  const loadedEntries = ((getSession(id)?.claude as any)?.mcpLoaded?.servers || []) as Array<{ name?: string; via?: string }>;
+  const loadedNames = loadedEntries.map((x) => String(x.name || '')).filter(Boolean);
+  st.servers = loadedNames.length ? loadedNames : mcpServers.map((m) => m.name);
+  const bridgedNames = isGeminiGatewayBridged() ? loadedEntries.filter((x) => x.via === 'gateway' && x.name).map((x) => String(x.name)) : [];
+  const bridgeNote = formatBridgeCatalog(bridgedNames);
   const cwd = cwdOf(s);
   // The first-turn blocks, persona and memory snapshot ride as the system prompt; agy keeps them with the session, so a resume sends none.
-  const fresh = () => rpc(st, 'session/new', { cwd, mcpServers, _meta: { antigravity: { systemPrompt: { append: memoryBootstrapPrefix(p) + skillsNote(skillRoots()) } } } });
+  const fresh = () =>
+    rpc(st, 'session/new', { cwd, mcpServers, _meta: { antigravity: { systemPrompt: { append: memoryBootstrapPrefix(p) + skillsNote(skillRoots()) + bridgeNote } } } });
   // A session that never had a turn is started over: its system prompt is only known to be kept once a turn ran.
   const prev = p.resume && p.hadTurn ? s.claude?.sessionId : null;
   let r = prev ? await rpc(st, 'session/resume', { sessionId: prev, cwd, mcpServers }) : await fresh();
@@ -665,7 +677,11 @@ function toolOf(id: string, st: AcpState, u: any): ToolState {
   let t = st.tools.get(toolCallId);
   if (t) return t;
   const raw = String(u.name || u.title || '');
-  const meta = aliasToolName(raw, st.servers, u.kind);
+  const rawArgs = u.rawInput ?? u.args;
+  const base = aliasToolName(raw, st.servers, u.kind);
+  const unwrapped = unwrapBridgeCall(base, rawArgs);
+  const meta = unwrapped ? unwrapped.tool : base;
+  const effectiveArgs = unwrapped ? unwrapped.args : rawArgs;
   t = { ...meta, host: meta.server === 'arigami', done: false };
   st.tools.set(toolCallId, t);
   flushThought(id, st);
@@ -673,11 +689,11 @@ function toolOf(id: string, st: AcpState, u: any): ToolState {
   if (raw === 'ask_question') {
     // agy ends the turn on a question and takes the next message as the answer — the card answers with a message.
     t.question = true;
-    appendChat(id, { kind: 'tool-use', toolUseId: toolCallId, name: 'AskUserQuestion', input: questionInput(u.rawInput ?? u.args) });
+    appendChat(id, { kind: 'tool-use', toolUseId: toolCallId, name: 'AskUserQuestion', input: questionInput(rawArgs) });
     return t;
   }
   // Arigami's own tools show as UI (a badge, a card, a tab) — both halves of the raw call stay out of the transcript.
-  if (!t.host) appendChat(id, { kind: 'tool-use', toolUseId: toolCallId, name: t.name, input: toolInput(t.name, u.rawInput ?? u.args) });
+  if (!t.host) appendChat(id, { kind: 'tool-use', toolUseId: toolCallId, name: t.name, input: toolInput(t.name, effectiveArgs) });
   return t;
 }
 
@@ -717,8 +733,12 @@ function onPermissionRequest(id: string, st: AcpState, j: any): void {
   const call = j.params?.toolCall || {};
   const options = j.params?.options || [];
   const toolCallId = String(call.toolCallId || '');
+  const rawArgs = call.rawInput ?? call.args;
+  const base = aliasToolName(String(call.name || call.title || ''), st.servers, call.kind);
+  const unwrapped = unwrapBridgeCall(base, rawArgs);
+  const effectiveArgs = unwrapped ? unwrapped.args : rawArgs;
   const t = toolOf(id, st, call);
-  const input = toolInput(t.name, call.rawInput ?? call.args);
+  const input = toolInput(t.name, effectiveArgs);
   const s = getSession(id);
   // A3: the agent's allowlist is checked here on every request, in every mode — agy has no PreToolUse hook Arigami can install.
   const verdict = s ? checkToolCall(policyFor(slugOf(s)), t.name, input, id) : { allow: true as const };
@@ -729,7 +749,7 @@ function onPermissionRequest(id: string, st: AcpState, j: any): void {
     return;
   }
   // agy still asks about a file outside the workspace after the hook said allow (measured) — answered here.
-  if ((s?.claude?.permissionMode || 'bypassPermissions') === 'bypassPermissions' || ownRead(id, t.name, call.rawInput ?? call.args)) {
+  if ((s?.claude?.permissionMode || 'bypassPermissions') === 'bypassPermissions' || ownRead(id, t.name, effectiveArgs)) {
     respond(st, j.id, { outcome: outcomeFor(options, { behavior: 'allow' }) });
     return;
   }
