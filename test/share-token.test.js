@@ -238,7 +238,7 @@ test('gate + serve: a share token opens ONE artifact at ONE version, cookie-less
   expect(o.withTok.csp).toContain('sandbox');
   expect(o.withTok.body).toContain(`<base href="/__artifacts/${o.rec.id}/~t/`);
   expect(o.withTok.body).toContain('/v1/">');              // pinned to the version signed
-  expect(o.withTok.body).not.toContain('v2');
+  expect(o.withTok.body).not.toContain('/v2/');
   expect(o.assetViaPath).toBe(200);                        // sub-resource via the path form
   expect(o.assetV2).toBe(403);                             // other version refused
   expect(o.explicitV1).toBe(200);

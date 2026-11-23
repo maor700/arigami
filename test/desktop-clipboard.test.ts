@@ -22,7 +22,8 @@ beforeAll(() => {
      const { spawn } = await import('node:child_process');
      const fs = await import('node:fs'); const path = await import('node:path');
      const html = '<textarea id=t>hello world</textarea><p id=p>copy me please</p><input id=pw type=password value=secret>';
-     const proc = spawn(${JSON.stringify(chrome)}, ['--headless=new', '--user-data-dir=${prof}', '--remote-debugging-port=0', '--no-first-run', 'data:text/html,' + encodeURIComponent(html)], { stdio: 'ignore' });
+     const proc = spawn(${JSON.stringify(chrome)}, ['--headless=new', '--no-sandbox', '--user-data-dir=${prof}', '--remote-debugging-port=0', '--no-first-run', 'data:text/html,' + encodeURIComponent(html)], { stdio: 'ignore' });
+     try {
      let port = null;
      for (let i = 0; i < 100 && !port; i++) { try { port = Number(fs.readFileSync(path.join(${JSON.stringify(prof)}, 'DevToolsActivePort'), 'utf8').split('\\n')[0]); } catch {} await new Promise(r => setTimeout(r, 100)); }
      let ws = null;
@@ -45,7 +46,8 @@ beforeAll(() => {
      const pwSel = await dc.selectionAt(port);
      let noBrowser = null; try { await dc.selectionAt(null); } catch (e) { noBrowser = e.message; }
      await cdpCall((await (await fetch('http://127.0.0.1:' + port + '/json/version')).json()).webSocketDebuggerUrl, 'Browser.close', {}).catch(() => {});
-     emit({ afterPaste, fieldSel, pageSel, pwSel, noBrowser });`,
+     emit({ afterPaste, fieldSel, pageSel, pwSel, noBrowser });
+     } finally { try { proc.kill(); } catch {} }`,
     { ARIGAMI_DIR: path.join(sandbox, 'host'), ARIGAMI_STATE_FILE: path.join(sandbox, 'host', 'state.json') }
   );
   if (!r.ok) throw new Error(r.error);

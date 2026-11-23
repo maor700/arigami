@@ -153,7 +153,7 @@ export function createPhoneBridge(opts: BridgeOptions) {
         if (isOut) outboundStreamEnded(conn.callSid, { transcript: ((r.body as Record<string, unknown>).transcript as { role: string; text: string }[]) || [], reason });
         else streamEnded(conn.callSid, now());
       }
-      try { ws.close(); } catch { /* ignore */ }
+      try { ws.close(1000); } catch { /* ignore */ }
     };
     let startedAt = now();
     let isOut = false;
